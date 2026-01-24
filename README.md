@@ -2,6 +2,14 @@
 
 A comprehensive command-line interface and configuration library for Zig, providing Cobra/Viper-class features for building production-quality CLI applications.
 
+## Status
+
+| Aspect | Info |
+|--------|------|
+| API Stability | Beta |
+| Zig Version | 0.14.0+ |
+| Platforms | Linux, macOS, Windows |
+
 ## Features
 
 ### CLI Features
