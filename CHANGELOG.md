@@ -7,24 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Removed 'zig' prefix from library name
-- Updated README to use correct library name
+## [0.1.0] - 2026-01-24
+
+Initial open source release under Apache-2.0 license.
 
 ### Added
 - Merge request template
 - Issue templates for bug reports, features, and questions
+
+### Changed
+- Removed 'zig' prefix from library name
+- Updated README to use correct library name
+- Updated config dependency to use GitLab archive URL
 
 ### Security
 - Added GitLab native Secret Detection
 - Enabled Advanced SAST and Dependency Scanning
 - Updated CI catalog components to v1.7.1
 
-## [0.1.0] - 2026-01-23
-
-Initial open source release under Apache-2.0 license.
-
-### Added
+### Features
 
 #### CLI Features
 - Nested command trees with subcommands and aliases
@@ -83,3 +84,6 @@ Initial open source release under Apache-2.0 license.
 - Secrets must never be in flags or environment variables
 - Automatic path redaction for sensitive files in error messages
 - Strict secret handling with file/stdin-only input
+
+[Unreleased]: https://gitlab.com/devnw/zig/cli/-/compare/v0.1.0...HEAD
+[0.1.0]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.0
