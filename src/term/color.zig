@@ -6,6 +6,7 @@
 //! ANSI color codes and formatting for terminal output.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const tty = @import("tty.zig");
 
 /// ANSI color codes
@@ -54,9 +55,11 @@ pub const ColorContext = struct {
     pub fn init(force_color: ?bool, no_color: bool) Self {
         const enabled = if (force_color) |f| f else blk: {
             if (no_color) break :blk false;
-            if (std.posix.getenv("NO_COLOR") != null) break :blk false;
-            if (std.posix.getenv("TERM")) |term| {
-                if (std.mem.eql(u8, term, "dumb")) break :blk false;
+            if (comptime builtin.os.tag != .windows) {
+                if (std.posix.getenv("NO_COLOR") != null) break :blk false;
+                if (std.posix.getenv("TERM")) |term| {
+                    if (std.mem.eql(u8, term, "dumb")) break :blk false;
+                }
             }
             break :blk tty.isStdoutTty();
         };

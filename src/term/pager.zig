@@ -47,14 +47,14 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
         return;
     }
 
-    // Try to use pager
-    const pager_cmd = std.posix.getenv(config.pager_env) orelse config.default_pager;
-
     if (builtin.os.tag == .windows) {
         // Windows: fall back to direct output
         try stdout.writeAll(content);
         return;
     }
+
+    // Try to use pager
+    const pager_cmd = std.posix.getenv(config.pager_env) orelse config.default_pager;
 
     // Spawn pager process
     var child = std.process.Child.init(&.{ "/bin/sh", "-c", pager_cmd }, std.heap.page_allocator);

@@ -385,12 +385,14 @@ pub const Parser = struct {
 
     fn applyEnvDefaults(self: *Self, ctx: *Context) void {
         // Check NO_COLOR
-        if (std.posix.getenv("NO_COLOR")) |_| {
+        if (self.getEnvVar("NO_COLOR")) |v| {
+            self.allocator.free(v);
             ctx.no_color = true;
         }
 
         // Check TERM=dumb
-        if (std.posix.getenv("TERM")) |term| {
+        if (self.getEnvVar("TERM")) |term| {
+            defer self.allocator.free(term);
             if (mem.eql(u8, term, "dumb")) {
                 ctx.no_color = true;
             }
@@ -402,12 +404,19 @@ pub const Parser = struct {
                 // Check if secret - skip env for secrets
                 if (flag.secret == .from_file_or_stdin) continue;
 
-                if (std.posix.getenv(env_name)) |value| {
+                if (self.getEnvVar(env_name)) |value| {
+                    defer self.allocator.free(value);
                     const fval = self.parseValue(flag.ftype, value) catch continue;
                     self.setFlagValue(ctx, flag.name, fval) catch {};
                 }
             }
         }
+    }
+
+    /// Cross-platform environment variable lookup.
+    /// Returns an owned slice that the caller must free with self.allocator.
+    fn getEnvVar(self: *const Self, name: []const u8) ?[]const u8 {
+        return std.process.getEnvVarOwned(self.allocator, name) catch return null;
     }
 
     fn applyDefaultValues(self: *Self, ctx: *Context, cmd: *const Command) void {

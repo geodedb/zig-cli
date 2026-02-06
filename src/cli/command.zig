@@ -212,12 +212,14 @@ pub const Context = struct {
         if (!self.is_tty_out) return false;
 
         // Check TERM=dumb
-        if (std.posix.getenv("TERM")) |term| {
+        if (std.process.getEnvVarOwned(self.allocator, "TERM") catch null) |term| {
+            defer self.allocator.free(term);
             if (std.mem.eql(u8, term, "dumb")) return false;
         }
 
         // Check NO_COLOR environment variable
-        if (std.posix.getenv("NO_COLOR")) |_| {
+        if (std.process.getEnvVarOwned(self.allocator, "NO_COLOR") catch null) |v| {
+            self.allocator.free(v);
             return false;
         }
 
