@@ -26,6 +26,10 @@ Thumbs.db
 # Test artifacts
 *.log
 coverage/
+test_argv.o
+test_argv2
+test_buf
+*.o
 
 # Generated files
 completions/
