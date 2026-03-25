@@ -2,6 +2,9 @@
 # GitLab CI/CD Pipeline for cli
 # SPDX-License-Identifier: Apache-2.0
 
+# NOTE: Components are pinned to release tags (e.g., v1.7.1). For stronger
+# supply-chain guarantees, pin to full commit SHAs. See SECURITY_GAP_ANALYSIS.md
+# NS-001 for details. Current tags are from a first-party (devnw) catalog.
 include:
   # Security scanning
   - component: gitlab.com/devnw/ci-catalog/security-sast@v1.7.1
@@ -22,6 +25,20 @@ include:
 variables:
   ZIG_VERSION: "0.15.2"
 
+# Cache the Zig toolchain and build cache across jobs to avoid redundant
+# downloads (~45 MB per job). The install-zig template already has a
+# conditional check (`if [ ! -f "zig-${ZIG_VERSION}/zig" ]`) so it will
+# skip download on cache hit.
+default:
+  cache:
+    - key: "zig-${ZIG_VERSION}"
+      paths:
+        - "zig-${ZIG_VERSION}/"
+    - key: "zig-cache-${CI_COMMIT_REF_SLUG}"
+      paths:
+        - ".zig-cache/"
+      policy: pull-push
+
 stages:
   - lint
   - build
@@ -33,7 +50,10 @@ stages:
 
 # Zig installation template (SEC-R6-02: SHA-256 verified via ziglang.org index)
 .install-zig: &install-zig
-  - apt-get update && apt-get install -y curl xz-utils python3
+  - |
+    if ! command -v curl >/dev/null 2>&1 || ! command -v xz >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+      apt-get update && apt-get install -y curl xz-utils python3
+    fi
   - |
     if [ ! -f "zig-${ZIG_VERSION}/zig" ]; then
       ARCH=$(uname -m)
@@ -191,7 +211,12 @@ fuzz:
     - build
 
 # Benchmark regression detection.
-# Results are stored as artifacts for trend analysis.
+# Runs benchmarks, stores results, and compares against the previous run's
+# artifact. Warns on >20% regression in any benchmark.
+# The comparison uses per-operation times extracted from bench output lines.
+#
+# MR pipelines: blocking (allow_failure: false) -- regressions must be reviewed.
+# Main/schedule pipelines: soft (allow_failure: true) -- regressions are logged.
 bench-regression:
   stage: fuzz
   image: debian:bookworm-slim
@@ -199,14 +224,100 @@ bench-regression:
     - *install-zig
   script:
     - zig build bench -Doptimize=ReleaseFast 2>&1 | tee bench-results.txt
+    - |
+      # --- Benchmark regression comparison ---
+      # Try to download the previous run's artifact for comparison.
+      BASELINE="bench-baseline.txt"
+      HAS_BASELINE=false
+
+      if [ -n "${CI_API_V4_URL:-}" ] && [ -n "${CI_PROJECT_ID:-}" ]; then
+        curl -fsSL --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/main/raw/bench-results.txt?job=bench-regression" \
+          -o "${BASELINE}" 2>/dev/null && HAS_BASELINE=true || true
+      fi
+
+      if [ "$HAS_BASELINE" = "true" ] && [ -s "$BASELINE" ]; then
+        echo ""
+        echo "=== Benchmark Regression Check (threshold: 20%) ==="
+        echo ""
+        REGRESSION_FOUND=false
+
+        # Extract per-op times from bench output. Each benchmark line looks like:
+        #   <name>    <total> <unit>  ( <per_op> <unit>/op, <iters> iterations)
+        # We parse <name> and <per_op> in ns for comparison.
+
+        # Convert a value+unit pair to nanoseconds for comparison
+        to_ns() {
+          local val="$1" unit="$2"
+          case "$unit" in
+            s)  python3 -c "print(int(float('$val') * 1000000000))" ;;
+            ms) python3 -c "print(int(float('$val') * 1000000))" ;;
+            us) python3 -c "print(int(float('$val') * 1000))" ;;
+            ns) python3 -c "print(int(float('$val')))" ;;
+            *)  echo "0" ;;
+          esac
+        }
+
+        # Parse benchmark lines into "name per_op_ns" pairs
+        parse_bench() {
+          # Match lines with the per-op pattern: ( <number> <unit>/op,
+          grep -oP '^\s*(.+?)\s+[\d.]+\s+\S+\s+\(\s*([\d.]+)\s+(\S+)/op' "$1" | \
+          sed -E 's/^\s*(.+?)\s+[0-9.]+\s+\S+\s+\(\s*([0-9.]+)\s+(\S+)\/op/\1|\2|\3/' | \
+          while IFS='|' read -r name val unit; do
+            name=$(echo "$name" | sed 's/\s*$//')
+            ns=$(to_ns "$val" "$unit")
+            echo "${name}|${ns}"
+          done
+        }
+
+        # Build associative-style comparison
+        parse_bench bench-results.txt > /tmp/bench_current.txt
+        parse_bench "$BASELINE" > /tmp/bench_baseline.txt
+
+        while IFS='|' read -r name current_ns; do
+          baseline_ns=$(grep -F "${name}|" /tmp/bench_baseline.txt 2>/dev/null | head -1 | cut -d'|' -f2)
+          if [ -n "$baseline_ns" ] && [ "$baseline_ns" -gt 0 ] 2>/dev/null; then
+            pct_change=$(python3 -c "
+      curr, base = $current_ns, $baseline_ns
+      change = ((curr - base) / base) * 100
+      print(f'{change:+.1f}')
+      ")
+            # Check if regression exceeds 20%
+            is_regression=$(python3 -c "print('yes' if ($current_ns - $baseline_ns) / $baseline_ns > 0.20 else 'no')")
+            if [ "$is_regression" = "yes" ]; then
+              echo "  WARN: ${name}: ${pct_change}% regression (${baseline_ns}ns -> ${current_ns}ns)"
+              REGRESSION_FOUND=true
+            else
+              echo "  OK:   ${name}: ${pct_change}%"
+            fi
+          else
+            echo "  NEW:  ${name}: no baseline to compare"
+          fi
+        done < /tmp/bench_current.txt
+
+        echo ""
+        if [ "$REGRESSION_FOUND" = "true" ]; then
+          echo "WARNING: Benchmark regressions detected (>20% threshold)."
+          echo "Review results above."
+        else
+          echo "All benchmarks within acceptable range."
+        fi
+      else
+        echo ""
+        echo "No previous benchmark baseline found. Storing current results as baseline."
+        echo "Subsequent runs on main will compare against this baseline."
+      fi
   artifacts:
     paths:
       - bench-results.txt
     expire_in: 90 days
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      allow_failure: false
     - if: '$CI_COMMIT_BRANCH == "main"'
+      allow_failure: true
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
-  allow_failure: true
+      allow_failure: true
   needs:
     - build
 

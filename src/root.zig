@@ -12,7 +12,7 @@
 //! - Nested command trees with subcommands
 //! - Type-safe flag parsing (bool, int, float, string, path, arrays)
 //! - Automatic help generation with examples-first approach
-//! - Shell completion generation (bash, zsh, fish)
+//! - Shell completion generation (bash, zsh, fish, PowerShell)
 //! - Man page generation
 //! - Error messages with typo suggestions
 //!
@@ -63,7 +63,7 @@ pub const signal = @import("signal.zig");
 pub const prompt = @import("prompt.zig");
 
 /// Library version
-pub const version = "0.0.0";
+pub const version = "0.1.0";
 
 // ============================================================================
 // Convenience Re-exports

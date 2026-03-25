@@ -395,12 +395,17 @@ const root_cmd = cli.Command{
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    var parser = cli.Parser.init(&root_cmd, gpa.allocator());
-    const ctx = try parser.parse(std.os.argv);
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
-    if (ctx.getBool("help")) {
-        help.printHelpWithTemplate(&root_cmd, ctx, &deploy_template);
+    var parser = cli.Parser.init(allocator, &root_cmd, "1.0.0", "");
+    var result = try parser.parse(args);
+    defer result.deinit(allocator);
+
+    if (result.help_requested) {
+        help.printHelpWithTemplate(result.command, &result.context, &deploy_template);
         return;
     }
 

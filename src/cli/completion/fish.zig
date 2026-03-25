@@ -11,9 +11,45 @@ const command = @import("../command.zig");
 const Command = command.Command;
 const FlagSpec = command.FlagSpec;
 
+/// Escape a string for use inside fish single-quoted contexts.
+/// Escapes: ' as \', \ as \\
+/// Fast path: if no special chars, returns `s` directly (no allocation).
+pub fn escapeFishSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (s) |c| {
+        switch (c) {
+            '\'', '\\' => {
+                needs_escape = true;
+                break;
+            },
+            else => {},
+        }
+    }
+    if (!needs_escape) return s;
+
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        switch (c) {
+            '\'', '\\' => {
+                list.append(allocator, '\\') catch return error.OutOfMemory;
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+            else => {
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
 /// Generate fish completion script
 pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const esc_alloc = arena.allocator();
+
     var list: std.ArrayList(u8) = .empty;
+    list.ensureTotalCapacity(allocator, 4096) catch {};
     const w = list.writer(allocator);
 
     try w.print("# Fish completion for {s}\n", .{cmd.name});
@@ -23,13 +59,13 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     try w.print("complete -c {s} -f\n\n", .{cmd.name});
 
     // Generate completions for all commands recursively
-    try generateCommandCompletions(w, cmd, cmd.name, &.{});
+    try generateCommandCompletions(w, cmd, cmd.name, &.{}, esc_alloc);
 
     return list.toOwnedSlice(allocator);
 }
 
 /// Generate completions for a command and its subcommands recursively
-fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []const u8, path: []const []const u8) !void {
+fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []const u8, path: []const []const u8, esc_alloc: std.mem.Allocator) !void {
     // Build condition for this command level
     var condition_buf: [512]u8 = undefined;
     const condition = buildCondition(&condition_buf, path, cmd);
@@ -45,16 +81,19 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
         try w.print("\n", .{});
     }
 
-    // Global flags (only at root level)
+    // Global flags (only at root level, sourced from canonical command.global_flags)
     if (path.len == 0) {
-        try w.print("complete -c {s} -s h -l help -d 'Print help information'\n", .{root_name});
-        try w.print("complete -c {s} -s V -l version -d 'Print version information'\n", .{root_name});
-        try w.print("complete -c {s} -s q -l quiet -d 'Suppress non-essential output'\n", .{root_name});
-        try w.print("complete -c {s} -l json -d 'Output in JSON format'\n", .{root_name});
-        try w.print("complete -c {s} -l plain -d 'Output in plain text'\n", .{root_name});
-        try w.print("complete -c {s} -l no-color -d 'Disable colored output'\n", .{root_name});
-        try w.print("complete -c {s} -s n -l dry-run -d 'Show what would be done'\n", .{root_name});
-        try w.print("complete -c {s} -l no-input -d 'Disable interactive prompts'\n\n", .{root_name});
+        for (command.global_flags) |*gflag| {
+            try w.print("complete -c {s}", .{root_name});
+            if (gflag.short) |s| {
+                try w.print(" -s {c}", .{s});
+            }
+            const esc_gname = try escapeFishSingleQuote(esc_alloc, gflag.name);
+            try w.print(" -l '{s}'", .{esc_gname});
+            const esc_ghelp = try escapeFishSingleQuote(esc_alloc, gflag.help);
+            try w.print(" -d '{s}'\n", .{esc_ghelp});
+        }
+        try w.writeAll("\n");
     }
 
     // Command-specific flags
@@ -67,7 +106,8 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
             if (flag.short) |s| {
                 try w.print(" -s {c}", .{s});
             }
-            try w.print(" -l {s}", .{flag.name});
+            const esc_fname = try escapeFishSingleQuote(esc_alloc, flag.name);
+            try w.print(" -l '{s}'", .{esc_fname});
             if (flag.ftype != .bool) {
                 try w.print(" -r", .{}); // Requires argument
                 // Add value completions if available
@@ -75,14 +115,16 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
                     try w.writeAll(" -a '");
                     for (flag.completions, 0..) |val, i| {
                         if (i > 0) try w.writeAll(" ");
-                        try w.print("{s}", .{val});
+                        const esc_val = try escapeFishSingleQuote(esc_alloc, val);
+                        try w.print("{s}", .{esc_val});
                     }
                     try w.writeAll("'");
                 } else if (flag.ftype == .path) {
                     try w.writeAll(" -F"); // File completion
                 }
             }
-            try w.print(" -d '{s}'\n", .{flag.help});
+            const esc_flag_help = try escapeFishSingleQuote(esc_alloc, flag.help);
+            try w.print(" -d '{s}'\n", .{esc_flag_help});
         }
         try w.print("\n", .{});
     }
@@ -109,7 +151,9 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
                 if (subcmd_condition.len > 0) {
                     try w.print(" -n '{s}'", .{subcmd_condition});
                 }
-                try w.print(" -a {s} -d '{s}'\n", .{ subcmd.name, subcmd.summary });
+                const esc_name = try escapeFishSingleQuote(esc_alloc, subcmd.name);
+                const esc_summary = try escapeFishSingleQuote(esc_alloc, subcmd.summary);
+                try w.print(" -a '{s}' -d '{s}'\n", .{ esc_name, esc_summary });
             }
         }
         try w.print("\n", .{});
@@ -117,7 +161,7 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
         // Recursively generate completions for subcommands
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                // Build new path
+                // Build new path (limit: 16 levels of subcommand nesting)
                 var new_path: [16][]const u8 = undefined;
                 var new_path_len: usize = 0;
                 for (path) |p| {
@@ -127,7 +171,7 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
                 new_path[new_path_len] = subcmd.name;
                 new_path_len += 1;
 
-                try generateCommandCompletions(w, subcmd, root_name, new_path[0..new_path_len]);
+                try generateCommandCompletions(w, subcmd, root_name, new_path[0..new_path_len], esc_alloc);
             }
         }
     }
@@ -207,7 +251,7 @@ test "generate fish completion" {
     defer std.testing.allocator.free(script);
 
     try std.testing.expect(std.mem.indexOf(u8, script, "complete -c test") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l help") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'help'") != null);
 }
 
 test "fish: completion header comment" {
@@ -244,14 +288,14 @@ test "fish: completion global flags" {
     const script = try generate(&cmd, std.testing.allocator);
     defer std.testing.allocator.free(script);
 
-    try std.testing.expect(std.mem.indexOf(u8, script, "-s h -l help") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-s V -l version") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-s q -l quiet") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l json") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l plain") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l no-color") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-s n -l dry-run") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l no-input") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-s h -l 'help'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-s V -l 'version'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-s q -l 'quiet'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'json'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'plain'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'no-color'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-s n -l 'dry-run'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'no-input'") != null);
 }
 
 test "fish: completion with command flags" {
@@ -277,8 +321,8 @@ test "fish: completion with command flags" {
     defer std.testing.allocator.free(script);
 
     try std.testing.expect(std.mem.indexOf(u8, script, "-s c") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l config") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l verbose") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'config'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'verbose'") != null);
 }
 
 test "fish: completion flag requires argument" {
@@ -298,7 +342,7 @@ test "fish: completion flag requires argument" {
     defer std.testing.allocator.free(script);
 
     // Non-bool flags should have -r (requires argument)
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l output -r") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'output' -r") != null);
 }
 
 test "fish: completion with subcommands" {
@@ -320,8 +364,8 @@ test "fish: completion with subcommands" {
     defer std.testing.allocator.free(script);
 
     try std.testing.expect(std.mem.indexOf(u8, script, "__fish_use_subcommand") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-a start") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-a stop") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-a 'start'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-a 'stop'") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "Start the service") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "Stop the service") != null);
 }
@@ -345,8 +389,8 @@ test "fish: completion hides hidden subcommands" {
     const script = try generate(&cmd, std.testing.allocator);
     defer std.testing.allocator.free(script);
 
-    try std.testing.expect(std.mem.indexOf(u8, script, "-a visible") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-a hidden") == null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-a 'visible'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-a 'hidden'") == null);
 }
 
 test "fish: completion flag descriptions" {
@@ -383,7 +427,7 @@ test "fish: completion nested subcommands" {
 
     // Should have nested subcommand completions
     try std.testing.expect(std.mem.indexOf(u8, script, "__fish_seen_subcommand_from kv") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-a get") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-a 'get'") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "Get a value") != null);
 }
 
@@ -422,8 +466,8 @@ test "fish: completion nested subcommands with flags" {
     defer std.testing.allocator.free(script);
 
     // Should have flags for nested commands
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l store") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "-l key") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'store'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-l 'key'") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "-s k") != null);
 }
 
@@ -466,4 +510,36 @@ test "fish: path flag enables file completion" {
 
     // Path flags should have -F for file completion
     try std.testing.expect(std.mem.indexOf(u8, script, "-F") != null);
+}
+
+// ============================================================================
+// Shell Escape Function Tests
+// ============================================================================
+
+test "fish: escapeFishSingleQuote no special chars" {
+    const result = try escapeFishSingleQuote(std.testing.allocator, "hello world");
+    try std.testing.expectEqualStrings("hello world", result);
+}
+
+test "fish: escapeFishSingleQuote with single quote" {
+    const result = try escapeFishSingleQuote(std.testing.allocator, "it's here");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("it\\'s here", result);
+}
+
+test "fish: escapeFishSingleQuote with backslash" {
+    const result = try escapeFishSingleQuote(std.testing.allocator, "path\\to");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("path\\\\to", result);
+}
+
+test "fish: escapeFishSingleQuote empty string" {
+    const result = try escapeFishSingleQuote(std.testing.allocator, "");
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "fish: escapeFishSingleQuote with both special chars" {
+    const result = try escapeFishSingleQuote(std.testing.allocator, "it's a \\path");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("it\\'s a \\\\path", result);
 }

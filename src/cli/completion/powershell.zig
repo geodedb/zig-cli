@@ -13,7 +13,12 @@ const FlagSpec = command.FlagSpec;
 
 /// Generate PowerShell completion script
 pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const esc_alloc = arena.allocator();
+
     var list: std.ArrayList(u8) = .empty;
+    list.ensureTotalCapacity(allocator, 4096) catch {};
     const w = list.writer(allocator);
 
     // Header
@@ -42,20 +47,19 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     try w.writeAll("        }\n");
     try w.writeAll("    }\n\n");
 
-    // Global flags
+    // Global flags (sourced from canonical command.global_flags)
     try w.writeAll("    $globalFlags = @(\n");
-    try w.writeAll("        [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help information')\n");
-    try w.writeAll("        [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help information')\n");
-    try w.writeAll("        [CompletionResult]::new('--version', '--version', [CompletionResultType]::ParameterName, 'Print version information')\n");
-    try w.writeAll("        [CompletionResult]::new('-V', '-V', [CompletionResultType]::ParameterName, 'Print version information')\n");
-    try w.writeAll("        [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress non-essential output')\n");
-    try w.writeAll("        [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Suppress non-essential output')\n");
-    try w.writeAll("        [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Output in JSON format')\n");
-    try w.writeAll("        [CompletionResult]::new('--plain', '--plain', [CompletionResultType]::ParameterName, 'Output in plain text')\n");
-    try w.writeAll("        [CompletionResult]::new('--no-color', '--no-color', [CompletionResultType]::ParameterName, 'Disable colored output')\n");
-    try w.writeAll("        [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Show what would be done')\n");
-    try w.writeAll("        [CompletionResult]::new('-n', '-n', [CompletionResultType]::ParameterName, 'Show what would be done')\n");
-    try w.writeAll("        [CompletionResult]::new('--no-input', '--no-input', [CompletionResultType]::ParameterName, 'Disable interactive prompts')\n");
+    for (command.global_flags) |*gflag| {
+        const esc_help = try escapePowerShellString(esc_alloc, gflag.help);
+        try w.print("        [CompletionResult]::new('--{s}', '--{s}', [CompletionResultType]::ParameterName, '{s}')\n", .{
+            gflag.name, gflag.name, esc_help,
+        });
+        if (gflag.short) |s| {
+            try w.print("        [CompletionResult]::new('-{c}', '-{c}', [CompletionResultType]::ParameterName, '{s}')\n", .{
+                s, s, esc_help,
+            });
+        }
+    }
     try w.writeAll("    )\n\n");
 
     // Generate command tree matching logic
@@ -63,11 +67,11 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     try w.writeAll("    switch -Regex ($command -join '/') {\n");
 
     // Generate switch cases for all command paths
-    try generateCommandCases(w, cmd, "");
+    try generateCommandCases(w, cmd, "", esc_alloc);
 
     // Default case (root command)
     try w.writeAll("        default {\n");
-    try generateCompletionBlock(w, cmd, "            ");
+    try generateCompletionBlock(w, cmd, "            ", esc_alloc);
     try w.writeAll("        }\n");
 
     try w.writeAll("    }\n\n");
@@ -88,7 +92,7 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
 }
 
 /// Generate switch cases for command paths
-fn generateCommandCases(w: anytype, cmd: *const Command, path: []const u8) !void {
+fn generateCommandCases(w: anytype, cmd: *const Command, path: []const u8, esc_alloc: std.mem.Allocator) !void {
     for (cmd.subcommands) |subcmd| {
         if (subcmd.hidden) continue;
 
@@ -99,23 +103,24 @@ fn generateCommandCases(w: anytype, cmd: *const Command, path: []const u8) !void
             std.fmt.bufPrint(&new_path_buf, "{s}", .{subcmd.name}) catch "";
 
         // Exact match case
-        try w.print("        '^{s}$' {{\n", .{escapeRegex(new_path)});
-        try generateCompletionBlock(w, subcmd, "            ");
+        const esc_path = try escapeRegex(esc_alloc, new_path);
+        try w.print("        '^{s}$' {{\n", .{esc_path});
+        try generateCompletionBlock(w, subcmd, "            ", esc_alloc);
         try w.writeAll("        }\n");
 
         // Recurse for nested subcommands
         if (subcmd.subcommands.len > 0) {
-            try generateCommandCases(w, subcmd, new_path);
+            try generateCommandCases(w, subcmd, new_path, esc_alloc);
         }
     }
 }
 
 /// Generate completion block for a command
-fn generateCompletionBlock(w: anytype, cmd: *const Command, indent: []const u8) !void {
+fn generateCompletionBlock(w: anytype, cmd: *const Command, indent: []const u8, esc_alloc: std.mem.Allocator) !void {
     // Add command-specific flags
     try w.print("{s}$flags = @(\n", .{indent});
     for (cmd.flags) |*flag| {
-        try writePowerShellFlag(w, flag, indent);
+        try writePowerShellFlag(w, flag, indent, esc_alloc);
     }
     try w.print("{s})\n", .{indent});
 
@@ -124,8 +129,10 @@ fn generateCompletionBlock(w: anytype, cmd: *const Command, indent: []const u8) 
         try w.print("{s}$completions = @(\n", .{indent});
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
+                const esc_name = try escapePowerShellString(esc_alloc, subcmd.name);
+                const esc_summary = try escapePowerShellString(esc_alloc, subcmd.summary);
                 try w.print("{s}    [CompletionResult]::new('{s}', '{s}', [CompletionResultType]::ParameterValue, '{s}')\n", .{
-                    indent, subcmd.name, subcmd.name, escapePowerShellString(subcmd.summary),
+                    indent, esc_name, esc_name, esc_summary,
                 });
             }
         }
@@ -134,12 +141,13 @@ fn generateCompletionBlock(w: anytype, cmd: *const Command, indent: []const u8) 
 }
 
 /// Write a PowerShell flag completion entry
-fn writePowerShellFlag(w: anytype, flag: *const FlagSpec, indent: []const u8) !void {
-    const escaped_help = escapePowerShellString(flag.help);
+fn writePowerShellFlag(w: anytype, flag: *const FlagSpec, indent: []const u8, esc_alloc: std.mem.Allocator) !void {
+    const escaped_help = try escapePowerShellString(esc_alloc, flag.help);
+    const escaped_name = try escapePowerShellString(esc_alloc, flag.name);
 
     // Long flag
     try w.print("{s}    [CompletionResult]::new('--{s}', '--{s}', [CompletionResultType]::ParameterName, '{s}')\n", .{
-        indent, flag.name, flag.name, escaped_help,
+        indent, escaped_name, escaped_name, escaped_help,
     });
 
     // Short flag if available
@@ -152,25 +160,68 @@ fn writePowerShellFlag(w: anytype, flag: *const FlagSpec, indent: []const u8) !v
     // Add flag value completions if available
     if (flag.completions.len > 0) {
         for (flag.completions) |value| {
+            const escaped_val = try escapePowerShellString(esc_alloc, value);
             try w.print("{s}    [CompletionResult]::new('{s}', '{s}', [CompletionResultType]::ParameterValue, 'Value for --{s}')\n", .{
-                indent, value, value, flag.name,
+                indent, escaped_val, escaped_val, escaped_name,
             });
         }
     }
 }
 
-/// Escape special characters for PowerShell strings
-fn escapePowerShellString(s: []const u8) []const u8 {
-    // For now, just return as-is since we're using single quotes
-    // In a full implementation, we'd escape single quotes
-    return s;
+/// Escape special characters for PowerShell single-quoted strings.
+/// Doubles single quotes: ' -> ''
+/// Fast path: if no single quotes, returns `s` directly (no allocation).
+pub fn escapePowerShellString(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (s) |c| {
+        if (c == '\'') {
+            needs_escape = true;
+            break;
+        }
+    }
+    if (!needs_escape) return s;
+
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        if (c == '\'') {
+            list.append(allocator, '\'') catch return error.OutOfMemory;
+            list.append(allocator, '\'') catch return error.OutOfMemory;
+        } else {
+            list.append(allocator, c) catch return error.OutOfMemory;
+        }
+    }
+    return list.toOwnedSlice(allocator);
 }
 
-/// Escape special regex characters
-fn escapeRegex(s: []const u8) []const u8 {
-    // For simple paths, just return as-is
-    // In a full implementation, we'd escape special regex chars
-    return s;
+/// Escape special regex metacharacters for PowerShell regex patterns.
+/// Escapes: \, ., ^, $, *, +, ?, (, ), {, }, [, ], |
+/// Fast path: if no metacharacters, returns `s` directly (no allocation).
+pub fn escapeRegex(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (s) |c| {
+        switch (c) {
+            '\\', '.', '^', '$', '*', '+', '?', '(', ')', '{', '}', '[', ']', '|' => {
+                needs_escape = true;
+                break;
+            },
+            else => {},
+        }
+    }
+    if (!needs_escape) return s;
+
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        switch (c) {
+            '\\', '.', '^', '$', '*', '+', '?', '(', ')', '{', '}', '[', ']', '|' => {
+                list.append(allocator, '\\') catch return error.OutOfMemory;
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+            else => {
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+        }
+    }
+    return list.toOwnedSlice(allocator);
 }
 
 // ============================================================================
@@ -357,4 +408,64 @@ test "powershell: flag value completions" {
     try std.testing.expect(std.mem.indexOf(u8, script, "'json'") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "'yaml'") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "'toml'") != null);
+}
+
+// ============================================================================
+// Shell Escape Function Tests
+// ============================================================================
+
+test "powershell: escapePowerShellString no special chars" {
+    const result = try escapePowerShellString(std.testing.allocator, "hello world");
+    try std.testing.expectEqualStrings("hello world", result);
+}
+
+test "powershell: escapePowerShellString with single quote" {
+    const result = try escapePowerShellString(std.testing.allocator, "it's here");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("it''s here", result);
+}
+
+test "powershell: escapePowerShellString empty string" {
+    const result = try escapePowerShellString(std.testing.allocator, "");
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "powershell: escapePowerShellString multiple single quotes" {
+    const result = try escapePowerShellString(std.testing.allocator, "it's a 'test'");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("it''s a ''test''", result);
+}
+
+test "powershell: escapeRegex no special chars" {
+    const result = try escapeRegex(std.testing.allocator, "hello");
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "powershell: escapeRegex with dot" {
+    const result = try escapeRegex(std.testing.allocator, "file.txt");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("file\\.txt", result);
+}
+
+test "powershell: escapeRegex with multiple metacharacters" {
+    const result = try escapeRegex(std.testing.allocator, "a^b$c*d+e");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("a\\^b\\$c\\*d\\+e", result);
+}
+
+test "powershell: escapeRegex with brackets and pipe" {
+    const result = try escapeRegex(std.testing.allocator, "[a|b]");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("\\[a\\|b\\]", result);
+}
+
+test "powershell: escapeRegex with backslash" {
+    const result = try escapeRegex(std.testing.allocator, "path\\to");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("path\\\\to", result);
+}
+
+test "powershell: escapeRegex empty string" {
+    const result = try escapeRegex(std.testing.allocator, "");
+    try std.testing.expectEqualStrings("", result);
 }

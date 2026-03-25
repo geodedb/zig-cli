@@ -55,16 +55,14 @@ pub fn main() !void {
                 .ftype = .string,
             },
         },
-        .callback = runMain,
+        .run = runMain,
     };
 
-    var parser = cli.Parser.init(allocator, &root, "1.0.0", "My App");
-    const result = try parser.parse(std.os.argv);
-    defer result.context.deinit();
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
-    if (result.command.callback) |cb| {
-        try cb(&result.context);
-    }
+    const exit_code = try cli.run(&root, args, allocator);
+    std.process.exit(exit_code);
 }
 
 fn runMain(ctx: *cli.Context) !void {
@@ -92,10 +90,10 @@ const serve = cli.Command{
             .short = 'p',
             .help = "Port to listen on",
             .ftype = .int,
-            .default = "8080",
+            .default_str = "8080",
         },
     },
-    .callback = runServe,
+    .run = runServe,
 };
 
 const root = cli.Command{

@@ -20,6 +20,20 @@
 //! };
 //! printHelpWithTemplate(cmd, ctx, &template);
 //! ```
+//!
+//! ## Environment Variables Section
+//!
+//! Enable `show_env_section` and add `.env_vars` to the sections list to
+//! display a dedicated "Environment Variables" section in help output.
+//! This section collects all flags with `.env` set and optionally lists
+//! standard framework env vars (NO_COLOR, TERM).
+//!
+//! ```zig
+//! const template = HelpTemplate{
+//!     .sections = &.{ .usage, .flags, .env_vars },
+//!     .show_env_section = true,
+//! };
+//! ```
 
 const std = @import("std");
 const mem = std.mem;
@@ -28,6 +42,21 @@ const command = @import("command.zig");
 const Command = command.Command;
 const Context = command.Context;
 const FlagSpec = command.FlagSpec;
+
+// ============================================================================
+// ANSI escape code constants
+// ============================================================================
+
+/// Bold text
+const ansi_bold = "\x1b[1m";
+/// Reset all attributes
+const ansi_reset = "\x1b[0m";
+/// Red text (errors, required indicators)
+const ansi_red = "\x1b[31m";
+/// Yellow text (flags, deprecation warnings)
+const ansi_yellow = "\x1b[33m";
+/// Cyan text (command names, env vars)
+const ansi_cyan = "\x1b[36m";
 
 /// Help section types for template ordering
 pub const HelpSection = enum {
@@ -43,6 +72,8 @@ pub const HelpSection = enum {
     commands,
     /// List of flags/options
     flags,
+    /// Dedicated environment variables reference section
+    env_vars,
     /// Footer with additional hints
     footer,
 };
@@ -63,8 +94,15 @@ pub const HelpTemplate = struct {
     /// Header for flags section
     flags_header: []const u8 = "Flags",
 
+    /// Header for environment variables section
+    env_header: []const u8 = "Environment Variables",
+
     /// Whether to show global flags (--help, --version, etc.)
     show_global_flags: bool = true,
+    /// Whether to show the environment variables section
+    show_env_section: bool = false,
+    /// Whether to include standard env vars (NO_COLOR, TERM, etc.) in env section
+    show_standard_env_vars: bool = true,
     /// Whether to show the footer hint
     show_footer: bool = true,
     /// Custom footer text (null = default)
@@ -109,17 +147,33 @@ pub const HelpTemplate = struct {
     };
 };
 
-/// Print help for a command
+/// Print help for a command.
+/// Write errors (e.g., broken pipe) are silently ignored for CLI robustness.
 pub fn printHelp(cmd: *const Command, ctx: *Context) void {
     printHelpWithTemplate(cmd, ctx, &HelpTemplate.default);
 }
 
-/// Print help using a custom template
+/// Print help using a custom template.
+/// Write errors (e.g., broken pipe) are silently ignored for CLI robustness.
 pub fn printHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *const HelpTemplate) void {
     if (ctx.json) {
         printJsonHelp(cmd, ctx) catch {};
     } else {
         printTextHelpWithTemplate(cmd, ctx, template) catch {};
+    }
+}
+
+/// Print help, returning errors to callers that want to handle them.
+pub fn printHelpReturningError(cmd: *const Command, ctx: *Context) !void {
+    return printHelpWithTemplateReturningError(cmd, ctx, &HelpTemplate.default);
+}
+
+/// Print help with template, returning errors.
+pub fn printHelpWithTemplateReturningError(cmd: *const Command, ctx: *Context, template: *const HelpTemplate) !void {
+    if (ctx.json) {
+        try printJsonHelp(cmd, ctx);
+    } else {
+        try printTextHelpWithTemplate(cmd, ctx, template);
     }
 }
 
@@ -143,6 +197,7 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
             .description => try printSectionDescription(w, cmd, template),
             .commands => try printSectionCommands(w, use_color, cmd, template),
             .flags => try printSectionFlags(w, use_color, cmd, template),
+            .env_vars => try printSectionEnvVars(w, use_color, cmd, template),
             .footer => try printSectionFooter(w, cmd, template),
         }
     }
@@ -151,7 +206,7 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
 /// Print header section (name and summary)
 fn printSectionHeader(w: anytype, use_color: bool, cmd: *const Command) !void {
     if (use_color) {
-        try w.print("\x1b[1m{s}\x1b[0m", .{cmd.name});
+        try w.print(ansi_bold ++ "{s}" ++ ansi_reset, .{cmd.name});
     } else {
         try w.print("{s}", .{cmd.name});
     }
@@ -174,10 +229,7 @@ fn printSectionExamples(w: anytype, cmd: *const Command, template: *const HelpTe
     try w.print("\n{s}:\n", .{template.examples_header});
     for (cmd.examples) |example| {
         // Write indent
-        var i: u8 = 0;
-        while (i < template.indent) : (i += 1) {
-            try w.writeAll(" ");
-        }
+        try w.writeByteNTimes(' ', template.indent);
         try w.print("{s}\n", .{example});
     }
 }
@@ -194,34 +246,42 @@ fn printSectionDescription(w: anytype, cmd: *const Command, template: *const Hel
     try w.print("{s}\n", .{cmd.long_help});
 }
 
-/// Print commands section (with group support)
-fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, template: *const HelpTemplate) !void {
-    if (cmd.subcommands.len == 0) return;
-
-    // Collect unique groups
-    var groups: [32][]const u8 = undefined;
-    var group_count: usize = 0;
-
-    for (cmd.subcommands) |subcmd| {
+/// Collect unique group names from a command's visible subcommands.
+/// Returns the number of unique groups found.
+///
+/// **Limit:** At most 32 unique groups are tracked. Commands with more
+/// than 32 groups will have excess groups silently omitted from output.
+fn collectUniqueGroups(subcommands: []const *const Command, groups: *[32][]const u8) usize {
+    var count: usize = 0;
+    for (subcommands) |subcmd| {
         if (subcmd.hidden) continue;
         var found = false;
-        for (groups[0..group_count]) |g| {
-            if (std.mem.eql(u8, g, subcmd.group)) {
+        for (groups[0..count]) |g| {
+            if (mem.eql(u8, g, subcmd.group)) {
                 found = true;
                 break;
             }
         }
-        if (!found and group_count < 32) {
-            groups[group_count] = subcmd.group;
-            group_count += 1;
+        if (!found and count < groups.len) {
+            groups[count] = subcmd.group;
+            count += 1;
         }
     }
+    return count;
+}
+
+/// Print commands section (with group support)
+fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, template: *const HelpTemplate) !void {
+    if (cmd.subcommands.len == 0) return;
+
+    var groups: [32][]const u8 = undefined;
+    const group_count = collectUniqueGroups(cmd.subcommands, &groups);
 
     // Print commands by group
     for (groups[0..group_count]) |group_name| {
         if (group_name.len > 0) {
             if (use_color) {
-                try w.print("\n\x1b[1m{s}:\x1b[0m\n", .{group_name});
+                try w.print("\n" ++ ansi_bold ++ "{s}:" ++ ansi_reset ++ "\n", .{group_name});
             } else {
                 try w.print("\n{s}:\n", .{group_name});
             }
@@ -234,13 +294,10 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
             if (!std.mem.eql(u8, subcmd.group, group_name)) continue;
 
             // Write indent
-            var i: u8 = 0;
-            while (i < template.indent) : (i += 1) {
-                try w.writeAll(" ");
-            }
+            try w.writeByteNTimes(' ', template.indent);
 
             if (use_color) {
-                try w.print("\x1b[36m{s}\x1b[0m", .{subcmd.name});
+                try w.print(ansi_cyan ++ "{s}" ++ ansi_reset, .{subcmd.name});
             } else {
                 try w.print("{s}", .{subcmd.name});
             }
@@ -250,10 +307,7 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
             const col_width: usize = @as(usize, template.name_column_width) - template.indent;
             const sub_min_len: usize = @min(sub_name_len, col_width);
             const sub_padding: usize = col_width - sub_min_len;
-            var j: usize = 0;
-            while (j < sub_padding) : (j += 1) {
-                try w.writeAll(" ");
-            }
+            try w.writeByteNTimes(' ', sub_padding);
             try w.print("{s}\n", .{subcmd.summary});
         }
     }
@@ -265,56 +319,11 @@ fn printSectionFlags(w: anytype, use_color: bool, cmd: *const Command, template:
 
     try w.print("\n{s}:\n", .{template.flags_header});
 
-    // Global flags first (if enabled)
+    // Global flags first (if enabled) -- sourced from the canonical definition
     if (template.show_global_flags) {
-        try printFlagWithTemplate(w, use_color, template, &.{
-            .name = "help",
-            .short = 'h',
-            .help = "Print help information",
-            .ftype = .bool,
-        });
-        try printFlagWithTemplate(w, use_color, template, &.{
-            .name = "version",
-            .short = 'V',
-            .help = "Print version information",
-            .ftype = .bool,
-        });
-        try printFlagWithTemplate(w, use_color, template, &.{
-            .name = "quiet",
-            .short = 'q',
-            .help = "Suppress non-essential output",
-            .ftype = .bool,
-        });
-        try printFlagWithTemplate(w, use_color, template, &.{
-            .name = "json",
-            .short = null,
-            .help = "Output in JSON format",
-            .ftype = .bool,
-        });
-        try printFlagWithTemplate(w, use_color, template, &.{
-            .name = "plain",
-            .short = null,
-            .help = "Output in plain text (no formatting)",
-            .ftype = .bool,
-        });
-        try printFlagWithTemplate(w, use_color, template, &.{
-            .name = "no-color",
-            .short = null,
-            .help = "Disable colored output",
-            .ftype = .bool,
-        });
-        try printFlagWithTemplate(w, use_color, template, &.{
-            .name = "dry-run",
-            .short = 'n',
-            .help = "Show what would be done without doing it",
-            .ftype = .bool,
-        });
-        try printFlagWithTemplate(w, use_color, template, &.{
-            .name = "no-input",
-            .short = null,
-            .help = "Disable interactive prompts",
-            .ftype = .bool,
-        });
+        for (command.global_flags) |*gflag| {
+            try printFlagWithTemplate(w, use_color, template, gflag);
+        }
     }
 
     // Command-specific flags
@@ -323,18 +332,83 @@ fn printSectionFlags(w: anytype, use_color: bool, cmd: *const Command, template:
     }
 }
 
+/// Standard environment variables recognized by the CLI framework.
+/// Listed when `show_standard_env_vars` is true and `show_env_section` is true.
+const standard_env_vars: []const struct { name: []const u8, description: []const u8 } = &.{
+    .{ .name = "NO_COLOR", .description = "Disable colored output (any value)" },
+    .{ .name = "TERM", .description = "Terminal type (set to \"dumb\" to disable formatting)" },
+};
+
+/// Print a dedicated environment variables section.
+///
+/// Collects all flags (global + command-specific) that have an `.env` field set
+/// and lists them. Optionally appends standard framework env vars (NO_COLOR, TERM).
+fn printSectionEnvVars(w: anytype, use_color: bool, cmd: *const Command, template: *const HelpTemplate) !void {
+    if (!template.show_env_section) return;
+
+    // Count env-backed flags to decide whether to print the section
+    var env_count: usize = 0;
+    for (command.global_flags) |*gflag| {
+        if (gflag.env != null) env_count += 1;
+    }
+    for (cmd.flags) |*flag| {
+        if (flag.env != null) env_count += 1;
+    }
+
+    // If there are no env-backed flags and no standard vars to show, skip
+    if (env_count == 0 and !template.show_standard_env_vars) return;
+
+    try w.print("\n{s}:\n", .{template.env_header});
+
+    // Flag-sourced env vars
+    for (command.global_flags) |*gflag| {
+        if (gflag.env) |env_var| {
+            try printEnvVarEntry(w, use_color, template, env_var, gflag.help);
+        }
+    }
+    for (cmd.flags) |*flag| {
+        if (flag.env) |env_var| {
+            try printEnvVarEntry(w, use_color, template, env_var, flag.help);
+        }
+    }
+
+    // Standard framework env vars
+    if (template.show_standard_env_vars) {
+        for (standard_env_vars) |entry| {
+            try printEnvVarEntry(w, use_color, template, entry.name, entry.description);
+        }
+    }
+}
+
+/// Print a single environment variable entry in the env section.
+fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, name: []const u8, description: []const u8) !void {
+    try w.writeByteNTimes(' ', template.indent);
+
+    if (use_color) {
+        try w.print(ansi_cyan ++ "{s}" ++ ansi_reset, .{name});
+    } else {
+        try w.print("{s}", .{name});
+    }
+
+    // Padding to align descriptions
+    const name_len: usize = name.len;
+    const col_width: usize = @as(usize, template.name_column_width) - template.indent;
+    const min_len: usize = @min(name_len, col_width);
+    const pad: usize = col_width - min_len;
+    try w.writeByteNTimes(' ', pad);
+
+    try w.print("{s}\n", .{description});
+}
+
 /// Print a single flag with template settings
 fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTemplate, flag: *const FlagSpec) !void {
     // Write indent
-    var i: u8 = 0;
-    while (i < template.indent) : (i += 1) {
-        try w.writeAll(" ");
-    }
+    try w.writeByteNTimes(' ', template.indent);
 
     // Short flag
     if (flag.short) |s| {
         if (use_color) {
-            try w.print("\x1b[33m-{c}\x1b[0m, ", .{s});
+            try w.print(ansi_yellow ++ "-{c}" ++ ansi_reset ++ ", ", .{s});
         } else {
             try w.print("-{c}, ", .{s});
         }
@@ -344,7 +418,7 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
 
     // Long flag
     if (use_color) {
-        try w.print("\x1b[33m--{s}\x1b[0m", .{flag.name});
+        try w.print(ansi_yellow ++ "--{s}" ++ ansi_reset, .{flag.name});
     } else {
         try w.print("--{s}", .{flag.name});
     }
@@ -354,10 +428,7 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     const col_width: usize = @as(usize, template.name_column_width) - template.indent - 6; // -6 for "  -X, "
     const min_len: usize = @min(name_len, col_width);
     const padding_amount: usize = if (col_width > min_len) col_width - min_len else 0;
-    var j: usize = 0;
-    while (j < padding_amount) : (j += 1) {
-        try w.writeAll(" ");
-    }
+    try w.writeByteNTimes(' ', padding_amount);
 
     // Help text
     try w.print("{s}", .{flag.help});
@@ -370,7 +441,7 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     // Required indicator
     if (flag.required) {
         if (use_color) {
-            try w.print(" \x1b[31m(required)\x1b[0m", .{});
+            try w.print(" " ++ ansi_red ++ "(required)" ++ ansi_reset, .{});
         } else {
             try w.print(" (required)", .{});
         }
@@ -379,7 +450,7 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     // Deprecated indicator
     if (flag.is_deprecated) {
         if (use_color) {
-            try w.print(" \x1b[33m(deprecated)\x1b[0m", .{});
+            try w.print(" " ++ ansi_yellow ++ "(deprecated)" ++ ansi_reset, .{});
         } else {
             try w.print(" (deprecated)", .{});
         }
@@ -388,7 +459,7 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     // Environment variable indicator
     if (flag.env) |env_var| {
         if (use_color) {
-            try w.print(" \x1b[36m[${s}]\x1b[0m", .{env_var});
+            try w.print(" " ++ ansi_cyan ++ "[${s}]" ++ ansi_reset, .{env_var});
         } else {
             try w.print(" [${s}]", .{env_var});
         }
@@ -408,225 +479,40 @@ fn printSectionFooter(w: anytype, cmd: *const Command, template: *const HelpTemp
     }
 }
 
-/// Print text-format help
-fn printTextHelp(cmd: *const Command, ctx: *Context) !void {
-    const w = ctx.stdout;
-    const use_color = ctx.useColor();
-
-    // Header
-    if (use_color) {
-        try w.print("\x1b[1m{s}\x1b[0m", .{cmd.name});
-    } else {
-        try w.print("{s}", .{cmd.name});
-    }
-    try w.print(" - {s}\n", .{cmd.summary});
-
-    // Usage
-    try w.print("\nUsage: {s} [flags]", .{cmd.name});
-    if (cmd.hasSubcommands()) {
-        try w.print(" <command> [args]", .{});
-    }
-    try w.print("\n", .{});
-
-    // Examples (examples-first approach)
-    if (cmd.examples.len > 0) {
-        try w.print("\nExamples:\n", .{});
-        for (cmd.examples) |example| {
-            try w.print("  {s}\n", .{example});
-        }
-    }
-
-    // Long help if available
-    if (cmd.long_help.len > 0) {
-        try w.print("\n{s}\n", .{cmd.long_help});
-    }
-
-    // Subcommands (grouped by group name)
-    if (cmd.subcommands.len > 0) {
-        // Collect unique groups
-        var groups: [32][]const u8 = undefined;
-        var group_count: usize = 0;
-
-        // First pass: collect unique group names (empty string = ungrouped)
-        for (cmd.subcommands) |subcmd| {
-            if (subcmd.hidden) continue;
-            var found = false;
-            for (groups[0..group_count]) |g| {
-                if (std.mem.eql(u8, g, subcmd.group)) {
-                    found = true;
-                    break;
-                }
+/// Write a JSON-escaped string value (without surrounding quotes).
+/// Escapes: ", \, control characters (\n, \r, \t, and chars < 0x20 as \uXXXX).
+/// Write a JSON-escaped string to `w`. Uses span-based flushing: runs of
+/// non-special characters are written in a single `writeAll` call, reducing
+/// the number of writer calls from O(n) to O(specials).
+pub fn writeJsonEscapedString(w: anytype, s: []const u8) !void {
+    var start: usize = 0;
+    for (s, 0..) |c, idx| {
+        const escape: ?[]const u8 = switch (c) {
+            '"' => "\\\"",
+            '\\' => "\\\\",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            else => if (c < 0x20) @as(?[]const u8, "") else null,
+        };
+        if (escape) |esc| {
+            // Flush the span of clean characters before this special char
+            if (idx > start) {
+                try w.writeAll(s[start..idx]);
             }
-            if (!found and group_count < 32) {
-                groups[group_count] = subcmd.group;
-                group_count += 1;
-            }
-        }
-
-        // Print commands by group
-        for (groups[0..group_count]) |group_name| {
-            if (group_name.len > 0) {
-                // Named group
-                if (use_color) {
-                    try w.print("\n\x1b[1m{s}:\x1b[0m\n", .{group_name});
-                } else {
-                    try w.print("\n{s}:\n", .{group_name});
-                }
+            if (esc.len > 0) {
+                try w.writeAll(esc);
             } else {
-                // Default "Commands" group for ungrouped commands
-                try w.print("\nCommands:\n", .{});
+                // Control character -- emit \uXXXX
+                try w.print("\\u{x:0>4}", .{@as(u16, c)});
             }
-
-            for (cmd.subcommands) |subcmd| {
-                if (subcmd.hidden) continue;
-                if (!std.mem.eql(u8, subcmd.group, group_name)) continue;
-
-                if (use_color) {
-                    try w.print("  \x1b[36m{s}\x1b[0m", .{subcmd.name});
-                } else {
-                    try w.print("  {s}", .{subcmd.name});
-                }
-                // Padding
-                const sub_name_len: usize = subcmd.name.len;
-                const sub_min_len: usize = @min(sub_name_len, 18);
-                const sub_padding: usize = 20 - sub_min_len;
-                for (0..sub_padding) |_| {
-                    try w.writeAll(" ");
-                }
-                try w.print("{s}\n", .{subcmd.summary});
-            }
+            start = idx + 1;
         }
     }
-
-    // Flags
-    if (cmd.flags.len > 0 or true) { // Always show global flags
-        try w.print("\nFlags:\n", .{});
-
-        // Global flags first
-        try printFlag(w, use_color, &.{
-            .name = "help",
-            .short = 'h',
-            .help = "Print help information",
-            .ftype = .bool,
-        });
-        try printFlag(w, use_color, &.{
-            .name = "version",
-            .short = 'V',
-            .help = "Print version information",
-            .ftype = .bool,
-        });
-        try printFlag(w, use_color, &.{
-            .name = "quiet",
-            .short = 'q',
-            .help = "Suppress non-essential output",
-            .ftype = .bool,
-        });
-        try printFlag(w, use_color, &.{
-            .name = "json",
-            .short = null,
-            .help = "Output in JSON format",
-            .ftype = .bool,
-        });
-        try printFlag(w, use_color, &.{
-            .name = "plain",
-            .short = null,
-            .help = "Output in plain text (no formatting)",
-            .ftype = .bool,
-        });
-        try printFlag(w, use_color, &.{
-            .name = "no-color",
-            .short = null,
-            .help = "Disable colored output",
-            .ftype = .bool,
-        });
-        try printFlag(w, use_color, &.{
-            .name = "dry-run",
-            .short = 'n',
-            .help = "Show what would be done without doing it",
-            .ftype = .bool,
-        });
-        try printFlag(w, use_color, &.{
-            .name = "no-input",
-            .short = null,
-            .help = "Disable interactive prompts",
-            .ftype = .bool,
-        });
-
-        // Command-specific flags
-        for (cmd.flags) |*flag| {
-            try printFlag(w, use_color, flag);
-        }
+    // Flush remaining clean characters
+    if (start < s.len) {
+        try w.writeAll(s[start..]);
     }
-
-    try w.print("\nFor full help: {s} --help\n", .{cmd.name});
-}
-
-fn printFlag(w: anytype, use_color: bool, flag: *const FlagSpec) !void {
-    try w.print("  ", .{});
-
-    // Short flag
-    if (flag.short) |s| {
-        if (use_color) {
-            try w.print("\x1b[33m-{c}\x1b[0m, ", .{s});
-        } else {
-            try w.print("-{c}, ", .{s});
-        }
-    } else {
-        try w.print("    ", .{});
-    }
-
-    // Long flag
-    if (use_color) {
-        try w.print("\x1b[33m--{s}\x1b[0m", .{flag.name});
-    } else {
-        try w.print("--{s}", .{flag.name});
-    }
-
-    // Padding
-    const name_len: usize = flag.name.len;
-    const min_len: usize = @min(name_len, 14);
-    const padding: usize = 16 - min_len;
-    for (0..padding) |_| {
-        try w.writeAll(" ");
-    }
-
-    // Help text
-    try w.print("{s}", .{flag.help});
-
-    // Default value
-    if (flag.default_str) |def| {
-        try w.print(" [default: {s}]", .{def});
-    }
-
-    // Required indicator
-    if (flag.required) {
-        if (use_color) {
-            try w.print(" \x1b[31m(required)\x1b[0m", .{});
-        } else {
-            try w.print(" (required)", .{});
-        }
-    }
-
-    // Deprecated indicator
-    if (flag.is_deprecated) {
-        if (use_color) {
-            try w.print(" \x1b[33m(deprecated)\x1b[0m", .{});
-        } else {
-            try w.print(" (deprecated)", .{});
-        }
-    }
-
-    // Environment variable indicator
-    if (flag.env) |env_var| {
-        if (use_color) {
-            try w.print(" \x1b[36m[$", .{});
-            try w.print("{s}]\x1b[0m", .{env_var});
-        } else {
-            try w.print(" [${s}]", .{env_var});
-        }
-    }
-
-    try w.print("\n", .{});
 }
 
 /// Print JSON-format help
@@ -634,13 +520,19 @@ fn printJsonHelp(cmd: *const Command, ctx: *Context) !void {
     const w = ctx.stdout;
 
     try w.print("{{", .{});
-    try w.print("\"name\":\"{s}\",", .{cmd.name});
-    try w.print("\"summary\":\"{s}\",", .{cmd.summary});
-    try w.print("\"usage\":\"{s} [flags]", .{cmd.name});
+    try w.writeAll("\"name\":\"");
+    try writeJsonEscapedString(w, cmd.name);
+    try w.writeAll("\",");
+    try w.writeAll("\"summary\":\"");
+    try writeJsonEscapedString(w, cmd.summary);
+    try w.writeAll("\",");
+    try w.writeAll("\"usage\":\"");
+    try writeJsonEscapedString(w, cmd.name);
+    try w.writeAll(" [flags]");
     if (cmd.hasSubcommands()) {
-        try w.print(" <command> [args]", .{});
+        try w.writeAll(" <command> [args]");
     }
-    try w.print("\",", .{});
+    try w.writeAll("\",");
 
     // Flags
     try w.print("\"flags\":[", .{});
@@ -668,7 +560,11 @@ fn printJsonHelp(cmd: *const Command, ctx: *Context) !void {
         if (subcmd.hidden) continue;
         if (!first) try w.print(",", .{});
         first = false;
-        try w.print("{{\"name\":\"{s}\",\"summary\":\"{s}\"}}", .{ subcmd.name, subcmd.summary });
+        try w.writeAll("{\"name\":\"");
+        try writeJsonEscapedString(w, subcmd.name);
+        try w.writeAll("\",\"summary\":\"");
+        try writeJsonEscapedString(w, subcmd.summary);
+        try w.writeAll("\"}");
     }
     try w.print("]", .{});
 
@@ -677,7 +573,12 @@ fn printJsonHelp(cmd: *const Command, ctx: *Context) !void {
 
 fn printJsonFlag(w: anytype, flag: *const FlagSpec) !void {
     try w.print("{{", .{});
-    try w.print("\"name\":\"{s}\",", .{flag.name});
+    try w.writeAll("\"name\":\"");
+    try writeJsonEscapedString(w, flag.name);
+    try w.writeAll("\",");
+    try w.writeAll("\"help\":\"");
+    try writeJsonEscapedString(w, flag.help);
+    try w.writeAll("\",");
     if (flag.short) |s| {
         try w.print("\"short\":\"{c}\",", .{s});
     } else {
@@ -686,11 +587,57 @@ fn printJsonFlag(w: anytype, flag: *const FlagSpec) !void {
     try w.print("\"type\":\"{s}\",", .{flag.ftype.format()});
     try w.print("\"required\":{},", .{flag.required});
     if (flag.env) |env_var| {
-        try w.print("\"env\":\"{s}\"", .{env_var});
+        try w.writeAll("\"env\":\"");
+        try writeJsonEscapedString(w, env_var);
+        try w.writeAll("\"");
     } else {
         try w.print("\"env\":null", .{});
     }
     try w.print("}}", .{});
+}
+
+/// Write a roff-escaped version of a user string.
+/// Escapes: `\` -> `\\`, `-` -> `\-`, leading `.` -> `\&.`, leading `'` -> `\&'`.
+/// After newlines, `.` and `'` at the start of a new line are also escaped
+/// to prevent roff command injection.
+pub fn writeRoffEscaped(w: anytype, s: []const u8) !void {
+    var at_line_start = true;
+    for (s) |c| {
+        switch (c) {
+            '\\' => {
+                try w.writeAll("\\\\");
+                at_line_start = false;
+            },
+            '-' => {
+                try w.writeAll("\\-");
+                at_line_start = false;
+            },
+            '.' => {
+                if (at_line_start) {
+                    try w.writeAll("\\&.");
+                } else {
+                    try w.writeByte(c);
+                }
+                at_line_start = false;
+            },
+            '\'' => {
+                if (at_line_start) {
+                    try w.writeAll("\\&'");
+                } else {
+                    try w.writeByte(c);
+                }
+                at_line_start = false;
+            },
+            '\n' => {
+                try w.writeByte('\n');
+                at_line_start = true;
+            },
+            else => {
+                try w.writeByte(c);
+                at_line_start = false;
+            },
+        }
+    }
 }
 
 /// Generate man page in roff format
@@ -698,78 +645,102 @@ pub fn generateMan(cmd: *const Command, allocator: std.mem.Allocator) ![]const u
     var list: std.ArrayList(u8) = .empty;
     const w = list.writer(allocator);
 
-    try w.print(".TH {s} 1\n", .{cmd.name});
-    try w.print(".SH NAME\n", .{});
-    try w.print("{s} \\- {s}\n", .{ cmd.name, cmd.summary });
+    try w.writeAll(".TH ");
+    try writeRoffEscaped(w, cmd.name);
+    try w.writeAll(" 1\n");
+    try w.writeAll(".SH NAME\n");
+    try writeRoffEscaped(w, cmd.name);
+    try w.writeAll(" \\- ");
+    try writeRoffEscaped(w, cmd.summary);
+    try w.writeAll("\n");
 
-    try w.print(".SH SYNOPSIS\n", .{});
-    try w.print(".B {s}\n", .{cmd.name});
-    try w.print("[\\fIOPTIONS\\fR] ", .{});
+    try w.writeAll(".SH SYNOPSIS\n");
+    try w.writeAll(".B ");
+    try writeRoffEscaped(w, cmd.name);
+    try w.writeAll("\n");
+    try w.writeAll("[\\fIOPTIONS\\fR] ");
     if (cmd.hasSubcommands()) {
-        try w.print("<\\fICOMMAND\\fR> [\\fIARGS\\fR]", .{});
+        try w.writeAll("<\\fICOMMAND\\fR> [\\fIARGS\\fR]");
     }
-    try w.print("\n", .{});
+    try w.writeAll("\n");
 
     if (cmd.long_help.len > 0) {
-        try w.print(".SH DESCRIPTION\n", .{});
-        try w.print("{s}\n", .{cmd.long_help});
+        try w.writeAll(".SH DESCRIPTION\n");
+        try writeRoffEscaped(w, cmd.long_help);
+        try w.writeAll("\n");
     }
 
     if (cmd.examples.len > 0) {
-        try w.print(".SH EXAMPLES\n", .{});
+        try w.writeAll(".SH EXAMPLES\n");
         for (cmd.examples) |example| {
-            try w.print(".TP\n", .{});
-            try w.print("\\fB{s}\\fR\n", .{example});
+            try w.writeAll(".TP\n\\fB");
+            try writeRoffEscaped(w, example);
+            try w.writeAll("\\fR\n");
         }
     }
 
-    try w.print(".SH OPTIONS\n", .{});
+    try w.writeAll(".SH OPTIONS\n");
     for (cmd.flags) |*flag| {
-        try w.print(".TP\n", .{});
+        try w.writeAll(".TP\n");
         if (flag.short) |s| {
             try w.print("\\fB\\-{c}\\fR, ", .{s});
         }
-        try w.print("\\fB\\-\\-{s}\\fR\n", .{flag.name});
-        try w.print("{s}\n", .{flag.help});
+        try w.writeAll("\\fB\\-\\-");
+        try writeRoffEscaped(w, flag.name);
+        try w.writeAll("\\fR\n");
+        try writeRoffEscaped(w, flag.help);
+        try w.writeAll("\n");
     }
 
     if (cmd.subcommands.len > 0) {
-        try w.print(".SH COMMANDS\n", .{});
+        try w.writeAll(".SH COMMANDS\n");
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                try w.print(".TP\n", .{});
-                try w.print("\\fB{s}\\fR\n", .{subcmd.name});
-                try w.print("{s}\n", .{subcmd.summary});
+                try w.writeAll(".TP\n\\fB");
+                try writeRoffEscaped(w, subcmd.name);
+                try w.writeAll("\\fR\n");
+                try writeRoffEscaped(w, subcmd.summary);
+                try w.writeAll("\n");
             }
         }
     }
 
-    try w.print(".SH AUTHOR\n", .{});
-    try w.print("DevNW\n", .{});
+    // AUTHOR section: use explicit author if set, otherwise fall back to the
+    // command name (a common man-page convention for generated pages).
+    const author = if (cmd.author.len > 0) cmd.author else cmd.name;
+    try w.writeAll(".SH AUTHOR\n");
+    try writeRoffEscaped(w, author);
+    try w.writeAll("\n");
 
     return list.toOwnedSlice(allocator);
 }
 
-/// Print version information
+/// Print version information.
+/// Write errors (e.g., broken pipe) are silently ignored for CLI robustness.
 pub fn printVersion(cmd: *const Command, ctx: *Context) void {
     printVersionImpl(cmd, ctx) catch {};
 }
 
+/// Print version, returning errors to callers that want to handle them.
+pub fn printVersionReturningError(cmd: *const Command, ctx: *Context) !void {
+    try printVersionImpl(cmd, ctx);
+}
+
+/// Default version string used when no version is specified on a command.
+pub const default_version = "0.0.0";
+
 fn printVersionImpl(cmd: *const Command, ctx: *Context) !void {
     const w = ctx.stdout;
+    const version = if (cmd.version.len > 0) cmd.version else default_version;
 
     if (ctx.json) {
-        try w.print("{{\"name\":\"{s}\",\"version\":\"{s}\"}}\n", .{
-            cmd.name,
-            if (cmd.version.len > 0) cmd.version else "0.0.0",
-        });
+        try w.writeAll("{\"name\":\"");
+        try writeJsonEscapedString(w, cmd.name);
+        try w.writeAll("\",\"version\":\"");
+        try writeJsonEscapedString(w, version);
+        try w.writeAll("\"}\n");
     } else {
-        try w.print("{s} ", .{cmd.name});
-        if (cmd.version.len > 0) {
-            try w.print("{s}\n", .{cmd.version});
-        } else {
-            try w.print("0.0.0\n", .{});
-        }
+        try w.print("{s} {s}\n", .{ cmd.name, version });
     }
 }
 
@@ -781,6 +752,22 @@ pub fn generateMarkdown(cmd: *const Command, allocator: std.mem.Allocator) ![]co
     try generateMarkdownCommand(w, cmd, 1);
 
     return list.toOwnedSlice(allocator);
+}
+
+/// Write a string to `w` with characters escaped for Markdown table cells.
+/// Escapes: `|` -> `\|`, `\` -> `\\` (only before pipe or backslash).
+fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
+    var start: usize = 0;
+    for (s, 0..) |c, idx| {
+        if (c == '|') {
+            if (idx > start) try w.writeAll(s[start..idx]);
+            try w.writeAll("\\|");
+            start = idx + 1;
+        }
+    }
+    if (start < s.len) {
+        try w.writeAll(s[start..]);
+    }
 }
 
 fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void {
@@ -825,19 +812,26 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
             if (flag.short) |s| {
                 try w.print("`-{c}`, ", .{s});
             }
-            try w.print("`--{s}` | {s}", .{ flag.name, flag.help });
+            try w.writeAll("`--");
+            try writeMarkdownEscaped(w, flag.name);
+            try w.writeAll("` | ");
+            try writeMarkdownEscaped(w, flag.help);
             if (flag.required) {
                 try w.print(" **(required)**", .{});
             }
             try w.print(" | ", .{});
             if (flag.default_str) |def| {
-                try w.print("`{s}`", .{def});
+                try w.writeAll("`");
+                try writeMarkdownEscaped(w, def);
+                try w.writeAll("`");
             } else {
                 try w.print("-", .{});
             }
             try w.print(" | ", .{});
             if (flag.env) |env_var| {
-                try w.print("`${s}`", .{env_var});
+                try w.writeAll("`$");
+                try writeMarkdownEscaped(w, env_var);
+                try w.writeAll("`");
             } else {
                 try w.print("-", .{});
             }
@@ -850,24 +844,8 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
     if (cmd.subcommands.len > 0) {
         try w.print("## Commands\n\n", .{});
 
-        // Collect unique groups
         var groups: [32][]const u8 = undefined;
-        var group_count: usize = 0;
-
-        for (cmd.subcommands) |subcmd| {
-            if (subcmd.hidden) continue;
-            var found = false;
-            for (groups[0..group_count]) |g| {
-                if (mem.eql(u8, g, subcmd.group)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found and group_count < 32) {
-                groups[group_count] = subcmd.group;
-                group_count += 1;
-            }
-        }
+        const group_count = collectUniqueGroups(cmd.subcommands, &groups);
 
         // Print commands by group
         for (groups[0..group_count]) |group_name| {
@@ -881,7 +859,11 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
             for (cmd.subcommands) |subcmd| {
                 if (subcmd.hidden) continue;
                 if (!mem.eql(u8, subcmd.group, group_name)) continue;
-                try w.print("| `{s}` | {s} |\n", .{ subcmd.name, subcmd.summary });
+                try w.writeAll("| `");
+                try writeMarkdownEscaped(w, subcmd.name);
+                try w.writeAll("` | ");
+                try writeMarkdownEscaped(w, subcmd.summary);
+                try w.writeAll(" |\n");
             }
             try w.print("\n", .{});
         }
@@ -899,6 +881,44 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "writeRoffEscaped escapes special chars" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeRoffEscaped(w, "hello-world");
+    try std.testing.expectEqualStrings("hello\\-world", list.items);
+
+    list.clearRetainingCapacity();
+    try writeRoffEscaped(w, "path\\to");
+    try std.testing.expectEqualStrings("path\\\\to", list.items);
+
+    list.clearRetainingCapacity();
+    try writeRoffEscaped(w, ".TH inject");
+    try std.testing.expectEqualStrings("\\&.TH inject", list.items);
+
+    list.clearRetainingCapacity();
+    try writeRoffEscaped(w, "'comment");
+    try std.testing.expectEqualStrings("\\&'comment", list.items);
+
+    list.clearRetainingCapacity();
+    try writeRoffEscaped(w, "normal text");
+    try std.testing.expectEqualStrings("normal text", list.items);
+}
+
+test "writeRoffEscaped escapes dot after newline to prevent injection" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeRoffEscaped(w, "line1\n.system echo pwned");
+    try std.testing.expectEqualStrings("line1\n\\&.system echo pwned", list.items);
+
+    list.clearRetainingCapacity();
+    try writeRoffEscaped(w, "line1\n'comment injection");
+    try std.testing.expectEqualStrings("line1\n\\&'comment injection", list.items);
+}
 
 test "generateMan" {
     const cmd = Command{
@@ -1035,8 +1055,9 @@ test "help: generateMan with examples" {
     defer std.testing.allocator.free(man);
 
     try std.testing.expect(mem.indexOf(u8, man, ".SH EXAMPLES") != null);
-    try std.testing.expect(mem.indexOf(u8, man, "myapp start --config app.toml") != null);
-    try std.testing.expect(mem.indexOf(u8, man, "myapp stop --force") != null);
+    // Dashes are roff-escaped to \-
+    try std.testing.expect(mem.indexOf(u8, man, "myapp start \\-\\-config app.toml") != null);
+    try std.testing.expect(mem.indexOf(u8, man, "myapp stop \\-\\-force") != null);
     try std.testing.expect(mem.indexOf(u8, man, "myapp status") != null);
 }
 
@@ -1054,7 +1075,21 @@ test "help: generateMan with description" {
     try std.testing.expect(mem.indexOf(u8, man, "This is a detailed description") != null);
 }
 
-test "help: generateMan includes author section" {
+test "help: generateMan includes author section when set" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .author = "DevNW",
+    };
+
+    const man = try generateMan(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(man);
+
+    try std.testing.expect(mem.indexOf(u8, man, ".SH AUTHOR") != null);
+    try std.testing.expect(mem.indexOf(u8, man, "DevNW") != null);
+}
+
+test "help: generateMan falls back to command name when author not set" {
     const cmd = Command{
         .name = "myapp",
         .summary = "My application",
@@ -1064,7 +1099,7 @@ test "help: generateMan includes author section" {
     defer std.testing.allocator.free(man);
 
     try std.testing.expect(mem.indexOf(u8, man, ".SH AUTHOR") != null);
-    try std.testing.expect(mem.indexOf(u8, man, "DevNW") != null);
+    try std.testing.expect(mem.indexOf(u8, man, "myapp") != null);
 }
 
 test "help: generateMan with subcommands shows COMMAND in synopsis" {
@@ -1111,6 +1146,7 @@ test "help: generateMan complete real-world example" {
                 .ftype = .path,
             },
         },
+        .author = "Webapp Team",
     };
 
     const man = try generateMan(&cmd, std.testing.allocator);
@@ -1125,6 +1161,7 @@ test "help: generateMan complete real-world example" {
     try std.testing.expect(mem.indexOf(u8, man, ".SH OPTIONS") != null);
     try std.testing.expect(mem.indexOf(u8, man, ".SH COMMANDS") != null);
     try std.testing.expect(mem.indexOf(u8, man, ".SH AUTHOR") != null);
+    try std.testing.expect(mem.indexOf(u8, man, "Webapp Team") != null);
 }
 
 // ============================================================================
@@ -1387,6 +1424,25 @@ test "help: env vars shown with dash when not set" {
     try std.testing.expect(count >= 1);
 }
 
+test "help: writeMarkdownEscaped escapes pipe in table cells" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeMarkdownEscaped(w, "a|b|c");
+    const result = list.items;
+    try std.testing.expectEqualStrings("a\\|b\\|c", result);
+}
+
+test "help: writeMarkdownEscaped no special chars" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeMarkdownEscaped(w, "hello world");
+    try std.testing.expectEqualStrings("hello world", list.items);
+}
+
 // ============================================================================
 // HelpTemplate Tests
 // ============================================================================
@@ -1463,11 +1519,262 @@ test "help: HelpTemplate formatting options" {
 
 test "help: HelpSection enum values" {
     // Ensure all section types exist
-    try std.testing.expectEqual(@as(u3, 0), @intFromEnum(HelpSection.header));
-    try std.testing.expectEqual(@as(u3, 1), @intFromEnum(HelpSection.usage));
-    try std.testing.expectEqual(@as(u3, 2), @intFromEnum(HelpSection.examples));
-    try std.testing.expectEqual(@as(u3, 3), @intFromEnum(HelpSection.description));
-    try std.testing.expectEqual(@as(u3, 4), @intFromEnum(HelpSection.commands));
-    try std.testing.expectEqual(@as(u3, 5), @intFromEnum(HelpSection.flags));
-    try std.testing.expectEqual(@as(u3, 6), @intFromEnum(HelpSection.footer));
+    try std.testing.expectEqual(@as(u4, 0), @intFromEnum(HelpSection.header));
+    try std.testing.expectEqual(@as(u4, 1), @intFromEnum(HelpSection.usage));
+    try std.testing.expectEqual(@as(u4, 2), @intFromEnum(HelpSection.examples));
+    try std.testing.expectEqual(@as(u4, 3), @intFromEnum(HelpSection.description));
+    try std.testing.expectEqual(@as(u4, 4), @intFromEnum(HelpSection.commands));
+    try std.testing.expectEqual(@as(u4, 5), @intFromEnum(HelpSection.flags));
+    try std.testing.expectEqual(@as(u4, 6), @intFromEnum(HelpSection.env_vars));
+    try std.testing.expectEqual(@as(u4, 7), @intFromEnum(HelpSection.footer));
+}
+
+// ============================================================================
+// JSON Escaping Tests
+// ============================================================================
+
+test "help: writeJsonEscapedString plain text" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeJsonEscapedString(w, "hello world");
+    try std.testing.expectEqualStrings("hello world", list.items);
+}
+
+test "help: writeJsonEscapedString with double quote" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeJsonEscapedString(w, "say \"hi\"");
+    try std.testing.expectEqualStrings("say \\\"hi\\\"", list.items);
+}
+
+test "help: writeJsonEscapedString with backslash" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeJsonEscapedString(w, "path\\to\\file");
+    try std.testing.expectEqualStrings("path\\\\to\\\\file", list.items);
+}
+
+test "help: writeJsonEscapedString with newline" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeJsonEscapedString(w, "line1\nline2");
+    try std.testing.expectEqualStrings("line1\\nline2", list.items);
+}
+
+test "help: writeJsonEscapedString with tab and carriage return" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeJsonEscapedString(w, "a\tb\rc");
+    try std.testing.expectEqualStrings("a\\tb\\rc", list.items);
+}
+
+test "help: writeJsonEscapedString with control char" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    // ASCII 0x01 (SOH)
+    try writeJsonEscapedString(w, "\x01");
+    try std.testing.expectEqualStrings("\\u0001", list.items);
+}
+
+test "help: writeJsonEscapedString empty string" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeJsonEscapedString(w, "");
+    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+}
+
+// ============================================================================
+// Environment Variables Section Tests (GAP-0054)
+// ============================================================================
+
+test "help: env section prints flag-sourced env vars when enabled" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "config",
+                .help = "Config file path",
+                .ftype = .path,
+                .env = "MYAPP_CONFIG",
+            },
+            FlagSpec{
+                .name = "verbose",
+                .help = "Verbose output",
+                .ftype = .bool,
+            },
+            FlagSpec{
+                .name = "port",
+                .help = "Listen port",
+                .ftype = .int,
+                .env = "MYAPP_PORT",
+            },
+        },
+    };
+
+    const template = HelpTemplate{
+        .show_env_section = true,
+        .show_standard_env_vars = false,
+    };
+
+    try printSectionEnvVars(w, false, &cmd, &template);
+    const output = list.items;
+
+    // Section header
+    try std.testing.expect(mem.indexOf(u8, output, "Environment Variables:") != null);
+    // Flag-sourced env vars listed
+    try std.testing.expect(mem.indexOf(u8, output, "MYAPP_CONFIG") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "Config file path") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "MYAPP_PORT") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "Listen port") != null);
+    // verbose has no env, should not appear as an env var entry
+    // (it may appear in some other line but not with "Verbose output" as an env entry)
+}
+
+test "help: env section includes standard env vars by default" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+    };
+
+    const template = HelpTemplate{
+        .show_env_section = true,
+        .show_standard_env_vars = true,
+    };
+
+    try printSectionEnvVars(w, false, &cmd, &template);
+    const output = list.items;
+
+    // Standard env vars should be listed
+    try std.testing.expect(mem.indexOf(u8, output, "NO_COLOR") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "TERM") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "Disable colored output") != null);
+}
+
+test "help: env section hidden when show_env_section is false" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "config",
+                .help = "Config file",
+                .ftype = .path,
+                .env = "MYAPP_CONFIG",
+            },
+        },
+    };
+
+    const template = HelpTemplate{
+        .show_env_section = false,
+    };
+
+    try printSectionEnvVars(w, false, &cmd, &template);
+    // Should produce no output
+    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+}
+
+test "help: env section custom header" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "token",
+                .help = "Auth token",
+                .ftype = .string,
+                .env = "MYAPP_TOKEN",
+            },
+        },
+    };
+
+    const template = HelpTemplate{
+        .show_env_section = true,
+        .env_header = "ENV VARS",
+        .show_standard_env_vars = false,
+    };
+
+    try printSectionEnvVars(w, false, &cmd, &template);
+    const output = list.items;
+
+    try std.testing.expect(mem.indexOf(u8, output, "ENV VARS:") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "MYAPP_TOKEN") != null);
+}
+
+test "help: HelpTemplate show_env_section defaults to false" {
+    const template = HelpTemplate{};
+    try std.testing.expect(!template.show_env_section);
+    try std.testing.expect(mem.eql(u8, template.env_header, "Environment Variables"));
+}
+
+test "help: env section in template sections list renders correctly" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    const cmd = Command{
+        .name = "envapp",
+        .summary = "Env test app",
+        .flags = &.{
+            FlagSpec{
+                .name = "host",
+                .help = "Server host",
+                .ftype = .string,
+                .env = "ENVAPP_HOST",
+            },
+        },
+    };
+
+    // Template with env_vars section included
+    const template = HelpTemplate{
+        .sections = &.{ .env_vars, .footer },
+        .show_env_section = true,
+        .show_standard_env_vars = true,
+        .show_footer = false,
+    };
+
+    // Render directly through the section dispatch loop
+    for (template.sections) |section| {
+        switch (section) {
+            .env_vars => try printSectionEnvVars(w, false, &cmd, &template),
+            .footer => try printSectionFooter(w, &cmd, &template),
+            else => {},
+        }
+    }
+
+    const output = list.items;
+    try std.testing.expect(mem.indexOf(u8, output, "Environment Variables:") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "ENVAPP_HOST") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "NO_COLOR") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "TERM") != null);
 }

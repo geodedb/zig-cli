@@ -33,7 +33,7 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
     }
 
     // Count lines
-    var line_count: u16 = 0;
+    var line_count: usize = 0;
     for (content) |c| {
         if (c == '\n') line_count += 1;
     }
@@ -41,8 +41,8 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
     // Get terminal height
     const term_info = tty.getInfo();
 
-    // If content fits in terminal, write directly
-    if (line_count < term_info.height and line_count >= config.min_lines) {
+    // If content fits in terminal OR is below the min_lines threshold, write directly
+    if (line_count < term_info.height or line_count < config.min_lines) {
         try stdout.writeAll(content);
         return;
     }
@@ -54,10 +54,29 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
     }
 
     // Try to use pager
-    const pager_cmd = std.posix.getenv(config.pager_env) orelse config.default_pager;
+    const env_mod = @import("env.zig");
+    const pager_cmd = env_mod.getEnvValueRuntime(config.pager_env) orelse config.default_pager;
 
-    // Spawn pager process
-    var child = std.process.Child.init(&.{ "/bin/sh", "-c", pager_cmd }, std.heap.page_allocator);
+    // Split pager command on whitespace into argv array (direct exec, no shell).
+    // LIMITATION: This simple tokenizer does not handle quoted arguments.
+    // Values like `PAGER='less -R "long arg"'` will be split incorrectly.
+    // The pager command should only use simple space-separated arguments
+    // (e.g., `less -FIRX`). At most 8 argv tokens are supported.
+    var argv_buf: [8][]const u8 = undefined;
+    var argv_len: usize = 0;
+    var iter = std.mem.tokenizeAny(u8, pager_cmd, " \t");
+    while (iter.next()) |token| {
+        if (argv_len >= argv_buf.len) break;
+        argv_buf[argv_len] = token;
+        argv_len += 1;
+    }
+    if (argv_len == 0) {
+        try stdout.writeAll(content);
+        return;
+    }
+
+    // Spawn pager process directly
+    var child = std.process.Child.init(argv_buf[0..argv_len], std.heap.page_allocator);
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Inherit;
     child.stderr_behavior = .Inherit;

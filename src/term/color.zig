@@ -8,6 +8,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const tty = @import("tty.zig");
+const env = @import("env.zig");
 
 /// ANSI color codes
 pub const Color = enum(u8) {
@@ -55,11 +56,9 @@ pub const ColorContext = struct {
     pub fn init(force_color: ?bool, no_color: bool) Self {
         const enabled = if (force_color) |f| f else blk: {
             if (no_color) break :blk false;
-            if (comptime builtin.os.tag != .windows) {
-                if (std.posix.getenv("NO_COLOR") != null) break :blk false;
-                if (std.posix.getenv("TERM")) |term| {
-                    if (std.mem.eql(u8, term, "dumb")) break :blk false;
-                }
+            if (env.envVarExists("NO_COLOR")) break :blk false;
+            if (env.getEnvValue("TERM")) |term| {
+                if (std.mem.eql(u8, term, "dumb")) break :blk false;
             }
             break :blk tty.isStdoutTty();
         };
@@ -67,17 +66,22 @@ pub const ColorContext = struct {
         return .{ .enabled = enabled };
     }
 
-    /// Format text with color
+    /// Deprecated: returns text unchanged regardless of color setting.
+    /// Use `writeColored()` instead, which correctly emits ANSI codes
+    /// to a writer. This function cannot prepend/append escape sequences
+    /// without allocating, and changing the signature would be breaking.
     pub fn colored(self: Self, text: []const u8, color: Color) []const u8 {
-        if (!self.enabled) return text;
-        // In practice, we'd allocate and format
+        _ = self;
         _ = color;
         return text;
     }
 
-    /// Format text with style
+    /// Deprecated: returns text unchanged regardless of style setting.
+    /// Use `writeStyled()` instead, which correctly emits ANSI codes
+    /// to a writer. This function cannot prepend/append escape sequences
+    /// without allocating, and changing the signature would be breaking.
     pub fn styled(self: Self, text: []const u8, style: Style) []const u8 {
-        if (!self.enabled) return text;
+        _ = self;
         _ = style;
         return text;
     }
@@ -136,7 +140,9 @@ pub const dim: []const u8 = "\x1b[2m";
 /// Underline sequence
 pub const underline: []const u8 = "\x1b[4m";
 
-/// Strip ANSI codes from text
+/// Strip ANSI codes from text.
+/// Uses span-based copying for contiguous non-ANSI regions instead of
+/// appending one byte at a time.
 pub fn stripAnsi(text: []const u8, allocator: std.mem.Allocator) ![]const u8 {
     var result: std.ArrayList(u8) = .empty;
 
@@ -148,8 +154,13 @@ pub fn stripAnsi(text: []const u8, allocator: std.mem.Allocator) ![]const u8 {
             while (i < text.len and text[i] != 'm') : (i += 1) {}
             if (i < text.len) i += 1; // Skip 'm'
         } else {
-            try result.append(allocator, text[i]);
-            i += 1;
+            // Track start of non-ANSI span
+            const span_start = i;
+            while (i < text.len) {
+                if (text[i] == '\x1b' and i + 1 < text.len and text[i + 1] == '[') break;
+                i += 1;
+            }
+            try result.appendSlice(allocator, text[span_start..i]);
         }
     }
 

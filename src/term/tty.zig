@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const env = @import("env.zig");
 
 /// Terminal information
 pub const TermInfo = struct {
@@ -39,7 +40,7 @@ pub fn getInfo() TermInfo {
         }
     }
 
-    const term_type = if (comptime builtin.os.tag == .windows) null else std.posix.getenv("TERM");
+    const term_type = env.getEnvValue("TERM");
     const color_supported = is_tty and !isDumb(term_type) and !hasNoColor();
 
     return .{
@@ -141,8 +142,7 @@ fn isDumb(term: ?[]const u8) bool {
 
 /// Check if NO_COLOR is set
 fn hasNoColor() bool {
-    if (comptime builtin.os.tag == .windows) return false;
-    return std.posix.getenv("NO_COLOR") != null;
+    return env.envVarExists("NO_COLOR");
 }
 
 /// Check if stdout is a TTY

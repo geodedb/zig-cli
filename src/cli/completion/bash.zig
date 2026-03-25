@@ -11,6 +11,93 @@ const command = @import("../command.zig");
 const Command = command.Command;
 const FlagSpec = command.FlagSpec;
 
+/// Escape a string for use inside bash double-quoted contexts.
+/// Escapes: $, `, ", \, !
+/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Fast path: if no special chars are found, returns `s` directly (no allocation).
+pub fn escapeBashDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    // Fast path: scan for special chars
+    var needs_escape = false;
+    for (s) |c| {
+        switch (c) {
+            '$', '`', '"', '\\', '!', 0x00, '\n', '\r' => {
+                needs_escape = true;
+                break;
+            },
+            else => {},
+        }
+    }
+    if (!needs_escape) return s;
+
+    // Build escaped string
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        switch (c) {
+            // Strip NUL bytes and newlines entirely
+            0x00, '\n', '\r' => {},
+            '$', '`', '"', '\\', '!' => {
+                list.append(allocator, '\\') catch return error.OutOfMemory;
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+            else => {
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Escape a string for use in bash case patterns.
+/// Escapes: *, ?, [, ]
+/// Fast path: if no special chars are found, returns `s` directly (no allocation).
+pub fn escapeBashCasePattern(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    // Fast path: scan for special chars
+    var needs_escape = false;
+    for (s) |c| {
+        switch (c) {
+            '*', '?', '[', ']' => {
+                needs_escape = true;
+                break;
+            },
+            else => {},
+        }
+    }
+    if (!needs_escape) return s;
+
+    // Build escaped string
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        switch (c) {
+            '*', '?', '[', ']' => {
+                list.append(allocator, '\\') catch return error.OutOfMemory;
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+            else => {
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Sanitize a name for use as a bash function identifier.
+/// Replaces any character that is not [a-zA-Z0-9_] with an underscore.
+/// Uses a fixed 256-byte buffer; names longer than 255 are truncated.
+fn sanitizeBashIdentifier(name: []const u8) []const u8 {
+    const S = struct {
+        var buf: [256]u8 = undefined;
+    };
+    const len = @min(name.len, S.buf.len);
+    for (name[0..len], 0..) |c, idx| {
+        if (std.ascii.isAlphanumeric(c) or c == '_') {
+            S.buf[idx] = c;
+        } else {
+            S.buf[idx] = '_';
+        }
+    }
+    return S.buf[0..len];
+}
+
 /// Generate bash completion script
 pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     return generateWithActiveHelp(cmd, allocator, true);
@@ -18,7 +105,12 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
 
 /// Generate bash completion script with optional active help support
 pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator, enable_active_help: bool) ![]const u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const esc_alloc = arena.allocator();
+
     var list: std.ArrayList(u8) = .empty;
+    list.ensureTotalCapacity(allocator, 4096) catch {};
     const w = list.writer(allocator);
 
     try w.print("# Bash completion for {s}\n", .{cmd.name});
@@ -26,26 +118,32 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
 
     // Add active help support function if enabled
     if (enable_active_help) {
-        try generateActiveHelpSupport(w, cmd);
+        try generateActiveHelpSupport(w, cmd, esc_alloc);
     }
 
+    // Sanitize cmd.name for use in bash function identifiers
+    const safe_name = sanitizeBashIdentifier(cmd.name);
+
     // Generate completion functions for all commands recursively
-    try generateCommandFunction(w, cmd, cmd.name, "", enable_active_help);
+    try generateCommandFunction(w, cmd, safe_name, "", enable_active_help, esc_alloc);
 
     // Main completion function
-    try w.print("_{s}() {{\n", .{cmd.name});
+    try w.print("_{s}() {{\n", .{safe_name});
     try w.print("    local cur prev words cword\n", .{});
     try w.print("    _init_completion || return\n\n", .{});
-    try w.print("    _{s}_main \"${{words[@]}}\"\n", .{cmd.name});
+    try w.print("    _{s}_main \"${{words[@]}}\"\n", .{safe_name});
     try w.print("}}\n\n", .{});
 
-    try w.print("complete -F _{s} {s}\n", .{ cmd.name, cmd.name });
+    try w.print("complete -F _{s} {s}\n", .{ safe_name, cmd.name });
 
     return list.toOwnedSlice(allocator);
 }
 
 /// Generate active help support functions
-fn generateActiveHelpSupport(w: anytype, cmd: *const Command) !void {
+fn generateActiveHelpSupport(w: anytype, cmd: *const Command, esc_alloc: std.mem.Allocator) !void {
+    _ = esc_alloc;
+    const safe_name = sanitizeBashIdentifier(cmd.name);
+
     // Convert program name to uppercase for env var
     var env_var_buf: [256]u8 = undefined;
     var env_var_len: usize = 0;
@@ -65,7 +163,7 @@ fn generateActiveHelpSupport(w: anytype, cmd: *const Command) !void {
     try w.writeAll(env_var);
     try w.writeAll("_ACTIVE_HELP=0 to disable active help\n\n");
 
-    try w.print("_{s}_active_help_enabled() {{\n", .{cmd.name});
+    try w.print("_{s}_active_help_enabled() {{\n", .{safe_name});
     try w.writeAll("    # Check if active help is disabled via environment variable\n");
     try w.print("    if [[ \"${{{s}_ACTIVE_HELP}}\" == \"0\" ]]; then\n", .{env_var});
     try w.writeAll("        return 1\n");
@@ -74,16 +172,16 @@ fn generateActiveHelpSupport(w: anytype, cmd: *const Command) !void {
     try w.print("}}\n\n", .{});
 
     // Helper function to display active help messages
-    try w.print("_{s}_show_active_help() {{\n", .{cmd.name});
+    try w.print("_{s}_show_active_help() {{\n", .{safe_name});
     try w.writeAll("    local msg=\"$1\"\n");
-    try w.print("    if _{s}_active_help_enabled; then\n", .{cmd.name});
+    try w.print("    if _{s}_active_help_enabled; then\n", .{safe_name});
     try w.writeAll("        printf '\\n\\033[33m💡 %s\\033[0m\\n' \"$msg\" >&2\n");
     try w.writeAll("    fi\n");
     try w.print("}}\n\n", .{});
 }
 
 /// Generate completion function for a command
-fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u8, path: []const u8, enable_active_help: bool) !void {
+fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u8, path: []const u8, enable_active_help: bool, esc_alloc: std.mem.Allocator) !void {
     // Build function name
     var func_name_buf: [256]u8 = undefined;
     const func_name = if (path.len > 0)
@@ -95,13 +193,23 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
     try w.print("    local cur=\"${{COMP_WORDS[COMP_CWORD]}}\"\n", .{});
     try w.print("    local prev=\"${{COMP_WORDS[COMP_CWORD-1]}}\"\n\n", .{});
 
-    // Global flags
-    try w.writeAll("    local global_flags=\"--help --version --quiet --json --plain --no-color --dry-run --no-input\"\n");
+    // Global flags (sourced from canonical command.global_flags definition)
+    try w.writeAll("    local global_flags=\"");
+    for (command.global_flags, 0..) |*gflag, gi| {
+        if (gi > 0) try w.writeAll(" ");
+        const esc_gname = try escapeBashDoubleQuote(esc_alloc, gflag.name);
+        try w.print("--{s}", .{esc_gname});
+        if (gflag.short) |s| {
+            try w.print(" -{c}", .{s});
+        }
+    }
+    try w.writeAll("\"\n");
 
     // Command-specific flags
     try w.writeAll("    local flags=\"$global_flags");
     for (cmd.flags) |*flag| {
-        try w.print(" --{s}", .{flag.name});
+        const esc_name = try escapeBashDoubleQuote(esc_alloc, flag.name);
+        try w.print(" --{s}", .{esc_name});
         if (flag.short) |s| {
             try w.print(" -{c}", .{s});
         }
@@ -128,7 +236,8 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
         try w.writeAll("        case \"${COMP_WORDS[i]}\" in\n");
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                try w.print("            {s})\n", .{subcmd.name});
+                const esc_case = try escapeBashCasePattern(esc_alloc, subcmd.name);
+                try w.print("            {s})\n", .{esc_case});
                 try w.writeAll("                cmd_idx=$i\n");
                 try w.writeAll("                break\n");
                 try w.writeAll("                ;;\n");
@@ -148,7 +257,8 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
                 else
                     std.fmt.bufPrint(&subpath_buf, "{s}", .{subcmd.name}) catch "";
 
-                try w.print("            {s})\n", .{subcmd.name});
+                const esc_case2 = try escapeBashCasePattern(esc_alloc, subcmd.name);
+                try w.print("            {s})\n", .{esc_case2});
                 try w.print("                _{s}_{s}\n", .{ root_name, subpath });
                 try w.writeAll("                return\n");
                 try w.writeAll("                ;;\n");
@@ -163,7 +273,8 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
     try w.writeAll("    case $prev in\n");
     for (cmd.flags) |*flag| {
         if (flag.ftype != .bool) {
-            try w.print("        --{s}", .{flag.name});
+            const esc_flag_case = try escapeBashCasePattern(esc_alloc, flag.name);
+            try w.print("        --{s}", .{esc_flag_case});
             if (flag.short) |s| {
                 try w.print("|-{c}", .{s});
             }
@@ -175,7 +286,8 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
                 try w.writeAll("            local values=\"");
                 for (flag.completions, 0..) |value, i| {
                     if (i > 0) try w.writeAll(" ");
-                    try w.print("{s}", .{value});
+                    const esc_val = try escapeBashDoubleQuote(esc_alloc, value);
+                    try w.print("{s}", .{esc_val});
                 }
                 try w.writeAll("\"\n");
                 try w.writeAll("            COMPREPLY=( $(compgen -W \"$values\" -- \"$cur\") )\n");
@@ -202,7 +314,8 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
         try w.writeAll("\n    # Display active help when no completions\n");
         try w.writeAll("    if [[ ${#COMPREPLY[@]} -eq 0 ]]; then\n");
         for (cmd.active_help) |help_msg| {
-            try w.print("        _{s}_show_active_help \"{s}\"\n", .{ root_name, help_msg });
+            const esc_help = try escapeBashDoubleQuote(esc_alloc, help_msg);
+            try w.print("        _{s}_show_active_help \"{s}\"\n", .{ root_name, esc_help });
         }
         try w.writeAll("    fi\n");
     }
@@ -218,7 +331,7 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
             else
                 std.fmt.bufPrint(&subpath_buf, "{s}", .{subcmd.name}) catch "";
 
-            try generateCommandFunction(w, subcmd, root_name, subpath, enable_active_help);
+            try generateCommandFunction(w, subcmd, root_name, subpath, enable_active_help, esc_alloc);
         }
     }
 }
@@ -505,4 +618,114 @@ test "bash: active help env var naming" {
 
     // Dashes should be converted to underscores
     try std.testing.expect(std.mem.indexOf(u8, script, "MY_APP_ACTIVE_HELP") != null);
+}
+
+// ============================================================================
+// Shell Escape Function Tests
+// ============================================================================
+
+test "bash: escapeBashDoubleQuote no special chars" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "hello");
+    // Fast path: no allocation, returns same pointer
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "bash: escapeBashDoubleQuote with dollar sign" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "val$ue");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("val\\$ue", result);
+}
+
+test "bash: escapeBashDoubleQuote with backtick" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "run`cmd`");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("run\\`cmd\\`", result);
+}
+
+test "bash: escapeBashDoubleQuote with double quote" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "say\"hi\"");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("say\\\"hi\\\"", result);
+}
+
+test "bash: escapeBashDoubleQuote with backslash" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "path\\to");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("path\\\\to", result);
+}
+
+test "bash: escapeBashDoubleQuote with bang" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "hello!");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("hello\\!", result);
+}
+
+test "bash: escapeBashDoubleQuote empty string" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "");
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "bash: escapeBashCasePattern no special chars" {
+    const result = try escapeBashCasePattern(std.testing.allocator, "hello");
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "bash: escapeBashCasePattern with glob star" {
+    const result = try escapeBashCasePattern(std.testing.allocator, "file*");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("file\\*", result);
+}
+
+test "bash: escapeBashCasePattern with question mark" {
+    const result = try escapeBashCasePattern(std.testing.allocator, "file?name");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("file\\?name", result);
+}
+
+test "bash: escapeBashCasePattern with brackets" {
+    const result = try escapeBashCasePattern(std.testing.allocator, "[abc]");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("\\[abc\\]", result);
+}
+
+test "bash: escapeBashCasePattern empty string" {
+    const result = try escapeBashCasePattern(std.testing.allocator, "");
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "bash: escapeBashDoubleQuote strips NUL bytes" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "hel\x00lo");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "bash: escapeBashDoubleQuote strips newlines" {
+    const result = try escapeBashDoubleQuote(std.testing.allocator, "line1\nline2\rline3");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("line1line2line3", result);
+}
+
+test "bash: sanitizeBashIdentifier replaces hyphens and dots" {
+    const result = sanitizeBashIdentifier("my-app.cli");
+    try std.testing.expectEqualStrings("my_app_cli", result);
+}
+
+test "bash: sanitizeBashIdentifier preserves alphanumerics and underscores" {
+    const result = sanitizeBashIdentifier("myapp_v2");
+    try std.testing.expectEqualStrings("myapp_v2", result);
+}
+
+test "bash: cmd.name with hyphens produces valid function names" {
+    const cmd = Command{
+        .name = "my-app",
+        .summary = "App with hyphens",
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // Function name should use underscores, not hyphens
+    try std.testing.expect(std.mem.indexOf(u8, script, "_my_app()") != null);
+    // But complete registration should use the original name
+    try std.testing.expect(std.mem.indexOf(u8, script, "complete -F _my_app my-app") != null);
 }

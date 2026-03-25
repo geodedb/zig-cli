@@ -118,6 +118,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "config", .module = ext_config_mod },
+            },
         }),
     });
     const run_root_tests = b.addRunArtifact(root_tests);
@@ -163,52 +166,38 @@ pub fn build(b: *std.Build) void {
     // ========================================================================
     // Check Step (for IDE integration)
     // ========================================================================
+    //
+    // Reuses the test compile steps (compile only, no run) to avoid
+    // duplicating module definitions. This was previously 5 separate
+    // b.createModule() calls identical to the test section above.
 
-    const check_cli = b.addTest(.{
+    const check_step = b.step("check", "Check for compilation errors (for IDE integration)");
+    check_step.dependOn(&cli_tests.step);
+    check_step.dependOn(&config_tests.step);
+    check_step.dependOn(&term_tests.step);
+    check_step.dependOn(&util_tests.step);
+    check_step.dependOn(&root_tests.step);
+
+    // ========================================================================
+    // Benchmarks
+    // ========================================================================
+
+    const bench = b.addExecutable(.{
+        .name = "bench",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/cli.zig"),
+            .root_source_file = b.path("tests/bench.zig"),
             .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const check_config = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/config.zig"),
-            .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .imports = &.{
-                .{ .name = "config", .module = ext_config_mod },
+                .{ .name = "cli", .module = cli_mod },
+                .{ .name = "util", .module = util_mod },
             },
         }),
     });
-    const check_term = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/term.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const check_util = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/util.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const check_root = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
 
-    const check_step = b.step("check", "Check for compilation errors (for IDE integration)");
-    check_step.dependOn(&check_cli.step);
-    check_step.dependOn(&check_config.step);
-    check_step.dependOn(&check_term.step);
-    check_step.dependOn(&check_util.step);
-    check_step.dependOn(&check_root.step);
+    const run_bench = b.addRunArtifact(bench);
+    const bench_step = b.step("bench", "Run performance benchmarks");
+    bench_step.dependOn(&run_bench.step);
 
     // ========================================================================
     // Demo Executable

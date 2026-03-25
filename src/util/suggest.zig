@@ -7,10 +7,14 @@
 
 const std = @import("std");
 
-/// Calculate Levenshtein distance between two strings
+/// Calculate Levenshtein distance between two strings.
+/// For strings longer than 255 characters, returns the maximum length
+/// as a conservative estimate (the stack buffer is limited to 256 entries).
 pub fn levenshteinDistance(a: []const u8, b: []const u8) usize {
     if (a.len == 0) return b.len;
     if (b.len == 0) return a.len;
+    if (b.len >= 256) return @max(a.len, b.len);
+    if (a.len >= 256) return @max(a.len, b.len);
 
     // Use a single row for space optimization
     var row: [256]usize = undefined;
@@ -64,23 +68,26 @@ pub fn suggestClosest(
     return null;
 }
 
-/// Find all matches within a given distance
+/// Find all matches within a given distance.
+/// Caller owns the returned slice and must free it with `allocator`.
+/// Individual strings in the slice are borrowed from the input `choices`
+/// and must not be freed separately.
 pub fn suggestAll(
     input: []const u8,
     choices: []const []const u8,
     max_distance: usize,
     allocator: std.mem.Allocator,
 ) ![]const []const u8 {
-    var matches = std.ArrayList([]const u8).init(allocator);
+    var matches: std.ArrayList([]const u8) = .empty;
 
     for (choices) |choice| {
         const distance = levenshteinDistance(input, choice);
         if (distance <= max_distance) {
-            try matches.append(choice);
+            try matches.append(allocator, choice);
         }
     }
 
-    return matches.toOwnedSlice();
+    return matches.toOwnedSlice(allocator);
 }
 
 /// Check if input is a prefix of any choice
@@ -93,21 +100,24 @@ pub fn hasPrefix(input: []const u8, choices: []const []const u8) bool {
     return false;
 }
 
-/// Find all choices that start with input
+/// Find all choices that start with the given input prefix.
+/// Caller owns the returned slice and must free it with `allocator`.
+/// Individual strings in the slice are borrowed from the input `choices`
+/// and must not be freed separately.
 pub fn findByPrefix(
     input: []const u8,
     choices: []const []const u8,
     allocator: std.mem.Allocator,
 ) ![]const []const u8 {
-    var matches = std.ArrayList([]const u8).init(allocator);
+    var matches: std.ArrayList([]const u8) = .empty;
 
     for (choices) |choice| {
         if (std.mem.startsWith(u8, choice, input)) {
-            try matches.append(choice);
+            try matches.append(allocator, choice);
         }
     }
 
-    return matches.toOwnedSlice();
+    return matches.toOwnedSlice(allocator);
 }
 
 // ============================================================================
@@ -139,6 +149,23 @@ test "suggestClosest" {
     // Typo: 'pss' should not match anything with max_distance=2
     const no_match = suggestClosest("xyz", choices, 2);
     try std.testing.expect(no_match == null);
+}
+
+test "levenshteinDistance bounds check for long strings" {
+    // String longer than 255 chars should not crash
+    const long = "a" ** 300;
+    const short = "hello";
+    const result = levenshteinDistance(short, long);
+    try std.testing.expectEqual(@as(usize, 300), result);
+
+    // Also test when 'a' is long
+    const result2 = levenshteinDistance(long, short);
+    try std.testing.expectEqual(@as(usize, 300), result2);
+
+    // Both long
+    const long2 = "b" ** 300;
+    const result3 = levenshteinDistance(long, long2);
+    try std.testing.expectEqual(@as(usize, 300), result3);
 }
 
 test "hasPrefix" {

@@ -50,15 +50,35 @@ pub const Config = struct {
     handle_quit: bool = false,
 };
 
-/// Cleanup callback function type
+/// Cleanup callback function type.
+///
+/// **IMPORTANT: Async-signal-safety requirement.**
+/// Cleanup callbacks are invoked directly from the POSIX signal handler
+/// (or the Windows console control handler). Callbacks MUST be
+/// async-signal-safe: they may only call functions that are safe to use
+/// inside a signal handler. In particular, callbacks MUST NOT:
+///
+/// - Allocate or free memory (no `allocator.alloc`, `allocator.free`)
+/// - Acquire mutexes or other locks (risk of deadlock)
+/// - Perform I/O through buffered streams (e.g., `std.debug.print`)
+/// - Call any function not on the POSIX async-signal-safe list
+///
+/// Safe operations include: setting atomic flags, writing to a
+/// pre-opened file descriptor via `std.posix.write`, and calling
+/// `std.posix.exit`.
 pub const CleanupFn = *const fn () void;
 
 /// Global state for signal handling
 var interrupted: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var terminated: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var cleanup_callbacks: [16]?CleanupFn = .{null} ** 16;
-var callback_count: usize = 0;
+var callback_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
 var mutex: std.Thread.Mutex = .{};
+/// Atomic flags for Windows console control handler (thread-safe).
+/// These replace a plain `Config` struct to avoid data races between
+/// the main thread (install) and the handler thread (windowsCtrlHandler).
+var win_handle_interrupt: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+var win_handle_terminate: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
 /// Check if an interrupt signal was received (SIGINT)
 pub fn wasInterrupted() bool {
@@ -75,18 +95,23 @@ pub fn shouldShutdown() bool {
     return wasInterrupted() or wasTerminated();
 }
 
-/// Register a cleanup callback to be called on signal
-/// Returns error if max callbacks reached
+/// Register a cleanup callback to be called on signal.
+/// Returns error if max callbacks reached (limit: 16).
+///
+/// **WARNING:** The callback MUST be async-signal-safe. See `CleanupFn`
+/// documentation for the full list of restrictions. Violating these
+/// constraints leads to undefined behavior (deadlocks, corruption).
 pub fn onCleanup(callback: CleanupFn) !void {
     mutex.lock();
     defer mutex.unlock();
 
-    if (callback_count >= cleanup_callbacks.len) {
+    const count = callback_count.load(.acquire);
+    if (count >= cleanup_callbacks.len) {
         return error.TooManyCallbacks;
     }
 
-    cleanup_callbacks[callback_count] = callback;
-    callback_count += 1;
+    cleanup_callbacks[count] = callback;
+    callback_count.store(count + 1, .release);
 }
 
 /// Clear the interrupted flag (useful for testing or restart scenarios)
@@ -182,7 +207,14 @@ fn installWindows(config: Config) !void {
         return;
     }
 
-    _ = config;
+    // Nothing to handle — skip registration entirely
+    if (!config.handle_interrupt and !config.handle_terminate) {
+        return;
+    }
+
+    // Store config atomically so the handler thread can read safely
+    win_handle_interrupt.store(config.handle_interrupt, .release);
+    win_handle_terminate.store(config.handle_terminate, .release);
 
     const windows = std.os.windows;
     const kernel32 = windows.kernel32;
@@ -231,11 +263,13 @@ fn windowsCtrlHandler(ctrl_type: std.os.windows.DWORD) callconv(std.os.windows.W
 
     switch (ctrl_type) {
         CTRL_C_EVENT, CTRL_BREAK_EVENT => {
+            if (!win_handle_interrupt.load(.acquire)) return 0;
             interrupted.store(true, .release);
             runCleanupCallbacks();
             return 1; // TRUE - handled
         },
         CTRL_CLOSE_EVENT => {
+            if (!win_handle_terminate.load(.acquire)) return 0;
             terminated.store(true, .release);
             runCleanupCallbacks();
             return 1; // TRUE - handled
@@ -251,7 +285,8 @@ fn windowsCtrlHandler(ctrl_type: std.os.windows.DWORD) callconv(std.os.windows.W
 fn runCleanupCallbacks() void {
     // Note: Called from signal handler context, must be async-signal-safe
     // We only read the array, no locking needed
-    for (cleanup_callbacks[0..callback_count]) |maybe_cb| {
+    const count = callback_count.load(.acquire);
+    for (cleanup_callbacks[0..count]) |maybe_cb| {
         if (maybe_cb) |cb| {
             cb();
         }
@@ -282,7 +317,7 @@ test "install and uninstall handlers" {
 
 test "register cleanup callback" {
     // Reset state for test
-    callback_count = 0;
+    callback_count.store(0, .release);
     cleanup_callbacks = .{null} ** 16;
 
     const cb = struct {
@@ -292,5 +327,5 @@ test "register cleanup callback" {
     }.callback;
 
     try onCleanup(cb);
-    try std.testing.expectEqual(@as(usize, 1), callback_count);
+    try std.testing.expectEqual(@as(usize, 1), callback_count.load(.acquire));
 }

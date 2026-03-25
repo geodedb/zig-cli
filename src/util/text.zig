@@ -56,9 +56,7 @@ pub fn indent(text: []const u8, spaces: usize, allocator: std.mem.Allocator) ![]
         if (!first) try result.append(allocator, '\n');
         first = false;
 
-        for (0..spaces) |_| {
-            try result.append(allocator, ' ');
-        }
+        try result.appendNTimes(allocator, ' ', spaces);
         try result.appendSlice(allocator, line);
     }
 
@@ -71,10 +69,7 @@ pub fn padRight(text: []const u8, width: usize, allocator: std.mem.Allocator) ![
 
     var result: std.ArrayList(u8) = .empty;
     try result.appendSlice(allocator, text);
-
-    for (text.len..width) |_| {
-        try result.append(allocator, ' ');
-    }
+    try result.appendNTimes(allocator, ' ', width - text.len);
 
     return result.toOwnedSlice(allocator);
 }
@@ -84,10 +79,7 @@ pub fn padLeft(text: []const u8, width: usize, allocator: std.mem.Allocator) ![]
     if (text.len >= width) return text;
 
     var result: std.ArrayList(u8) = .empty;
-
-    for (text.len..width) |_| {
-        try result.append(allocator, ' ');
-    }
+    try result.appendNTimes(allocator, ' ', width - text.len);
     try result.appendSlice(allocator, text);
 
     return result.toOwnedSlice(allocator);
@@ -98,15 +90,12 @@ pub fn center(text: []const u8, width: usize, allocator: std.mem.Allocator) ![]c
     if (text.len >= width) return text;
 
     var result: std.ArrayList(u8) = .empty;
-    const padding = (width - text.len) / 2;
+    const left_pad = (width - text.len) / 2;
+    const right_pad = width - text.len - left_pad;
 
-    for (0..padding) |_| {
-        try result.append(allocator, ' ');
-    }
+    try result.appendNTimes(allocator, ' ', left_pad);
     try result.appendSlice(allocator, text);
-    for (text.len + padding..width) |_| {
-        try result.append(allocator, ' ');
-    }
+    try result.appendNTimes(allocator, ' ', right_pad);
 
     return result.toOwnedSlice(allocator);
 }
@@ -143,13 +132,13 @@ pub fn toLower(text: []const u8, allocator: std.mem.Allocator) ![]const u8 {
 
 /// Split on any whitespace
 pub fn splitWhitespace(text: []const u8, allocator: std.mem.Allocator) ![]const []const u8 {
-    var words = std.ArrayList([]const u8).init(allocator);
+    var words: std.ArrayList([]const u8) = .empty;
     var start: ?usize = null;
 
     for (text, 0..) |c, i| {
         if (std.ascii.isWhitespace(c)) {
             if (start) |s| {
-                try words.append(text[s..i]);
+                try words.append(allocator, text[s..i]);
                 start = null;
             }
         } else {
@@ -161,10 +150,10 @@ pub fn splitWhitespace(text: []const u8, allocator: std.mem.Allocator) ![]const 
 
     // Handle last word
     if (start) |s| {
-        try words.append(text[s..]);
+        try words.append(allocator, text[s..]);
     }
 
-    return words.toOwnedSlice();
+    return words.toOwnedSlice(allocator);
 }
 
 // ============================================================================

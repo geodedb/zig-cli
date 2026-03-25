@@ -55,11 +55,11 @@ const Command = struct {
     deprecated: ?[]const u8 = null,      // Deprecation message
 
     // Positional arguments
-    args: ArgsSpec = .{},                // Positional argument config
+    args: ?ArgsValidator = null,         // Positional argument config
 
     // Active help for completions
     active_help: []const []const u8 = &.{},
-    active_help_fn: ?ActiveHelpFn = null,
+    active_help_fn: ?*const fn (*const Command, []const []const u8) []const []const u8 = null,
 };
 ```
 
@@ -79,7 +79,7 @@ const FlagSpec = struct {
     is_repeatable: bool = false,    // Can be specified multiple times
     is_deprecated: bool = false,
     secret: SecretPolicy = .none,   // Secret handling policy
-    validator: ?ValidatorFn = null, // Custom validator
+    validator: ?*const fn ([]const u8) bool = null, // Custom validator
     completions: []const []const u8 = &.{}, // Static completion values
 };
 ```
@@ -90,25 +90,30 @@ Defines relationships between flags.
 
 ```zig
 const FlagGroup = struct {
-    flags: []const []const u8,  // Flag names in this group
-    rule: GroupRule,
+    group_type: FlagGroupType,          // Type of validation
+    flags: []const []const u8,          // Flag names in this group
 };
 
-const GroupRule = enum {
+const FlagGroupType = enum {
     mutually_exclusive,  // Only one flag can be set
     required_together,   // If one is set, all must be set
     one_required,        // At least one must be set
 };
 ```
 
-### ArgsSpec
+### ArgsValidator
 
-Configures positional argument handling.
+Validates positional arguments. Set as the `args` field on a `Command`.
 
 ```zig
-const ArgsSpec = struct {
-    validator: ?ArgsValidator = null,  // Validate argument count/content
-    names: []const []const u8 = &.{},  // Named positional args for help
+const ArgsValidator = union(enum) {
+    none: void,                 // No arguments allowed
+    arbitrary: void,            // Any number of arguments
+    exact: usize,               // Exactly N arguments
+    minimum: usize,             // At least N arguments
+    maximum: usize,             // At most N arguments
+    range: struct { min: usize, max: usize }, // Between min and max
+    only_valid: []const []const u8,  // Only values from this list
 };
 
 // Built-in validators
@@ -156,6 +161,7 @@ const Context = struct {
     fn getString(self, name) ?[]const u8
     fn getBool(self, name) bool
     fn getInt(self, name) ?i64
+    fn getFloat(self, name) ?f64
     fn getStringArray(self, name) ?[]const []const u8
     fn print(self, fmt, args) !void      // Respects quiet mode
     fn err(self, fmt, args) !void        // Always writes to stderr

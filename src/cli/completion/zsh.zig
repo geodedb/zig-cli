@@ -11,6 +11,71 @@ const command = @import("../command.zig");
 const Command = command.Command;
 const FlagSpec = command.FlagSpec;
 
+/// Escape a string for use inside zsh single-quoted contexts.
+/// Uses the '\'' pattern to break out of single quotes and re-enter.
+/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Fast path: if no single quotes or control chars, returns `s` directly (no allocation).
+pub fn escapeZshSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (s) |c| {
+        switch (c) {
+            '\'', 0x00, '\n', '\r' => {
+                needs_escape = true;
+                break;
+            },
+            else => {},
+        }
+    }
+    if (!needs_escape) return s;
+
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        switch (c) {
+            0x00, '\n', '\r' => {},
+            '\'' => {
+                list.appendSlice(allocator, "'\\''") catch return error.OutOfMemory;
+            },
+            else => {
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Escape a string for use inside zsh double-quoted contexts.
+/// Escapes: $, `, ", \
+/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Fast path: if no special chars, returns `s` directly (no allocation).
+pub fn escapeZshDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (s) |c| {
+        switch (c) {
+            '$', '`', '"', '\\', 0x00, '\n', '\r' => {
+                needs_escape = true;
+                break;
+            },
+            else => {},
+        }
+    }
+    if (!needs_escape) return s;
+
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        switch (c) {
+            0x00, '\n', '\r' => {},
+            '$', '`', '"', '\\' => {
+                list.append(allocator, '\\') catch return error.OutOfMemory;
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+            else => {
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
 /// Generate zsh completion script
 pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     return generateWithActiveHelp(cmd, allocator, true);
@@ -18,7 +83,12 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
 
 /// Generate zsh completion script with optional active help support
 pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator, enable_active_help: bool) ![]const u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const esc_alloc = arena.allocator();
+
     var list: std.ArrayList(u8) = .empty;
+    list.ensureTotalCapacity(allocator, 4096) catch {};
     const w = list.writer(allocator);
 
     try w.print("#compdef {s}\n\n", .{cmd.name});
@@ -30,21 +100,33 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
         try generateActiveHelpSupport(w, cmd);
     }
 
-    // Generate helper function for flags
+    // Generate helper function for flags (sourced from canonical command.global_flags)
     try w.writeAll("# Global flags available to all commands\n");
     try w.writeAll("_global_flags=(\n");
-    try w.writeAll("    '(-h --help)'{-h,--help}'[Print help information]'\n");
-    try w.writeAll("    '(-V --version)'{-V,--version}'[Print version information]'\n");
-    try w.writeAll("    '(-q --quiet)'{-q,--quiet}'[Suppress non-essential output]'\n");
-    try w.writeAll("    '--json[Output in JSON format]'\n");
-    try w.writeAll("    '--plain[Output in plain text]'\n");
-    try w.writeAll("    '--no-color[Disable colored output]'\n");
-    try w.writeAll("    '(-n --dry-run)'{-n,--dry-run}'[Show what would be done]'\n");
-    try w.writeAll("    '--no-input[Disable interactive prompts]'\n");
+    for (command.global_flags) |*gflag| {
+        const esc_ghelp = try escapeZshSingleQuote(esc_alloc, gflag.help);
+        if (gflag.short) |s| {
+            if (gflag.ftype == .bool) {
+                try w.print("    '(-{c} --{s})'{{-{c},--{s}}}'[{s}]'\n", .{
+                    s, gflag.name, s, gflag.name, esc_ghelp,
+                });
+            } else {
+                try w.print("    '(-{c} --{s})'{{-{c},--{s}}}'[{s}]:value:'\n", .{
+                    s, gflag.name, s, gflag.name, esc_ghelp,
+                });
+            }
+        } else {
+            if (gflag.ftype == .bool) {
+                try w.print("    '--{s}[{s}]'\n", .{ gflag.name, esc_ghelp });
+            } else {
+                try w.print("    '--{s}[{s}]:value:'\n", .{ gflag.name, esc_ghelp });
+            }
+        }
+    }
     try w.writeAll(")\n\n");
 
     // Generate completion functions for all commands recursively
-    try generateCommandFunction(w, cmd, cmd.name, enable_active_help);
+    try generateCommandFunction(w, cmd, cmd.name, enable_active_help, esc_alloc);
 
     // Entry point
     try w.print("_{s}\n", .{cmd.name});
@@ -81,7 +163,7 @@ fn generateActiveHelpSupport(w: anytype, cmd: *const Command) !void {
 }
 
 /// Generate a completion function for a command and its subcommands
-fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, enable_active_help: bool) !void {
+fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, enable_active_help: bool, esc_alloc: std.mem.Allocator) !void {
     // Extract root name from prefix for active help function calls
     const underscore_pos = std.mem.indexOf(u8, prefix, "_");
     const root_name = if (underscore_pos) |pos| prefix[0..pos] else prefix;
@@ -97,7 +179,7 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, 
 
     // Command-specific flags
     for (cmd.flags) |*flag| {
-        try writeZshFlag(w, flag);
+        try writeZshFlag(w, flag, esc_alloc);
     }
     try w.print("    )\n\n", .{});
 
@@ -114,8 +196,10 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, 
         try w.print("            commands=(\n", .{});
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                // Escape single quotes in summary
-                try w.print("                '{s}:{s}'\n", .{ subcmd.name, subcmd.summary });
+                // Escape single quotes in name and summary
+                const esc_name = try escapeZshSingleQuote(esc_alloc, subcmd.name);
+                const esc_summary = try escapeZshSingleQuote(esc_alloc, subcmd.summary);
+                try w.print("                '{s}:{s}'\n", .{ esc_name, esc_summary });
             }
         }
         try w.print("            )\n", .{});
@@ -145,7 +229,8 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, 
             try w.writeAll("\n    # Display active help\n");
             try w.writeAll("    if (( ${#words[@]} > 2 )); then\n");
             for (cmd.active_help) |help_msg| {
-                try w.print("        _{s}_active_help \"{s}\"\n", .{ root_name, help_msg });
+                const esc_help = try escapeZshDoubleQuote(esc_alloc, help_msg);
+                try w.print("        _{s}_active_help \"{s}\"\n", .{ root_name, esc_help });
             }
             try w.writeAll("    fi\n");
         }
@@ -158,14 +243,15 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, 
         if (!subcmd.hidden) {
             var subprefix_buf: [256]u8 = undefined;
             const subprefix = std.fmt.bufPrint(&subprefix_buf, "{s}_{s}", .{ prefix, subcmd.name }) catch prefix;
-            try generateCommandFunction(w, subcmd, subprefix, enable_active_help);
+            try generateCommandFunction(w, subcmd, subprefix, enable_active_help, esc_alloc);
         }
     }
 }
 
 /// Write a zsh flag specification
-fn writeZshFlag(w: anytype, flag: *const FlagSpec) !void {
+fn writeZshFlag(w: anytype, flag: *const FlagSpec, esc_alloc: std.mem.Allocator) !void {
     const required_suffix: []const u8 = if (flag.required) " (required)" else "";
+    const esc_help = try escapeZshSingleQuote(esc_alloc, flag.help);
 
     // Build value completion spec
     var value_spec: []const u8 = "";
@@ -182,6 +268,8 @@ fn writeZshFlag(w: anytype, flag: *const FlagSpec) !void {
                 value_buf[written] = ' ';
                 written += 1;
             }
+            // Bounds check before @memcpy
+            if (written + val.len + 2 > value_buf.len) break;
             @memcpy(value_buf[written .. written + val.len], val);
             written += val.len;
         }
@@ -193,18 +281,18 @@ fn writeZshFlag(w: anytype, flag: *const FlagSpec) !void {
     if (flag.short) |s| {
         if (flag.ftype == .bool) {
             try w.print("        '(-{c} --{s})'{{-{c},--{s}}}'[{s}{s}]'\n", .{
-                s, flag.name, s, flag.name, flag.help, required_suffix,
+                s, flag.name, s, flag.name, esc_help, required_suffix,
             });
         } else {
             try w.print("        '(-{c} --{s})'{{-{c},--{s}}}'[{s}{s}]:value:{s}'\n", .{
-                s, flag.name, s, flag.name, flag.help, required_suffix, value_spec,
+                s, flag.name, s, flag.name, esc_help, required_suffix, value_spec,
             });
         }
     } else {
         if (flag.ftype == .bool) {
-            try w.print("        '--{s}[{s}{s}]'\n", .{ flag.name, flag.help, required_suffix });
+            try w.print("        '--{s}[{s}{s}]'\n", .{ flag.name, esc_help, required_suffix });
         } else {
-            try w.print("        '--{s}[{s}{s}]:value:{s}'\n", .{ flag.name, flag.help, required_suffix, value_spec });
+            try w.print("        '--{s}[{s}{s}]:value:{s}'\n", .{ flag.name, esc_help, required_suffix, value_spec });
         }
     }
 }
@@ -502,4 +590,76 @@ test "zsh: active help can be disabled" {
 
     // Should NOT have active help function when disabled
     try std.testing.expect(std.mem.indexOf(u8, script, "_myapp_active_help()") == null);
+}
+
+// ============================================================================
+// Shell Escape Function Tests
+// ============================================================================
+
+test "zsh: escapeZshSingleQuote no special chars" {
+    const result = try escapeZshSingleQuote(std.testing.allocator, "hello world");
+    try std.testing.expectEqualStrings("hello world", result);
+}
+
+test "zsh: escapeZshSingleQuote with single quote" {
+    const result = try escapeZshSingleQuote(std.testing.allocator, "it's");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("it'\\''s", result);
+}
+
+test "zsh: escapeZshSingleQuote empty string" {
+    const result = try escapeZshSingleQuote(std.testing.allocator, "");
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "zsh: escapeZshDoubleQuote no special chars" {
+    const result = try escapeZshDoubleQuote(std.testing.allocator, "hello");
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "zsh: escapeZshDoubleQuote with dollar sign" {
+    const result = try escapeZshDoubleQuote(std.testing.allocator, "val$ue");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("val\\$ue", result);
+}
+
+test "zsh: escapeZshDoubleQuote with backslash" {
+    const result = try escapeZshDoubleQuote(std.testing.allocator, "path\\to");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("path\\\\to", result);
+}
+
+test "zsh: escapeZshDoubleQuote with double quote" {
+    const result = try escapeZshDoubleQuote(std.testing.allocator, "say\"hi\"");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("say\\\"hi\\\"", result);
+}
+
+test "zsh: escapeZshDoubleQuote with backtick" {
+    const result = try escapeZshDoubleQuote(std.testing.allocator, "run`cmd`");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("run\\`cmd\\`", result);
+}
+
+test "zsh: escapeZshDoubleQuote empty string" {
+    const result = try escapeZshDoubleQuote(std.testing.allocator, "");
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "zsh: escapeZshSingleQuote strips NUL bytes" {
+    const result = try escapeZshSingleQuote(std.testing.allocator, "hel\x00lo");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "zsh: escapeZshSingleQuote strips newlines" {
+    const result = try escapeZshSingleQuote(std.testing.allocator, "line1\nline2\rline3");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("line1line2line3", result);
+}
+
+test "zsh: escapeZshDoubleQuote strips NUL and newlines" {
+    const result = try escapeZshDoubleQuote(std.testing.allocator, "a\x00b\nc\rd");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("abcd", result);
 }

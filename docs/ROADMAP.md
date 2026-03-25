@@ -117,7 +117,7 @@ Contributions are welcome! Please:
 
 ## Version History
 
-### v0.2.0 (Current)
+### v0.2.0 (Unreleased)
 - Command groups for organized help output
 - Markdown documentation generation
 - Table output formatter with multiple border styles

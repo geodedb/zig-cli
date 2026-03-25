@@ -35,6 +35,9 @@ This project implements the following security measures:
 - No external C dependencies (stdlib only)
 - Compile-time safety checks enabled
 - Fuzz testing for parser inputs
+- **Coverage-guided fuzz testing** via `zig build test --fuzz`
+  - Runs on scheduled CI jobs and manual trigger
+  - Crash artifacts are collected and triaged as security issues
 
 ### Release Security
 - All releases are tagged and signed

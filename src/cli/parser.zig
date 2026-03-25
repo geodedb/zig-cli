@@ -22,6 +22,8 @@ const FlagGroupType = command.FlagGroupType;
 const ArgsValidator = command.ArgsValidator;
 const ArgsValidationError = command.ArgsValidationError;
 const ArgsErrorDetails = command.ArgsErrorDetails;
+const builtin = @import("builtin");
+const help = @import("help.zig");
 
 /// Parse errors
 pub const ParseError = error{
@@ -52,10 +54,14 @@ pub const ParseResult = struct {
     version_requested: bool = false,
     /// Chain of commands from root to current (for persistent hooks)
     command_chain: std.ArrayList(*const Command),
+    /// Allocator used during parsing (stored so deinit does not require it)
+    allocator: Allocator,
 
-    /// Clean up all allocated resources
-    pub fn deinit(self: *ParseResult, allocator: Allocator) void {
-        self.command_chain.deinit(allocator);
+    /// Clean up all allocated resources.
+    /// The allocator parameter is accepted for backward compatibility but ignored;
+    /// the stored allocator is always used.
+    pub fn deinit(self: *ParseResult, _: Allocator) void {
+        self.command_chain.deinit(self.allocator);
         self.context.deinit();
     }
 };
@@ -76,10 +82,26 @@ pub const Parser = struct {
     missing_together_flags: ?[]const []const u8 = null,
     /// Group name for one required error
     one_required_group: ?[]const []const u8 = null,
+    /// Name of secret flag rejected via flag/env (for error reporting)
+    secret_flag_name: ?[]const u8 = null,
     /// Args validation error details
     args_error: ?ArgsErrorDetails = null,
+    /// Env parse errors collected during applyEnvDefaults.
+    /// **Limit:** At most 8 errors are tracked. Additional failures beyond
+    /// this limit are silently dropped (the flag simply won't be set).
+    env_parse_errors: [8]EnvParseErrorEntry = .{EnvParseErrorEntry{}} ** 8,
+    /// Number of env parse errors recorded (capped at env_parse_errors.len)
+    env_parse_error_count: usize = 0,
 
     const Self = @This();
+
+    /// Record of an environment variable parse failure
+    pub const EnvParseErrorEntry = struct {
+        env_name: []const u8 = "",
+        flag_name: []const u8 = "",
+        value: []const u8 = "",
+        expected_type: []const u8 = "",
+    };
 
     /// Initialize a new parser
     pub fn init(
@@ -99,15 +121,17 @@ pub const Parser = struct {
     /// Parse command-line arguments
     pub fn parse(self: *Self, argv: []const []const u8) ParseError!ParseResult {
         var ctx = Context.init(self.allocator);
+        errdefer ctx.deinit();
         ctx.env_prefix = self.env_prefix;
 
-        // Track command chain for persistent hooks
+        // Track command chain for persistent hooks (pre-allocate for typical 4-level depth)
         var command_chain: std.ArrayList(*const Command) = .empty;
         errdefer command_chain.deinit(self.allocator);
+        command_chain.ensureTotalCapacity(self.allocator, 4) catch return ParseError.OutOfMemory;
         command_chain.append(self.allocator, self.root) catch return ParseError.OutOfMemory;
 
         // Apply environment-based defaults
-        self.applyEnvDefaults(&ctx);
+        try self.applyEnvDefaults(&ctx);
 
         var current_cmd = self.root;
         self.current_command = self.root;
@@ -139,19 +163,19 @@ pub const Parser = struct {
                 if (mem.indexOf(u8, flag_part, "=")) |eq_pos| {
                     const name = flag_part[0..eq_pos];
                     const value = flag_part[eq_pos + 1 ..];
-                    try self.handleFlag(&ctx, current_cmd, name, value);
+                    try self.handleFlagWithChain(&ctx, current_cmd, command_chain.items, name, value);
                 } else {
                     // Check if it's a boolean flag or needs a value
-                    if (self.findFlagInChain(current_cmd, flag_part)) |flag| {
+                    if (self.findFlagInFullChain(current_cmd, command_chain.items, flag_part)) |flag| {
                         if (flag.ftype == .bool) {
-                            try self.handleFlag(&ctx, current_cmd, flag_part, "true");
+                            try self.handleFlagWithChain(&ctx, current_cmd, command_chain.items, flag_part, "true");
                         } else {
                             // Need next arg as value
                             i += 1;
                             if (i >= argv.len) {
                                 return ParseError.MissingValue;
                             }
-                            try self.handleFlag(&ctx, current_cmd, flag_part, argv[i]);
+                            try self.handleFlagWithChain(&ctx, current_cmd, command_chain.items, flag_part, argv[i]);
                         }
                     } else {
                         // Check global flags
@@ -161,6 +185,7 @@ pub const Parser = struct {
                                 .context = ctx,
                                 .help_requested = true,
                                 .command_chain = command_chain,
+                                .allocator = self.allocator,
                             };
                         } else if (mem.eql(u8, flag_part, "version")) {
                             return ParseResult{
@@ -168,11 +193,12 @@ pub const Parser = struct {
                                 .context = ctx,
                                 .version_requested = true,
                                 .command_chain = command_chain,
+                                .allocator = self.allocator,
                             };
                         }
 
                         // Handle other global flags
-                        try self.handleGlobalFlag(&ctx, flag_part, if (i + 1 < argv.len) argv[i + 1] else null);
+                        try self.handleGlobalFlag(&ctx, flag_part);
                     }
                 }
             } else if (mem.startsWith(u8, arg, "-") and arg.len > 1) {
@@ -185,6 +211,7 @@ pub const Parser = struct {
                             .context = ctx,
                             .help_requested = true,
                             .command_chain = command_chain,
+                            .allocator = self.allocator,
                         };
                     } else if (c == 'V') {
                         return ParseResult{
@@ -192,10 +219,11 @@ pub const Parser = struct {
                             .context = ctx,
                             .version_requested = true,
                             .command_chain = command_chain,
+                            .allocator = self.allocator,
                         };
                     }
 
-                    if (self.findFlagByShortInChain(current_cmd, c)) |flag| {
+                    if (self.findFlagByShortInFullChain(current_cmd, command_chain.items, c)) |flag| {
                         if (flag.ftype == .bool) {
                             try self.setFlagValue(&ctx, flag.name, FlagValue{ .bool = true });
                         } else if (j == flags.len - 1) {
@@ -204,7 +232,7 @@ pub const Parser = struct {
                             if (i >= argv.len) {
                                 return ParseError.MissingValue;
                             }
-                            try self.handleFlag(&ctx, current_cmd, flag.name, argv[i]);
+                            try self.handleFlagWithChain(&ctx, current_cmd, command_chain.items, flag.name, argv[i]);
                         }
                     } else {
                         try self.handleGlobalShortFlag(&ctx, c);
@@ -230,7 +258,7 @@ pub const Parser = struct {
         }
 
         // Check for required flags
-        self.applyDefaultValues(&ctx, current_cmd);
+        try self.applyDefaultValues(&ctx, current_cmd);
         try self.checkRequired(&ctx, current_cmd);
 
         // Check flag groups
@@ -243,9 +271,12 @@ pub const Parser = struct {
             .command = current_cmd,
             .context = ctx,
             .command_chain = command_chain,
+            .allocator = self.allocator,
         };
     }
 
+    /// Look up a command-specific flag by name, validate it, and store
+    /// the parsed value in the context. Rejects secret flags passed via CLI.
     fn handleFlag(
         self: *Self,
         ctx: *Context,
@@ -257,6 +288,7 @@ pub const Parser = struct {
         if (self.findFlagInChain(cmd, name)) |flag| {
             // Check secret policy
             if (flag.secret == .from_file_or_stdin) {
+                self.secret_flag_name = flag.name;
                 return ParseError.SecretInFlagOrEnv;
             }
 
@@ -278,8 +310,72 @@ pub const Parser = struct {
         }
     }
 
-    fn handleGlobalFlag(self: *Self, ctx: *Context, name: []const u8, next_arg: ?[]const u8) ParseError!void {
+    /// Like `handleFlag` but walks the full command chain for flag lookup.
+    fn handleFlagWithChain(
+        self: *Self,
+        ctx: *Context,
+        cmd: *const Command,
+        chain: []const *const Command,
+        name: []const u8,
+        value: []const u8,
+    ) ParseError!void {
+        if (self.findFlagInFullChain(cmd, chain, name)) |flag| {
+            if (flag.secret == .from_file_or_stdin) {
+                self.secret_flag_name = flag.name;
+                return ParseError.SecretInFlagOrEnv;
+            }
+            if (!flag.validate(value)) {
+                return ParseError.InvalidValue;
+            }
+            if (flag.ftype == .string_array) {
+                try self.appendToStringArray(ctx, name, value);
+            } else {
+                const fval = try self.parseValue(flag.ftype, value);
+                try self.setFlagValue(ctx, name, fval);
+            }
+        } else {
+            return ParseError.UnknownFlag;
+        }
+    }
+
+    /// Map a long global flag name (quiet, json, plain, etc.) to the
+    /// corresponding Context field. Returns `UnknownFlag` for unrecognised names.
+    /// Apply a global flag by name to the Context. Flag names are validated
+    /// against `command.global_flags` -- the single canonical list -- so that
+    /// adding a new global flag only requires updating that list and the
+    /// `applyGlobalFlagToContext` mapping below.
+    fn handleGlobalFlag(self: *Self, ctx: *Context, name: []const u8) ParseError!void {
         _ = self;
+        // Validate against canonical global_flags list
+        for (command.global_flags) |*gf| {
+            if (mem.eql(u8, gf.name, name)) {
+                applyGlobalFlagToContext(ctx, name);
+                return;
+            }
+        }
+        return ParseError.UnknownFlag;
+    }
+
+    /// Map a short global flag character to its long name via
+    /// `command.global_flags`, then apply. Returns `UnknownFlag` for
+    /// unrecognised characters.
+    fn handleGlobalShortFlag(self: *Self, ctx: *Context, c: u8) ParseError!void {
+        _ = self;
+        for (command.global_flags) |*gf| {
+            if (gf.short) |short| {
+                if (short == c) {
+                    applyGlobalFlagToContext(ctx, gf.name);
+                    return;
+                }
+            }
+        }
+        return ParseError.UnknownFlag;
+    }
+
+    /// Single mapping from global flag name to Context boolean field.
+    /// This is the ONLY place where global flag names are coupled to
+    /// Context struct fields.
+    fn applyGlobalFlagToContext(ctx: *Context, name: []const u8) void {
         if (mem.eql(u8, name, "quiet")) {
             ctx.quiet = true;
         } else if (mem.eql(u8, name, "json")) {
@@ -292,21 +388,26 @@ pub const Parser = struct {
             ctx.dry_run = true;
         } else if (mem.eql(u8, name, "no-input")) {
             ctx.no_input = true;
-        } else {
-            _ = next_arg;
-            return ParseError.UnknownFlag;
+        }
+        // help and version are handled separately in parse() before
+        // handleGlobalFlag is called, so they are intentionally not
+        // mapped here.
+    }
+
+    /// Split a comma-separated value string and append each trimmed,
+    /// non-empty item to `arr`.
+    fn splitAndAppendCsv(self: *Self, arr: *std.ArrayList([]const u8), value: []const u8) ParseError!void {
+        var iter = mem.splitSequence(u8, value, ",");
+        while (iter.next()) |item| {
+            const trimmed = mem.trim(u8, item, " \t");
+            if (trimmed.len > 0) {
+                arr.append(self.allocator, trimmed) catch return ParseError.OutOfMemory;
+            }
         }
     }
 
-    fn handleGlobalShortFlag(self: *Self, ctx: *Context, c: u8) ParseError!void {
-        _ = self;
-        switch (c) {
-            'q' => ctx.quiet = true,
-            'n' => ctx.dry_run = true,
-            else => return ParseError.UnknownFlag,
-        }
-    }
-
+    /// Convert a raw string value to a typed `FlagValue` according to the
+    /// flag's declared type. Returns `InvalidValue` if the conversion fails.
     fn parseValue(self: *Self, ftype: FlagType, value: []const u8) ParseError!FlagValue {
         return switch (ftype) {
             .bool => FlagValue{ .bool = mem.eql(u8, value, "true") or mem.eql(u8, value, "1") },
@@ -314,33 +415,20 @@ pub const Parser = struct {
             .float => FlagValue{ .float = std.fmt.parseFloat(f64, value) catch return ParseError.InvalidValue },
             .string, .path => FlagValue{ .string = value },
             .string_array => blk: {
-                // Create a new ArrayList and add the value
                 var arr: std.ArrayList([]const u8) = .empty;
-                // Handle comma-separated values
-                var iter = mem.splitSequence(u8, value, ",");
-                while (iter.next()) |item| {
-                    const trimmed = mem.trim(u8, item, " \t");
-                    if (trimmed.len > 0) {
-                        arr.append(self.allocator, trimmed) catch return ParseError.OutOfMemory;
-                    }
-                }
+                try self.splitAndAppendCsv(&arr, value);
                 break :blk FlagValue{ .string_array = arr };
             },
         };
     }
 
+    /// Append comma-separated items to an existing string_array flag, or
+    /// create a new one if this is the first occurrence of the flag.
     fn appendToStringArray(self: *Self, ctx: *Context, name: []const u8, value: []const u8) ParseError!void {
         if (ctx.flags.getPtr(name)) |existing| {
             switch (existing.*) {
                 .string_array => |*arr| {
-                    // Handle comma-separated values
-                    var iter = mem.splitSequence(u8, value, ",");
-                    while (iter.next()) |item| {
-                        const trimmed = mem.trim(u8, item, " \t");
-                        if (trimmed.len > 0) {
-                            arr.append(self.allocator, trimmed) catch return ParseError.OutOfMemory;
-                        }
-                    }
+                    try self.splitAndAppendCsv(arr, value);
                 },
                 else => {
                     // Shouldn't happen - type mismatch
@@ -354,45 +442,77 @@ pub const Parser = struct {
         }
     }
 
+    /// Store a parsed flag value in the context's flag map.
     fn setFlagValue(self: *Self, ctx: *Context, name: []const u8, value: FlagValue) ParseError!void {
         _ = self;
         ctx.flags.put(name, value) catch return ParseError.OutOfMemory;
     }
 
-    fn findFlagInChain(self: *Self, cmd: *const Command, name: []const u8) ?*const FlagSpec {
-        // Check command flags first
+    /// Search for a long flag by name, walking the full command chain from
+    /// the current command back to the root (for inherited flags).
+    fn findFlagInChain(_: *Self, cmd: *const Command, name: []const u8) ?*const FlagSpec {
+        // Check command flags first (most specific)
         if (cmd.findFlag(name)) |f| return f;
 
-        // Check root command flags
-        if (cmd != self.root) {
-            if (self.root.findFlag(name)) |f| return f;
+        // Walk the full command chain (stored during parsing)
+        // Check all ancestors, handled by caller passing chain
+        return null;
+    }
+
+    /// Search for a long flag by name, walking the full command chain.
+    /// Checks current command first, then each ancestor up to root.
+    fn findFlagInFullChain(_: *Self, cmd: *const Command, chain: []const *const Command, name: []const u8) ?*const FlagSpec {
+        // Check current command flags first (most specific)
+        if (cmd.findFlag(name)) |f| return f;
+
+        // Walk ancestors in reverse order (parent, grandparent, ... root)
+        // chain includes root at [0] and current cmd may be at the end
+        var i: usize = chain.len;
+        while (i > 0) {
+            i -= 1;
+            const ancestor = chain[i];
+            if (ancestor == cmd) continue; // Skip current (already checked)
+            if (ancestor.findFlag(name)) |f| return f;
         }
 
         return null;
     }
 
-    fn findFlagByShortInChain(self: *Self, cmd: *const Command, short: u8) ?*const FlagSpec {
+    /// Search for a short flag by character, walking the full command chain.
+    fn findFlagByShortInChain(_: *Self, cmd: *const Command, short: u8) ?*const FlagSpec {
         // Check command flags first
         if (cmd.findFlagByShort(short)) |f| return f;
 
-        // Check root command flags
-        if (cmd != self.root) {
-            if (self.root.findFlagByShort(short)) |f| return f;
+        return null;
+    }
+
+    /// Search for a short flag by character, walking the full command chain.
+    fn findFlagByShortInFullChain(_: *Self, cmd: *const Command, chain: []const *const Command, short: u8) ?*const FlagSpec {
+        // Check current command flags first
+        if (cmd.findFlagByShort(short)) |f| return f;
+
+        // Walk ancestors in reverse order
+        var i: usize = chain.len;
+        while (i > 0) {
+            i -= 1;
+            const ancestor = chain[i];
+            if (ancestor == cmd) continue;
+            if (ancestor.findFlagByShort(short)) |f| return f;
         }
 
         return null;
     }
 
-    fn applyEnvDefaults(self: *Self, ctx: *Context) void {
+    /// Populate context fields from environment variables (NO_COLOR,
+    /// TERM=dumb) and fill flag values whose specs declare an `env` name.
+    fn applyEnvDefaults(self: *Self, ctx: *Context) ParseError!void {
         // Check NO_COLOR
-        if (self.getEnvVar("NO_COLOR")) |v| {
-            self.allocator.free(v);
+        if (self.getEnvVar("NO_COLOR")) |_| {
             ctx.no_color = true;
         }
 
         // Check TERM=dumb
         if (self.getEnvVar("TERM")) |term| {
-            defer self.allocator.free(term);
             if (mem.eql(u8, term, "dumb")) {
                 ctx.no_color = true;
             }
@@ -405,41 +525,73 @@ pub const Parser = struct {
                 if (flag.secret == .from_file_or_stdin) continue;
 
                 if (self.getEnvVar(env_name)) |value| {
-                    defer self.allocator.free(value);
-                    const fval = self.parseValue(flag.ftype, value) catch continue;
-                    self.setFlagValue(ctx, flag.name, fval) catch {};
+                    const fval = self.parseValue(flag.ftype, value) catch {
+                        // Record the parse failure for error reporting
+                        if (self.env_parse_error_count < self.env_parse_errors.len) {
+                            self.env_parse_errors[self.env_parse_error_count] = .{
+                                .env_name = env_name,
+                                .flag_name = flag.name,
+                                .value = value,
+                                .expected_type = flag.ftype.format(),
+                            };
+                            self.env_parse_error_count += 1;
+                        }
+                        continue;
+                    };
+                    try self.setFlagValue(ctx, flag.name, fval);
                 }
             }
         }
     }
 
     /// Cross-platform environment variable lookup.
-    /// Returns an owned slice that the caller must free with self.allocator.
-    fn getEnvVar(self: *const Self, name: []const u8) ?[]const u8 {
-        return std.process.getEnvVarOwned(self.allocator, name) catch return null;
+    /// On POSIX, returns a borrowed pointer into the environment block (no allocation).
+    /// On Windows, returns null since env-based flags are POSIX-focused.
+    fn getEnvVar(_: *const Self, name: []const u8) ?[]const u8 {
+        if (comptime builtin.os.tag == .windows) return null;
+        return std.posix.getenv(name);
     }
 
-    fn applyDefaultValues(self: *Self, ctx: *Context, cmd: *const Command) void {
-        self.applyDefaultsForCommand(ctx, self.root);
+    /// Apply default values to flags that were not set during parsing,
+    /// starting with the root command and then the current command.
+    fn applyDefaultValues(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
+        try self.applyDefaultsForCommand(ctx, self.root);
         if (cmd != self.root) {
-            self.applyDefaultsForCommand(ctx, cmd);
+            try self.applyDefaultsForCommand(ctx, cmd);
         }
     }
 
-    fn applyDefaultsForCommand(self: *Self, ctx: *Context, cmd: *const Command) void {
+    /// Apply default values from a single command's flag specifications.
+    /// Skips flags that already have a value or have a secret policy
+    /// (secrets must be provided via file/stdin, never via defaults).
+    fn applyDefaultsForCommand(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
         for (cmd.flags) |flag| {
+            // Never apply defaults to secret flags -- they must come from
+            // file or stdin, not from a hardcoded default value.
+            if (flag.secret == .from_file_or_stdin) continue;
             if (flag.default_str) |def| {
                 if (ctx.getFlag(flag.name) != null) continue;
                 const fval = self.parseValue(flag.ftype, def) catch continue;
-                self.setFlagValue(ctx, flag.name, fval) catch {};
+                try self.setFlagValue(ctx, flag.name, fval);
             }
         }
     }
 
+    /// Verify that all flags marked as `required` have been provided.
+    /// Records the first missing flag name for error reporting.
+    /// Also checks if a missing required flag had an env parse error.
     fn checkRequired(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
         for (cmd.flags) |flag| {
             if (flag.required) {
                 if (ctx.getFlag(flag.name) == null) {
+                    // Check if there was an env parse error for this flag
+                    for (self.env_parse_errors[0..self.env_parse_error_count]) |env_err| {
+                        if (mem.eql(u8, env_err.flag_name, flag.name)) {
+                            // The flag was provided via env but failed to parse
+                            self.missing_required_flag = flag.name;
+                            return ParseError.InvalidValue;
+                        }
+                    }
                     // Store the missing flag name for better error reporting
                     self.missing_required_flag = flag.name;
                     return ParseError.MissingRequired;
@@ -520,73 +672,165 @@ pub const Parser = struct {
     }
 };
 
-/// Run a command with the given arguments
-pub fn run(root: *const Command, argv: []const []const u8, allocator: Allocator) !u8 {
-    var parser = Parser.init(allocator, root, "0.0.0", "");
+/// Write a human-readable error message for the given ParseError to stderr,
+/// using contextual details stored on the Parser instance.
+fn formatParseError(parser: *const Parser, err: ParseError, stderr: anytype) !void {
+    switch (err) {
+        ParseError.UnknownFlag => try stderr.print("Error: Unknown flag\n\n", .{}),
+        ParseError.UnknownCommand => try stderr.print("Error: Unknown command\n\n", .{}),
+        ParseError.MissingValue => try stderr.print("Error: Missing value for flag\n\n", .{}),
+        ParseError.InvalidValue => {
+            if (parser.env_parse_error_count > 0) {
+                const env_err = parser.env_parse_errors[0];
+                try stderr.print("Error: Invalid value for --{s}: environment variable ${s} has value that cannot be parsed as {s}\n\n", .{
+                    env_err.flag_name, env_err.env_name, env_err.expected_type,
+                });
+            } else {
+                try stderr.print("Error: Invalid value\n\n", .{});
+            }
+        },
+        ParseError.MissingRequired => {
+            if (parser.missing_required_flag) |flag_name| {
+                try stderr.print("Error: Missing required flag --{s}\n\n", .{flag_name});
+            } else {
+                try stderr.print("Error: Missing required flag\n\n", .{});
+            }
+        },
+        ParseError.SecretInFlagOrEnv => {
+            if (parser.secret_flag_name) |sname| {
+                try stderr.print("Error: Secret '{s}' cannot be passed via --flag or environment variable. Provide via stdin: echo $SECRET | myapp\n\n", .{sname});
+            } else {
+                try stderr.print("Error: Secret cannot be passed via --flag or environment variable. Provide via stdin: echo $SECRET | myapp\n\n", .{});
+            }
+        },
+        ParseError.MutuallyExclusiveFlags => {
+            if (parser.conflicting_flags) |flags| {
+                try stderr.print("Error: Flags --{s} and --{s} are mutually exclusive\n\n", .{ flags[0], flags[1] });
+            } else {
+                try stderr.print("Error: Mutually exclusive flags specified\n\n", .{});
+            }
+        },
+        ParseError.RequiredTogetherFlags => {
+            if (parser.missing_together_flags) |flags| {
+                try stderr.print("Error: Flags must be used together: ", .{});
+                for (flags, 0..) |f, idx| {
+                    if (idx > 0) try stderr.print(", ", .{});
+                    try stderr.print("--{s}", .{f});
+                }
+                try stderr.print("\n\n", .{});
+            } else {
+                try stderr.print("Error: Required flags must be used together\n\n", .{});
+            }
+        },
+        ParseError.OneRequiredFlags => {
+            if (parser.one_required_group) |flags| {
+                try stderr.print("Error: At least one of these flags is required: ", .{});
+                for (flags, 0..) |f, idx| {
+                    if (idx > 0) try stderr.print(", ", .{});
+                    try stderr.print("--{s}", .{f});
+                }
+                try stderr.print("\n\n", .{});
+            } else {
+                try stderr.print("Error: At least one flag from group is required\n\n", .{});
+            }
+        },
+        ParseError.InvalidArgs => {
+            if (parser.args_error) |args_err| {
+                var buf: [256]u8 = undefined;
+                const msg = args_err.format(&buf);
+                try stderr.print("Error: {s}\n\n", .{msg});
+            } else {
+                try stderr.print("Error: Invalid positional arguments\n\n", .{});
+            }
+        },
+        else => try stderr.print("Error: Parse error\n\n", .{}),
+    }
+}
 
-    const result = parser.parse(argv) catch |err| {
-        const stderr = std.fs.File.stderr().deprecatedWriter();
-        switch (err) {
-            ParseError.UnknownFlag => try stderr.print("Error: Unknown flag\n\n", .{}),
-            ParseError.UnknownCommand => try stderr.print("Error: Unknown command\n\n", .{}),
-            ParseError.MissingValue => try stderr.print("Error: Missing value for flag\n\n", .{}),
-            ParseError.InvalidValue => try stderr.print("Error: Invalid value\n\n", .{}),
-            ParseError.MissingRequired => {
-                if (parser.missing_required_flag) |flag_name| {
-                    try stderr.print("Error: Missing required flag --{s}\n\n", .{flag_name});
-                } else {
-                    try stderr.print("Error: Missing required flag\n\n", .{});
-                }
-            },
-            ParseError.SecretInFlagOrEnv => {
-                try stderr.print("Refusing secret in flags/env. Provide --<name>-file <path> or pipe via stdin.\n\n", .{});
-            },
-            ParseError.MutuallyExclusiveFlags => {
-                if (parser.conflicting_flags) |flags| {
-                    try stderr.print("Error: Flags --{s} and --{s} are mutually exclusive\n\n", .{ flags[0], flags[1] });
-                } else {
-                    try stderr.print("Error: Mutually exclusive flags specified\n\n", .{});
-                }
-            },
-            ParseError.RequiredTogetherFlags => {
-                if (parser.missing_together_flags) |flags| {
-                    try stderr.print("Error: Flags must be used together: ", .{});
-                    for (flags, 0..) |f, i| {
-                        if (i > 0) try stderr.print(", ", .{});
-                        try stderr.print("--{s}", .{f});
-                    }
-                    try stderr.print("\n\n", .{});
-                } else {
-                    try stderr.print("Error: Required flags must be used together\n\n", .{});
-                }
-            },
-            ParseError.OneRequiredFlags => {
-                if (parser.one_required_group) |flags| {
-                    try stderr.print("Error: At least one of these flags is required: ", .{});
-                    for (flags, 0..) |f, i| {
-                        if (i > 0) try stderr.print(", ", .{});
-                        try stderr.print("--{s}", .{f});
-                    }
-                    try stderr.print("\n\n", .{});
-                } else {
-                    try stderr.print("Error: At least one flag from group is required\n\n", .{});
-                }
-            },
-            ParseError.InvalidArgs => {
-                if (parser.args_error) |args_err| {
-                    var buf: [256]u8 = undefined;
-                    const msg = args_err.format(&buf);
-                    try stderr.print("Error: {s}\n\n", .{msg});
-                } else {
-                    try stderr.print("Error: Invalid positional arguments\n\n", .{});
-                }
-            },
-            else => try stderr.print("Error: Parse error\n\n", .{}),
+/// Execute the full hook lifecycle around a command dispatch:
+///   persistent_pre_run (root to leaf) -> pre_run -> run -> post_run ->
+///   persistent_post_run (leaf to root).
+/// Returns the exit code: 0 on success, 1 on hook/run error.
+fn executeHooks(result: *ParseResult) !u8 {
+    const cmd = result.command;
+    const chain = result.command_chain.items;
+
+    // Persistent pre-run hooks from root to current (in order)
+    for (chain) |parent_cmd| {
+        if (parent_cmd.persistent_pre_run) |persistent_pre| {
+            persistent_pre(&result.context) catch |err| {
+                try result.context.stderr.print("Error in persistent pre-run: {}\n", .{err});
+                return 1;
+            };
         }
+    }
+
+    // Pre-run hook (only for current command)
+    if (cmd.pre_run) |pre| {
+        pre(&result.context) catch |err| {
+            try result.context.stderr.print("Error in pre-run: {}\n", .{err});
+            return 1;
+        };
+    }
+
+    // Main run
+    if (cmd.run) |run_fn| {
+        run_fn(&result.context) catch |err| {
+            try result.context.stderr.print("Error: {}\n", .{err});
+            return 1;
+        };
+    } else if (cmd.hasSubcommands()) {
+        // No run function but has subcommands - show help
+        help.printHelp(cmd, &result.context);
+        return 0;
+    }
+
+    // Post-run hook (only for current command)
+    if (cmd.post_run) |post| {
+        post(&result.context) catch |err| {
+            try result.context.stderr.print("Error in post-run: {}\n", .{err});
+            return 1;
+        };
+    }
+
+    // Persistent post-run hooks from current to root (reverse order)
+    var i: usize = chain.len;
+    while (i > 0) {
+        i -= 1;
+        if (chain[i].persistent_post_run) |persistent_post| {
+            persistent_post(&result.context) catch |err| {
+                try result.context.stderr.print("Error in persistent post-run: {}\n", .{err});
+                return 1;
+            };
+        }
+    }
+
+    return 0;
+}
+
+/// Run a command with the given arguments through the full lifecycle:
+///
+/// 1. **Parse** -- Walk `argv`, resolve subcommands, set flags
+/// 2. **Env defaults** -- Populate flags from environment variables
+/// 3. **Global flag handling** -- Apply --quiet, --json, --no-color, etc.
+/// 4. **Validation** -- Check required flags, flag groups, positional args
+/// 5. **Hooks** -- Execute persistent_pre_run (root to leaf), then pre_run
+/// 6. **Dispatch** -- Call the resolved command's `run` function
+/// 7. **Post hooks** -- Execute post_run, then persistent_post_run (leaf to root)
+/// 8. **Error handling** -- Print diagnostics and help on parse/run failure
+/// 9. **Cleanup** -- Free ParseResult and Context resources via defer
+///
+/// Returns the process exit code: 0 on success, 1 on run error, 2 on parse error.
+pub fn run(root: *const Command, argv: []const []const u8, allocator: Allocator) !u8 {
+    const version = if (root.version.len > 0) root.version else help.default_version;
+    var parser = Parser.init(allocator, root, version, "");
+
+    var result = parser.parse(argv) catch |err| {
+        const stderr = std.fs.File.stderr().deprecatedWriter();
+        try formatParseError(&parser, err, stderr);
 
         // Show help for the current command on error
         if (parser.current_command) |cmd| {
-            const help = @import("help.zig");
             var ctx = Context.init(allocator);
             defer ctx.deinit();
             help.printHelp(cmd, &ctx);
@@ -595,75 +839,19 @@ pub fn run(root: *const Command, argv: []const []const u8, allocator: Allocator)
         return 2;
     };
 
+    defer result.deinit(allocator);
+
     if (result.help_requested) {
-        const help = @import("help.zig");
-        var ctx = result.context;
-        help.printHelp(result.command, &ctx);
+        help.printHelp(result.command, &result.context);
         return 0;
     }
 
     if (result.version_requested) {
-        try result.context.stdout.print("0.0.0\n", .{});
+        try result.context.stdout.print("{s}\n", .{parser.version});
         return 0;
     }
 
-    // Execute the command
-    const cmd = result.command;
-    var ctx = result.context;
-    const command_chain = result.command_chain.items;
-
-    // Execute persistent pre-run hooks from root to current (in order)
-    for (command_chain) |parent_cmd| {
-        if (parent_cmd.persistent_pre_run) |persistent_pre| {
-            persistent_pre(&ctx) catch |err| {
-                try ctx.stderr.print("Error in persistent pre-run: {}\n", .{err});
-                return 1;
-            };
-        }
-    }
-
-    // Pre-run hook (only for current command)
-    if (cmd.pre_run) |pre| {
-        pre(&ctx) catch |err| {
-            try ctx.stderr.print("Error in pre-run: {}\n", .{err});
-            return 1;
-        };
-    }
-
-    // Main run
-    if (cmd.run) |run_fn| {
-        run_fn(&ctx) catch |err| {
-            try ctx.stderr.print("Error: {}\n", .{err});
-            return 1;
-        };
-    } else if (cmd.hasSubcommands()) {
-        // No run function but has subcommands - show help
-        const help = @import("help.zig");
-        help.printHelp(cmd, &ctx);
-        return 0;
-    }
-
-    // Post-run hook (only for current command)
-    if (cmd.post_run) |post| {
-        post(&ctx) catch |err| {
-            try ctx.stderr.print("Error in post-run: {}\n", .{err});
-            return 1;
-        };
-    }
-
-    // Execute persistent post-run hooks from current to root (reverse order)
-    var i: usize = command_chain.len;
-    while (i > 0) {
-        i -= 1;
-        if (command_chain[i].persistent_post_run) |persistent_post| {
-            persistent_post(&ctx) catch |err| {
-                try ctx.stderr.print("Error in persistent post-run: {}\n", .{err});
-                return 1;
-            };
-        }
-    }
-
-    return 0;
+    return try executeHooks(&result);
 }
 
 // ============================================================================
@@ -1559,4 +1747,273 @@ test "parser: command chain includes nested subcommands" {
     try std.testing.expectEqualStrings("root", result.command_chain.items[0].name);
     try std.testing.expectEqualStrings("middle", result.command_chain.items[1].name);
     try std.testing.expectEqualStrings("leaf", result.command_chain.items[2].name);
+}
+
+// ============================================================================
+// Flag Inheritance Chain Tests (NQ-036)
+// ============================================================================
+
+test "parser: flag inheritance walks full 3-level chain" {
+    const leaf = Command{
+        .name = "leaf",
+        .summary = "Leaf command",
+    };
+    const middle = Command{
+        .name = "middle",
+        .summary = "Middle command",
+        .subcommands = &.{&leaf},
+        .flags = &.{
+            FlagSpec{ .name = "mid-flag", .help = "Middle flag", .ftype = .string },
+        },
+    };
+    const root = Command{
+        .name = "root",
+        .summary = "Root command",
+        .subcommands = &.{&middle},
+        .flags = &.{
+            FlagSpec{ .name = "root-flag", .help = "Root flag", .ftype = .bool },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+
+    // Leaf command should be able to access middle's flag through full chain
+    var result = try parser.parse(&.{ "root", "middle", "leaf", "--mid-flag", "hello", "--root-flag" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("leaf", result.command.name);
+    try std.testing.expectEqualStrings("hello", result.context.getString("mid-flag").?);
+    try std.testing.expect(result.context.getBool("root-flag"));
+}
+
+test "parser: flag inheritance - middle flag short from leaf" {
+    const leaf = Command{
+        .name = "leaf",
+        .summary = "Leaf command",
+    };
+    const middle = Command{
+        .name = "middle",
+        .summary = "Middle command",
+        .subcommands = &.{&leaf},
+        .flags = &.{
+            FlagSpec{ .name = "mid-flag", .short = 'm', .help = "Middle flag", .ftype = .bool },
+        },
+    };
+    const root = Command{
+        .name = "root",
+        .summary = "Root command",
+        .subcommands = &.{&middle},
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+
+    // Leaf command should be able to access middle's short flag
+    var result = try parser.parse(&.{ "root", "middle", "leaf", "-m" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("leaf", result.command.name);
+    try std.testing.expect(result.context.getBool("mid-flag"));
+}
+
+test "parser: leaf flag takes precedence over parent in chain" {
+    const leaf = Command{
+        .name = "leaf",
+        .summary = "Leaf command",
+        .flags = &.{
+            FlagSpec{ .name = "output", .help = "Leaf output", .ftype = .string },
+        },
+    };
+    const middle = Command{
+        .name = "middle",
+        .summary = "Middle command",
+        .subcommands = &.{&leaf},
+        .flags = &.{
+            FlagSpec{ .name = "output", .help = "Middle output", .ftype = .string },
+        },
+    };
+    const root = Command{
+        .name = "root",
+        .summary = "Root command",
+        .subcommands = &.{&middle},
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+
+    // Current command's flag takes priority
+    var result = try parser.parse(&.{ "root", "middle", "leaf", "--output", "leaf-value" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("leaf-value", result.context.getString("output").?);
+}
+
+// ============================================================================
+// run() Lifecycle Tests (NQ-035)
+// ============================================================================
+
+test "run: help flag sets help_requested" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--help" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.help_requested);
+    try std.testing.expect(!result.version_requested);
+}
+
+test "run: version flag sets version_requested" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .version = "1.0.0",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--version" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.version_requested);
+    try std.testing.expect(!result.help_requested);
+}
+
+test "run: unknown flag returns UnknownFlag" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "--unknown-flag" });
+
+    try std.testing.expectError(ParseError.UnknownFlag, result);
+}
+
+test "run: missing required flag returns MissingRequired" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{
+                .name = "required-flag",
+                .help = "Required flag",
+                .ftype = .string,
+                .required = true,
+            },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{"test"});
+
+    try std.testing.expectError(ParseError.MissingRequired, result);
+}
+
+test "run: quiet flag is parsed via run path" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--quiet" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.context.quiet);
+}
+
+test "run: json flag is parsed via run path" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--json" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.context.json);
+}
+
+test "run: no-color flag is parsed via run path" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--no-color" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.context.no_color);
+}
+
+test "run: command without run has isRunnable false" {
+    const sub = Command{
+        .name = "sub",
+        .summary = "Subcommand",
+    };
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .subcommands = &.{&sub},
+    };
+
+    try std.testing.expect(!root.isRunnable());
+    try std.testing.expect(root.hasSubcommands());
+}
+
+test "run: default version is used when none specified" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "0.0.0", "");
+    var result = try parser.parse(&.{ "test", "-V" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.version_requested);
+    try std.testing.expectEqualStrings("0.0.0", parser.version);
+}
+
+test "run: short help flag sets help_requested" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "-h" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.help_requested);
+}
+
+test "run: dry-run flag is parsed" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--dry-run" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.context.dry_run);
+}
+
+test "run: no-input flag is parsed" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--no-input" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.context.no_input);
 }

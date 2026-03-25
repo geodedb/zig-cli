@@ -7,7 +7,7 @@ A comprehensive command-line interface and configuration library for Zig, provid
 | Aspect | Info |
 |--------|------|
 | API Stability | Beta |
-| Zig Version | 0.14.0+ |
+| Zig Version | 0.15.2+ |
 | Platforms | Linux, macOS, Windows |
 
 ## Features
@@ -16,7 +16,7 @@ A comprehensive command-line interface and configuration library for Zig, provid
 - **Nested command trees** with subcommands and aliases
 - **Type-safe flag parsing** (bool, int, float, string, path, string_array)
 - **Automatic help generation** with examples-first approach
-- **Shell completion generation** (bash, zsh, fish)
+- **Shell completion generation** (bash, zsh, fish, PowerShell)
 - **Man page generation** in roff format
 - **Error messages with typo suggestions** using Levenshtein distance
 - **Signal handling** (SIGINT, SIGTERM) with cleanup callbacks
@@ -222,6 +222,9 @@ myapp completion --shell zsh > ~/.zsh/completions/_myapp
 
 # Fish
 myapp completion --shell fish > ~/.config/fish/completions/myapp.fish
+
+# PowerShell
+myapp completion --shell powershell > myapp.ps1
 ```
 
 ## Generating Man Pages
@@ -287,19 +290,19 @@ zig build -Doptimize=ReleaseSafe
 
 This library is under active development. See the [Roadmap](docs/ROADMAP.md) for a complete Cobra feature comparison.
 
-### High Priority
+### Planned
 
 | Issue | Description |
 |-------|-------------|
 | [#12](https://gitlab.com/devnw/zig/cli/-/issues/12) | Publish to Zig package registry |
-| [#13](https://gitlab.com/devnw/zig/cli/-/issues/13) | PowerShell completion generation |
-| [#14](https://gitlab.com/devnw/zig/cli/-/issues/14) | Persistent hooks (PersistentPreRun/PostRun) |
-| [#16](https://gitlab.com/devnw/zig/cli/-/issues/16) | Flag groups (mutually exclusive/required together) |
-| [#17](https://gitlab.com/devnw/zig/cli/-/issues/17) | Positional argument validators |
-| [#22](https://gitlab.com/devnw/zig/cli/-/issues/22) | Flag value completion support |
 
 ### Recently Completed
 
+- PowerShell completion generation ([#13](https://gitlab.com/devnw/zig/cli/-/issues/13))
+- Persistent hooks (PersistentPreRun/PostRun) ([#14](https://gitlab.com/devnw/zig/cli/-/issues/14))
+- Flag groups (mutually exclusive/required together) ([#16](https://gitlab.com/devnw/zig/cli/-/issues/16))
+- Positional argument validators ([#17](https://gitlab.com/devnw/zig/cli/-/issues/17))
+- Flag value completion support ([#22](https://gitlab.com/devnw/zig/cli/-/issues/22))
 - String array flag parsing ([#1](https://gitlab.com/devnw/zig/cli/-/issues/1))
 - Signal handling ([#3](https://gitlab.com/devnw/zig/cli/-/issues/3))
 - Interactive prompts ([#7](https://gitlab.com/devnw/zig/cli/-/issues/7))
@@ -317,7 +320,7 @@ This library is under active development. See the [Roadmap](docs/ROADMAP.md) for
 
 ## Requirements
 
-- Zig 0.15.1 or compatible
+- Zig 0.15.2 or compatible
 
 ## License
 

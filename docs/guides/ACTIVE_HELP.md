@@ -327,24 +327,27 @@ const config_cmd = cli.Command{
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
     // Handle completion subcommand
-    if (std.mem.eql(u8, std.os.argv[1], "completion")) {
-        const shell = std.os.argv[2];
+    if (args.len > 2 and std.mem.eql(u8, args[1], "completion")) {
+        const shell = args[2];
         const script = try cli.completion.generate(
             shell,
             &root_cmd,
-            gpa.allocator(),
+            allocator,
             .{ .active_help = true },
         );
-        defer gpa.allocator().free(script);
+        defer allocator.free(script);
         std.io.getStdOut().writeAll(script) catch {};
         return;
     }
 
     // Normal execution
-    var parser = cli.Parser.init(&root_cmd, gpa.allocator());
-    const ctx = try parser.parse(std.os.argv);
-    // ...
+    const exit_code = try cli.run(&root_cmd, args, allocator);
+    std.process.exit(exit_code);
 }
 ```

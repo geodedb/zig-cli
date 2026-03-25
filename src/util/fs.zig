@@ -50,29 +50,42 @@ pub fn readFile(path: []const u8, allocator: std.mem.Allocator, max_size: usize)
     return file.readToEndAlloc(allocator, max_size) catch FsError.IoError;
 }
 
-/// Write file atomically (write to temp, then rename)
+/// Write file atomically (write to temp with random suffix, then rename).
+///
+/// Security: temp file is created with mode 0o600 (owner read/write only).
+/// Data integrity: fsync is called before close to ensure data reaches disk
+/// before the rename makes it visible.
 pub fn writeFileAtomic(path: []const u8, content: []const u8) FsError!void {
     const dir = fs.cwd();
 
-    // Create temp file
-    const temp_path = blk: {
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
-        break :blk std.fmt.bufPrint(&buf, "{s}.tmp", .{path}) catch return FsError.PathTooLong;
-    };
+    // Create temp file with random suffix to avoid collisions
+    var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_path = std.fmt.bufPrint(&tmp_buf, "{s}.{x:0>8}", .{ path, std.crypto.random.int(u32) }) catch return FsError.PathTooLong;
 
-    // Write to temp file
-    const temp_file = dir.createFile(temp_path, .{}) catch |err| {
+    // Write to temp file with restrictive permissions (0o600)
+    const temp_file = dir.createFile(temp_path, .{ .mode = 0o600 }) catch |err| {
         return switch (err) {
             error.AccessDenied => FsError.PermissionDenied,
             else => FsError.IoError,
         };
     };
-    defer temp_file.close();
+    errdefer {
+        // Clean up temp file on failure
+        temp_file.close();
+        dir.deleteFile(temp_path) catch {};
+    }
 
     temp_file.writeAll(content) catch return FsError.IoError;
 
-    // Rename temp to target
-    dir.rename(temp_path, path) catch return FsError.IoError;
+    // Ensure data is flushed to disk before rename
+    temp_file.sync() catch return FsError.IoError;
+    temp_file.close();
+
+    // Rename temp to target; clean up temp on failure
+    dir.rename(temp_path, path) catch {
+        dir.deleteFile(temp_path) catch {};
+        return FsError.IoError;
+    };
 }
 
 /// Ensure a directory exists, creating it if necessary
@@ -93,7 +106,7 @@ pub fn absolutePath(relative: []const u8, allocator: std.mem.Allocator) FsError!
 /// Redact path for error messages (hide sensitive parts)
 pub fn redactPath(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
     // Check for sensitive paths
-    const sensitive_patterns = &.{
+    const sensitive_patterns: []const []const u8 = &.{
         "/etc/shadow",
         "/etc/passwd",
         ".ssh/",
@@ -110,14 +123,23 @@ pub fn redactPath(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         }
     }
 
-    return path;
+    // Return an owned copy so callers can always free the result
+    return try allocator.dupe(u8, path);
 }
 
 /// Check if a path is safe to read (not in sensitive locations)
 pub fn isSafePath(path: []const u8) bool {
+    // Block path traversal attempts
+    if (containsPathTraversal(path)) {
+        return false;
+    }
+
     const unsafe_prefixes: []const []const u8 = &.{
         "/etc/shadow",
         "/etc/sudoers",
+        "/etc/passwd",
+        "/etc/gshadow",
+        "/proc/self/",
     };
 
     for (unsafe_prefixes) |prefix| {
@@ -126,14 +148,32 @@ pub fn isSafePath(path: []const u8) bool {
         }
     }
 
+    // Check for ~/.ssh/ pattern (tilde or any absolute home path containing .ssh/)
+    if (mem.indexOf(u8, path, ".ssh/") != null) {
+        return false;
+    }
+
     return true;
 }
 
-/// Handle "-" as stdin/stdout
-pub fn resolveStdio(path: []const u8) enum { stdin, stdout, path } {
+/// Check if a path contains ".." traversal segments
+fn containsPathTraversal(path: []const u8) bool {
+    // Check for standalone ".." or "../" or "/.."
+    var iter = mem.splitScalar(u8, path, '/');
+    while (iter.next()) |segment| {
+        if (mem.eql(u8, segment, "..")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Handle "-" as stdin.
+/// When the caller receives `.stdin`, it should decide based on the
+/// operation context whether to use stdin or stdout.
+pub fn resolveStdio(path: []const u8) enum { stdin, path } {
     if (mem.eql(u8, path, "-")) {
-        // Context determines stdin vs stdout
-        return .stdin; // Caller should determine based on operation
+        return .stdin;
     }
     return .path;
 }
@@ -154,6 +194,31 @@ test "isDirectory" {
 test "isSafePath" {
     try std.testing.expect(isSafePath("/home/user/file.txt"));
     try std.testing.expect(!isSafePath("/etc/shadow"));
+    try std.testing.expect(!isSafePath("/etc/sudoers"));
+    try std.testing.expect(!isSafePath("/etc/passwd"));
+    try std.testing.expect(!isSafePath("/etc/gshadow"));
+    try std.testing.expect(!isSafePath("/proc/self/environ"));
+    try std.testing.expect(!isSafePath("/home/user/.ssh/id_rsa"));
+    try std.testing.expect(isSafePath("/home/user/documents/report.txt"));
+}
+
+test "isSafePath blocks path traversal" {
+    try std.testing.expect(!isSafePath("/home/user/../etc/shadow"));
+    try std.testing.expect(!isSafePath("../../etc/passwd"));
+    try std.testing.expect(!isSafePath("/tmp/foo/../../etc/shadow"));
+    try std.testing.expect(isSafePath("/home/user/normal/path"));
+}
+
+test "redactPath returns owned memory for both paths" {
+    // Sensitive path
+    const sensitive = try redactPath("/home/user/.ssh/id_rsa", std.testing.allocator);
+    defer std.testing.allocator.free(sensitive);
+    try std.testing.expect(std.mem.indexOf(u8, sensitive, "[REDACTED]") != null);
+
+    // Non-sensitive path: must also be freeable
+    const safe = try redactPath("/home/user/file.txt", std.testing.allocator);
+    defer std.testing.allocator.free(safe);
+    try std.testing.expectEqualStrings("/home/user/file.txt", safe);
 }
 
 test "resolveStdio" {

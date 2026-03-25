@@ -180,13 +180,8 @@ pub const ProgressBar = struct {
 
         try self.writer.print("\r{s} [", .{self.message});
 
-        for (0..filled) |_| {
-            try self.writer.print("=", .{});
-        }
-
-        for (0..empty) |_| {
-            try self.writer.print(" ", .{});
-        }
+        try self.writer.writeByteNTimes('=', filled);
+        try self.writer.writeByteNTimes(' ', empty);
 
         try self.writer.print("] {d}%", .{percent});
     }

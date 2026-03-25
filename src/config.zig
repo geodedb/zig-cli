@@ -69,3 +69,51 @@ pub const ValueType = ext_config.ValueType;
 pub const MapEntry = ext_config.MapEntry;
 pub const parseContent = ext_config.parseContent;
 pub const parseFile = ext_config.parseFile;
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "config re-exports: core symbols are accessible" {
+    // Verify key symbols are importable (types, generic fns, and functions)
+    _ = @TypeOf(Loader);
+    _ = @TypeOf(LoadError);
+    _ = @TypeOf(LoadOptions);
+    _ = @TypeOf(Format);
+    _ = @TypeOf(Value);
+    _ = @TypeOf(ValueType);
+    _ = @TypeOf(MapEntry);
+    _ = @TypeOf(load);
+    _ = @TypeOf(parseContent);
+    _ = @TypeOf(parseFile);
+}
+
+test "config re-exports: provenance symbols are accessible" {
+    _ = @TypeOf(Source);
+    _ = @TypeOf(TrackedValue);
+    _ = @TypeOf(ProvenanceTracker);
+}
+
+test "config re-exports: xdg and security symbols are accessible" {
+    _ = @TypeOf(XdgPaths);
+    _ = @TypeOf(getPaths);
+    _ = @TypeOf(getConfigDir);
+    _ = @TypeOf(getDataDir);
+    _ = @TypeOf(getCacheDir);
+    _ = @TypeOf(SecretError);
+    _ = @TypeOf(readFromFile);
+    _ = @TypeOf(readFromStdin);
+    _ = @TypeOf(ValidationError);
+}
+
+test "config re-exports: sub-modules are accessible" {
+    _ = @TypeOf(yaml);
+    _ = @TypeOf(toml);
+    _ = @TypeOf(json);
+    _ = @TypeOf(loader);
+    _ = @TypeOf(provenance);
+    _ = @TypeOf(xdg);
+    _ = @TypeOf(dotenv);
+    _ = @TypeOf(secret);
+    _ = @TypeOf(validate);
+}
