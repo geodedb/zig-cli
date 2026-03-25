@@ -63,7 +63,7 @@ pub const signal = @import("signal.zig");
 pub const prompt = @import("prompt.zig");
 
 /// Library version
-pub const version = "0.1.0";
+pub const version = "0.1.1";
 
 // ============================================================================
 // Convenience Re-exports

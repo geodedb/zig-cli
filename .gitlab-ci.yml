@@ -107,6 +107,20 @@ build:
   script:
     - zig build check
 
+# Cross-compilation check: verify Windows and aarch64-linux code paths compile.
+# This catches compilation errors in platform-specific code (signal.zig, tty.zig,
+# env.zig, prompt.zig) that are not exercised by native builds.
+# Uses `check` instead of `build` because the demo example links the external
+# config dependency which has its own Windows compilation issues (xdg.zig).
+cross-compile:
+  stage: build
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+  script:
+    - zig build check -Dtarget=x86_64-windows-gnu
+    - zig build check -Dtarget=aarch64-linux-gnu
+
 # Unit tests
 test:
   stage: test

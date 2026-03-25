@@ -136,15 +136,23 @@ pub const Context = struct {
     pub fn init(allocator: Allocator) Context {
         const stdout_file = std.fs.File.stdout();
         const stderr_file = std.fs.File.stderr();
+        var flags = std.StringHashMap(FlagValue).init(allocator);
+        // Pre-allocate for typical flag count (16 entries) to reduce
+        // incremental rehashing during parsing.
+        flags.ensureTotalCapacity(16) catch {};
+        var positionals: std.ArrayList([]const u8) = .empty;
+        positionals.ensureTotalCapacity(allocator, 8) catch {};
+        var command_path: std.ArrayList([]const u8) = .empty;
+        command_path.ensureTotalCapacity(allocator, 4) catch {};
         return .{
             .allocator = allocator,
             .stdout = stdout_file.deprecatedWriter(),
             .stderr = stderr_file.deprecatedWriter(),
             .is_tty_out = stdout_file.isTty(),
             .is_tty_err = stderr_file.isTty(),
-            .flags = std.StringHashMap(FlagValue).init(allocator),
-            .positionals = .empty,
-            .command_path = .empty,
+            .flags = flags,
+            .positionals = positionals,
+            .command_path = command_path,
         };
     }
 

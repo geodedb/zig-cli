@@ -51,12 +51,22 @@ Defines the command structure:
 pub const Command = struct {
     name: []const u8,
     summary: []const u8,
-    description: ?[]const u8 = null,
-    flags: []const FlagSpec = &.{},
-    positionals: []const Positional = &.{},
-    subcommands: []const *const Command = &.{},
-    callback: ?*const fn(*Context) anyerror!void = null,
+    long_help: []const u8 = "",
     examples: []const []const u8 = &.{},
+    flags: []const FlagSpec = &.{},
+    subcommands: []const *const Command = &.{},
+    run: ?RunFn = null,
+    pre_run: ?HookFn = null,
+    post_run: ?HookFn = null,
+    persistent_pre_run: ?HookFn = null,
+    persistent_post_run: ?HookFn = null,
+    aliases: []const []const u8 = &.{},
+    hidden: bool = false,
+    deprecated: ?[]const u8 = null,
+    flag_groups: []const FlagGroup = &.{},
+    args: ?ArgsValidator = null,
+    group: []const u8 = "",
+    version: []const u8 = "",
 };
 ```
 
@@ -79,8 +89,9 @@ ctx.getBool("verbose")     // ?bool
 ctx.getString("config")    // ?[]const u8
 ctx.getInt("port")         // ?i64
 ctx.getFloat("threshold")  // ?f64
-ctx.getPositional(0)       // ?[]const u8
 ```
+
+Positional arguments are accessed via `ctx.positionals.items`.
 
 ### Config (`src/config.zig`)
 

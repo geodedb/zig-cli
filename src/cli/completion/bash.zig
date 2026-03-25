@@ -29,8 +29,9 @@ pub fn escapeBashDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]con
     }
     if (!needs_escape) return s;
 
-    // Build escaped string
+    // Build escaped string with capacity hint
     var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
         switch (c) {
             // Strip NUL bytes and newlines entirely
@@ -64,8 +65,9 @@ pub fn escapeBashCasePattern(allocator: std.mem.Allocator, s: []const u8) ![]con
     }
     if (!needs_escape) return s;
 
-    // Build escaped string
+    // Build escaped string with capacity hint
     var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
         switch (c) {
             '*', '?', '[', ']' => {
@@ -82,20 +84,17 @@ pub fn escapeBashCasePattern(allocator: std.mem.Allocator, s: []const u8) ![]con
 
 /// Sanitize a name for use as a bash function identifier.
 /// Replaces any character that is not [a-zA-Z0-9_] with an underscore.
-/// Uses a fixed 256-byte buffer; names longer than 255 are truncated.
-fn sanitizeBashIdentifier(name: []const u8) []const u8 {
-    const S = struct {
-        var buf: [256]u8 = undefined;
-    };
-    const len = @min(name.len, S.buf.len);
-    for (name[0..len], 0..) |c, idx| {
+/// Uses an arena-allocated buffer (no static mutable state).
+fn sanitizeBashIdentifier(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    const buf = try allocator.alloc(u8, name.len);
+    for (name, 0..) |c, idx| {
         if (std.ascii.isAlphanumeric(c) or c == '_') {
-            S.buf[idx] = c;
+            buf[idx] = c;
         } else {
-            S.buf[idx] = '_';
+            buf[idx] = '_';
         }
     }
-    return S.buf[0..len];
+    return buf;
 }
 
 /// Generate bash completion script
@@ -122,7 +121,7 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     }
 
     // Sanitize cmd.name for use in bash function identifiers
-    const safe_name = sanitizeBashIdentifier(cmd.name);
+    const safe_name = try sanitizeBashIdentifier(esc_alloc, cmd.name);
 
     // Generate completion functions for all commands recursively
     try generateCommandFunction(w, cmd, safe_name, "", enable_active_help, esc_alloc);
@@ -141,8 +140,7 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
 
 /// Generate active help support functions
 fn generateActiveHelpSupport(w: anytype, cmd: *const Command, esc_alloc: std.mem.Allocator) !void {
-    _ = esc_alloc;
-    const safe_name = sanitizeBashIdentifier(cmd.name);
+    const safe_name = try sanitizeBashIdentifier(esc_alloc, cmd.name);
 
     // Convert program name to uppercase for env var
     var env_var_buf: [256]u8 = undefined;
@@ -706,12 +704,14 @@ test "bash: escapeBashDoubleQuote strips newlines" {
 }
 
 test "bash: sanitizeBashIdentifier replaces hyphens and dots" {
-    const result = sanitizeBashIdentifier("my-app.cli");
+    const result = try sanitizeBashIdentifier(std.testing.allocator, "my-app.cli");
+    defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("my_app_cli", result);
 }
 
 test "bash: sanitizeBashIdentifier preserves alphanumerics and underscores" {
-    const result = sanitizeBashIdentifier("myapp_v2");
+    const result = try sanitizeBashIdentifier(std.testing.allocator, "myapp_v2");
+    defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("myapp_v2", result);
 }
 

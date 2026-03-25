@@ -95,9 +95,13 @@ fn inputInternal(reader: anytype, writer: anytype, message: []const u8, config: 
         }
         writer.print(": ", .{}) catch return PromptError.ReadError;
 
-        // Read line
-        var buffer: [1024]u8 = undefined;
-        const line = reader.readUntilDelimiterOrEof(&buffer, '\n') catch {
+        // Read line with allocator-backed buffer.
+        // Use at least 1024 bytes (the original default), but grow up to
+        // max_length + 1 for prompts that allow longer input. Cap at 65536.
+        const buf_size = @min(@max(config.max_length + 1, 1024), 65536);
+        const buffer = allocator.alloc(u8, buf_size) catch return PromptError.OutOfMemory;
+        defer allocator.free(buffer);
+        const line = reader.readUntilDelimiterOrEof(buffer, '\n') catch {
             return PromptError.ReadError;
         };
 
@@ -161,7 +165,25 @@ pub fn password(message: []const u8, allocator: std.mem.Allocator) PromptError![
     stdout.writer().print("{s}", .{message}) catch return PromptError.ReadError;
 
     // Disable echo
-    if (builtin.os.tag != .windows) {
+    if (comptime builtin.os.tag == .windows) {
+        // Windows: manipulate console mode to suppress echo
+        const windows = std.os.windows;
+        const handle = stdin.handle;
+        var original_mode: windows.DWORD = undefined;
+        if (windows.kernel32.GetConsoleMode(handle, &original_mode) != 0) {
+            // Clear ENABLE_ECHO_INPUT (0x0004) to suppress echo
+            const new_mode = original_mode & ~@as(windows.DWORD, 0x0004);
+            _ = windows.kernel32.SetConsoleMode(handle, new_mode);
+            defer {
+                _ = windows.kernel32.SetConsoleMode(handle, original_mode);
+                stdout.writer().print("\n", .{}) catch {};
+            }
+            return passwordInternal(stdin.reader(), allocator);
+        } else {
+            // GetConsoleMode failed -- fall back to simple read
+            return inputSimple(stdin, allocator);
+        }
+    } else {
         var termios = std.posix.tcgetattr(stdin.handle) catch return PromptError.ReadError;
         const original = termios;
 
@@ -176,10 +198,6 @@ pub fn password(message: []const u8, allocator: std.mem.Allocator) PromptError![
         }
 
         return passwordInternal(stdin.reader(), allocator);
-    } else {
-        // Windows: Use _getch or similar
-        // For now, fall back to regular input
-        return inputSimple(stdin, allocator);
     }
 }
 

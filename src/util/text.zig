@@ -13,6 +13,7 @@ pub fn wordWrap(text: []const u8, width: usize, allocator: std.mem.Allocator) ![
     if (text.len <= width) return text;
 
     var result: std.ArrayList(u8) = .empty;
+    result.ensureTotalCapacity(allocator, text.len) catch {};
     var line_start: usize = 0;
     var last_space: ?usize = null;
 

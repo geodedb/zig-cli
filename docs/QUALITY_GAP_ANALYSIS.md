@@ -1,26 +1,49 @@
 # Quality Gap Analysis
 
 > Comprehensive quality tracking for the Zig CLI framework library.
-> Combines initial codebase audit (2026-03-24) with Phase 3 quality-reviewer findings.
+> Combines initial codebase audit (2026-03-24) with Phase 3/4 quality-reviewer findings.
 
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 ## Summary
 
 | Severity | Open | Closed | Won't Do |
 |----------|------|--------|----------|
 | Critical | 0 | 1 | 0 |
-| High | 0 | 12 | 0 |
-| Medium | 0 | 32 | 3 |
-| Low | 0 | 24 | 2 |
-| **Total** | **0** | **69** | **5** |
+| High | 0 | 14 | 1 |
+| Medium | 0 | 38 | 3 |
+| Low | 0 | 28 | 6 |
+| **Total** | **0** | **80** | **10** |
 
-**All open findings from Phase 3 quality review are now closed.** 19 findings
-closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks.
+**No open risks.** All 16 Phase 4 findings resolved (11 closed, 5 won't do).
+
+16 new findings added from Phase 4 quality review (2026-03-25).
+80 findings closed, 10 won't do across all rounds. 760/760 tests pass with 0 memory leaks.
 
 ---
 
 ## Stack-Ranked Findings
+
+### Phase 4 Quality Review Findings (Open)
+
+| Rank | ID | Severity | PriorityScore | Category | Finding | Component | Issue | Status |
+|------|----|----------|---------------|----------|---------|-----------|-------|--------|
+| 1 | NQ-050 | High | 64 | maintainability | applyEnvDefaults skips subcommand flags -- functional bug | parser.zig:508-544 | [#101](https://gitlab.com/devnw/zig/cli/-/issues/101) | **Closed** |
+| 2 | NQ-051 | High | 64 | api-contract | DeprecatedWriter in public Context API will break on Zig upgrade | command.zig:107-109 | [#102](https://gitlab.com/devnw/zig/cli/-/issues/102) | **Won't Do** |
+| 3 | NQ-052 | High | 48 | maintainability | Windows password echo not disabled -- security concern | prompt.zig:179-183 | [#104](https://gitlab.com/devnw/zig/cli/-/issues/104) | **Closed** |
+| 4 | NQ-053 | Medium | 48 | maintainability | Version string drift 0.1.0 vs v0.1.1 tag | root.zig:66, build.zig.zon:12 | [#106](https://gitlab.com/devnw/zig/cli/-/issues/106) | **Closed** |
+| 5 | NQ-054 | Medium | 48 | ci-cd | No cross-compilation CI for Windows code paths | .gitlab-ci.yml | [#108](https://gitlab.com/devnw/zig/cli/-/issues/108) | **Closed** |
+| 6 | NQ-055 | Medium | 36 | maintainability | sanitizeBashIdentifier global mutable static buffer -- fragile API | bash.zig:86-99 | [#109](https://gitlab.com/devnw/zig/cli/-/issues/109) | **Closed** |
+| 7 | NQ-058 | Medium | 36 | tests | Windows signal tests completely skipped | signal.zig:309-312 | [#116](https://gitlab.com/devnw/zig/cli/-/issues/116) | **Closed** |
+| 8 | NQ-056 | Medium | 36 | api-contract | Prompt inputInternal buffer caps at 1024 regardless of config.max_length | prompt.zig:99 | [#112](https://gitlab.com/devnw/zig/cli/-/issues/112) | **Closed** |
+| 9 | NQ-057 | Medium | 32 | docs | ARCHITECTURE.md Command struct stale | docs/ARCHITECTURE.md:50-82 | [#114](https://gitlab.com/devnw/zig/cli/-/issues/114) | **Closed** |
+| 10 | NQ-059 | Low | 24 | cleanup | 51 lines dead code: handleFlag, findFlagInChain, findFlagByShortInChain | parser.zig:280,453,482 | -- | **Closed** |
+| 11 | NQ-060 | Low | 24 | architecture | parser.zig getEnvVar duplicates env.zig getEnvValueRuntime | parser.zig:550, env.zig:37 | -- | **Won't Do** |
+| 12 | NQ-063 | Low | 16 | readability | Completion generator boilerplate duplication across 4 files | bash/zsh/fish/powershell.zig | -- | **Won't Do** |
+| 13 | NQ-064 | Low | 16 | maintainability | Pager silent error swallowing | pager.zig:88,93 | -- | **Won't Do** |
+| 14 | NQ-061 | Low | 12 | docs | Makefile version says 0.15.1 vs actual 0.15.2 | Makefile:145 | -- | **Closed** |
+| 15 | NQ-062 | Low | 12 | docs | ROADMAP v0.2.0 lists shipped features as unreleased | docs/ROADMAP.md:120-128 | -- | **Closed** |
+| 16 | NQ-065 | Low | 8 | readability | Inconsistent stdout access pattern (std.io.getStdOut vs std.fs.File.stdout) | multiple files | -- | **Won't Do** |
 
 ### Phase 3 Quality Review Findings (All Closed)
 
@@ -100,6 +123,197 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 | 49 | GAP-Q002 | Medium | 60 | api-contract | DeprecatedWriter used throughout codebase | command.zig, progress.zig | -- | Won't Do |
 | 50 | GAP-Q003 | Medium | 55 | maintainability | Duplicated envVarExists/getEnvValue in tty/color | tty.zig, color.zig | -- | Closed |
 | 51 | GAP-Q005 | Medium | 50 | tests | prompt.zig has only 2 trivial tests for 371 lines | prompt.zig | -- | Closed |
+
+---
+
+## Open Findings (Phase 4 Quality Review -- 2026-03-25)
+
+### NQ-050: applyEnvDefaults skips subcommand flags -- functional bug [High] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 64 (Impact: 4, Likelihood: 4)
+- **Category:** maintainability
+- **Confidence:** confirmed
+- **Issue:** [#101](https://gitlab.com/devnw/zig/cli/-/issues/101)
+- **Evidence:** `src/cli/parser.zig:508-544` -- `applyEnvDefaults()` only iterates `self.root.flags`. Subcommand flags with `env` declarations are never checked.
+- **Root cause:** Env-default application was implemented for root flags only; subcommand resolution happens earlier but `applyEnvDefaults` was not updated.
+- **Fix:** After iterating root flags, also iterate the resolved command's flags.
+- **Effort:** S
+- **Cross-reference:** GAP-0090
+
+### NQ-051: DeprecatedWriter in public Context API will break on Zig upgrade [High] -- WON'T DO
+
+- **Status:** **Won't Do**
+- **PriorityScore:** 64 (Impact: 4, Likelihood: 4)
+- **Category:** api-contract
+- **Confidence:** confirmed
+- **Issue:** [#102](https://gitlab.com/devnw/zig/cli/-/issues/102)
+- **Evidence:** `src/cli/command.zig:107-109` -- `Context.stdout` and `Context.stderr` are typed as `std.fs.File.DeprecatedWriter`.
+- **Root cause:** `DeprecatedWriter` is a transitional type in Zig 0.15.x; migration to `AnyWriter`/`GenericWriter` deferred.
+- **Fix:** Migrate to non-deprecated writer type. Batch with v0.2.0 API-breaking release.
+- **Effort:** M
+- **Cross-reference:** GAP-Q002 (Won't Do -- deferred until Zig removes type), GAP-0082
+
+### NQ-052: Windows password echo not disabled -- security concern [High] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 48 (Impact: 4, Likelihood: 3)
+- **Category:** maintainability
+- **Confidence:** confirmed
+- **Issue:** [#104](https://gitlab.com/devnw/zig/cli/-/issues/104)
+- **Evidence:** `src/prompt.zig:179-183` -- Windows path falls back to `inputSimple()` with echo enabled. POSIX path correctly disables echo via `tcsetattr`.
+- **Root cause:** Windows console mode manipulation was deferred (TODO comment in code).
+- **Fix:** Use Windows `SetConsoleMode` to disable `ENABLE_ECHO_INPUT` before reading.
+- **Effort:** S
+
+### NQ-053: Version string drift -- root.zig 0.1.0 vs v0.1.1 tag [Medium] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 48 (Impact: 3, Likelihood: 4)
+- **Category:** maintainability
+- **Confidence:** confirmed
+- **Issue:** [#106](https://gitlab.com/devnw/zig/cli/-/issues/106)
+- **Evidence:** `src/root.zig:66` has `version = "0.1.0"`, `build.zig.zon:12` has `.version = "0.1.0"`, but `git tag` shows `v0.1.1` as latest.
+- **Root cause:** Git tag bumped without updating source version constants.
+- **Fix:** Update both files to `"0.1.1"`. Consider automating version sync.
+- **Effort:** S
+- **Cross-reference:** GAP-0088
+
+### NQ-054: No cross-compilation CI for Windows code paths [Medium] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 48 (Impact: 3, Likelihood: 4)
+- **Category:** ci-cd
+- **Confidence:** confirmed
+- **Issue:** [#108](https://gitlab.com/devnw/zig/cli/-/issues/108)
+- **Evidence:** `.gitlab-ci.yml` has no Windows target. Windows-conditional code in `prompt.zig`, `signal.zig`, `parser.zig` is never compiled in CI.
+- **Root cause:** Initial CI focused on native Linux testing only.
+- **Fix:** Add `zig build -Dtarget=x86_64-windows` CI job.
+- **Effort:** S
+- **Cross-reference:** GAP-0094
+
+### NQ-055: sanitizeBashIdentifier global mutable static buffer -- fragile API [Medium] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 36 (Impact: 3, Likelihood: 3)
+- **Category:** maintainability
+- **Confidence:** confirmed
+- **Issue:** [#109](https://gitlab.com/devnw/zig/cli/-/issues/109)
+- **Evidence:** `src/cli/completion/bash.zig:86-99` -- uses `var buf: [256]u8 = undefined` in nested struct (global mutable static). Returned slice points into this buffer; subsequent calls overwrite previous results.
+- **Root cause:** C-style static buffer pattern avoids allocation but creates aliasing hazard.
+- **Fix:** Accept allocator parameter or caller-provided buffer.
+- **Effort:** S
+
+### NQ-056: Prompt inputInternal buffer caps at 1024 regardless of config.max_length [Medium] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 36 (Impact: 3, Likelihood: 3)
+- **Category:** api-contract
+- **Confidence:** confirmed
+- **Issue:** [#112](https://gitlab.com/devnw/zig/cli/-/issues/112)
+- **Evidence:** `src/prompt.zig:99` -- `var buffer: [1024]u8 = undefined;` is hardcoded. The `config.max_length` field is never used to size the buffer.
+- **Root cause:** Buffer was hardcoded during initial implementation; `max_length` config added later without updating buffer allocation.
+- **Fix:** Use allocator-backed buffer sized to `config.max_length`.
+- **Effort:** S
+
+### NQ-057: ARCHITECTURE.md Command struct stale [Medium] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 32 (Impact: 2, Likelihood: 4)
+- **Category:** docs
+- **Confidence:** confirmed
+- **Issue:** [#114](https://gitlab.com/devnw/zig/cli/-/issues/114)
+- **Evidence:** `docs/ARCHITECTURE.md:50-61` shows a simplified Command struct missing `group`, `hidden`, `deprecated`, `aliases`, `args_validator`, `secret`, hooks, etc.
+- **Root cause:** Architecture docs written early, not updated as Command struct evolved.
+- **Fix:** Update struct example to match current `src/cli/command.zig`.
+- **Effort:** S
+- **Cross-reference:** GAP-0085
+
+### NQ-058: Windows signal tests completely skipped [Medium] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 36 (Impact: 3, Likelihood: 3)
+- **Category:** tests
+- **Confidence:** confirmed
+- **Issue:** [#116](https://gitlab.com/devnw/zig/cli/-/issues/116)
+- **Evidence:** `src/signal.zig:309-312` -- all signal tests early-return on Windows, leaving `installWindows()` with 0% coverage.
+- **Root cause:** Signal tests rely on POSIX signal delivery; no Windows-specific alternatives written.
+- **Fix:** Add unit tests for `installWindows()` that validate config handling and state management.
+- **Effort:** S
+
+### NQ-059: 51 lines dead code -- handleFlag, findFlagInChain, findFlagByShortInChain [Low] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 24 (Impact: 2, Likelihood: 3)
+- **Category:** cleanup
+- **Confidence:** confirmed
+- **Evidence:** `src/cli/parser.zig:280` (`handleFlag`), `:453` (`findFlagInChain`), `:482` (`findFlagByShortInChain`) -- these functions contain dead or stub code paths that are unreachable.
+- **Fix:** Remove dead code or complete stub implementations.
+- **Effort:** S
+- **Cross-reference:** GAP-0092
+
+### NQ-060: parser.zig getEnvVar duplicates env.zig getEnvValueRuntime [Low] -- WON'T DO
+
+- **Status:** **Won't Do**
+- **PriorityScore:** 24 (Impact: 2, Likelihood: 3)
+- **Category:** architecture
+- **Confidence:** confirmed
+- **Evidence:** `src/cli/parser.zig:550` defines `getEnvVar()` using `std.posix.getenv(name)` directly. `src/term/env.zig:37` defines `getEnvValueRuntime()` with the same cross-platform logic. Pager already uses the shared version.
+- **Fix:** Replace `parser.getEnvVar` with `env.getEnvValueRuntime`.
+- **Effort:** S
+- **Cross-reference:** GAP-0093
+
+### NQ-061: Makefile version says 0.15.1 vs actual 0.15.2 [Low] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 12 (Impact: 1, Likelihood: 3)
+- **Category:** docs
+- **Confidence:** confirmed
+- **Evidence:** `Makefile:145` says `Zig 0.15.1` but `zig version` returns `0.15.2`.
+- **Fix:** Update Makefile to say `0.15.2` or `0.15.x`.
+- **Effort:** S
+- **Cross-reference:** GAP-0089
+
+### NQ-062: ROADMAP v0.2.0 lists shipped features as unreleased [Low] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PriorityScore:** 12 (Impact: 1, Likelihood: 3)
+- **Category:** docs
+- **Confidence:** confirmed
+- **Evidence:** `docs/ROADMAP.md:120-128` -- v0.2.0 "Unreleased" section lists features (command groups, markdown generation, table formatter) that appear to already be implemented.
+- **Fix:** Move shipped features to the correct version section.
+- **Effort:** S
+- **Cross-reference:** GAP-0087
+
+### NQ-063: Completion generator boilerplate duplication across 4 files [Low] -- WON'T DO
+
+- **Status:** **Won't Do**
+- **PriorityScore:** 16 (Impact: 2, Likelihood: 2)
+- **Category:** readability
+- **Confidence:** suspected
+- **Evidence:** `src/cli/completion/bash.zig`, `zsh.zig`, `fish.zig`, `powershell.zig` -- each completion generator has similar flag-iteration and escaping boilerplate. Would need measurement to confirm how much could be extracted.
+- **Fix:** Extract shared completion helpers (flag iteration, escaping) into a common module.
+- **Effort:** M
+
+### NQ-064: Pager silent error swallowing [Low] -- WON'T DO
+
+- **Status:** **Won't Do**
+- **PriorityScore:** 16 (Impact: 2, Likelihood: 2)
+- **Category:** maintainability
+- **Confidence:** confirmed
+- **Evidence:** `src/term/pager.zig:88` -- `stdin.writeAll(content) catch {};` and `:93` -- `child.wait() catch {};` silently discard errors.
+- **Fix:** Log or propagate errors from pager subprocess I/O.
+- **Effort:** S
+
+### NQ-065: Inconsistent stdout access pattern [Low] -- WON'T DO
+
+- **Status:** **Won't Do**
+- **PriorityScore:** 8 (Impact: 1, Likelihood: 2)
+- **Category:** readability
+- **Confidence:** suspected
+- **Evidence:** Some files use `std.io.getStdOut()` while others use `std.fs.File.stdout`. Would need a full audit to confirm scope.
+- **Fix:** Standardize on one pattern across the codebase.
+- **Effort:** S
 
 ---
 
@@ -703,6 +917,11 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 ## Findings by Category
 
 ### maintainability
+- **NQ-050 (High/64): applyEnvDefaults skips subcommand flags -- CLOSED** [#101](https://gitlab.com/devnw/zig/cli/-/issues/101)
+- **NQ-052 (High/48): Windows password echo not disabled -- CLOSED** [#104](https://gitlab.com/devnw/zig/cli/-/issues/104)
+- **NQ-053 (Medium/48): Version string drift 0.1.0 vs v0.1.1 -- CLOSED** [#106](https://gitlab.com/devnw/zig/cli/-/issues/106)
+- **NQ-055 (Medium/36): sanitizeBashIdentifier global mutable static buffer -- CLOSED** [#109](https://gitlab.com/devnw/zig/cli/-/issues/109)
+- **NQ-064 (Low/16): Pager silent error swallowing -- WON'T DO**
 - NQ-031 (High/48): OOM silently swallowed in applyEnvDefaults/applyDefaultsForCommand -- **Closed** [#67](https://gitlab.com/devnw/zig/cli/-/issues/67)
 - NQ-033 (High/48): writeFileAtomic missing fsync/cleanup -- **Closed** [#72](https://gitlab.com/devnw/zig/cli/-/issues/72)
 - NQ-034 (Medium/48): Pager writeIfTty inverted min_lines logic -- **Closed** [#74](https://gitlab.com/devnw/zig/cli/-/issues/74)
@@ -720,6 +939,8 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 - GAP-Q003 (Medium/55): Duplicated envVarExists/getEnvValue -- **Closed**
 
 ### api-contract
+- **NQ-051 (High/64): DeprecatedWriter in public Context API -- WON'T DO** [#102](https://gitlab.com/devnw/zig/cli/-/issues/102)
+- **NQ-056 (Medium/36): Prompt inputInternal buffer caps at 1024 ignoring config.max_length -- CLOSED** [#112](https://gitlab.com/devnw/zig/cli/-/issues/112)
 - NQ-041 (Medium/48): printHelp/printVersion swallow all errors -- **Closed** [#81](https://gitlab.com/devnw/zig/cli/-/issues/81)
 - NQ-040 (Medium/36): ColorContext.colored()/styled() are no-op stubs -- **Closed** [#80](https://gitlab.com/devnw/zig/cli/-/issues/80)
 - NQ-042 (Low/24): JSON help output missing help/description fields -- **Closed** [#82](https://gitlab.com/devnw/zig/cli/-/issues/82)
@@ -736,6 +957,7 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 - NQ-026 (Low/3): ParseResult.deinit vs Context.deinit inconsistent allocator -- **Won't Do**
 
 ### tests
+- **NQ-058 (Medium/36): Windows signal tests completely skipped -- CLOSED** [#116](https://gitlab.com/devnw/zig/cli/-/issues/116)
 - NQ-035 (High/80): No test coverage for run() function lifecycle -- **Closed** [#75](https://gitlab.com/devnw/zig/cli/-/issues/75)
 - NQ-008 (Medium/6): Prompt tests only cover NotInteractive -- **Closed**
 - NQ-003 (High/8): command.zig has 3 tests for 615 lines -- **Closed**
@@ -743,6 +965,8 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 - GAP-Q005 (Medium/50): prompt.zig has only 2 trivial tests -- **Closed**
 
 ### readability
+- **NQ-063 (Low/16): Completion generator boilerplate duplication across 4 files -- WON'T DO**
+- **NQ-065 (Low/8): Inconsistent stdout access pattern -- WON'T DO**
 - NQ-037 (Medium/32): Inline ANSI escape codes duplicated in help.zig -- **Closed** [#77](https://gitlab.com/devnw/zig/cli/-/issues/77)
 - NQ-047 (Medium/32): run() monolith: extract formatParseError/executeHooks -- **Closed** [#87](https://gitlab.com/devnw/zig/cli/-/issues/87)
 - NQ-039 (Medium/24): Version fallback "0.0.0" magic string duplicated -- **Closed** [#79](https://gitlab.com/devnw/zig/cli/-/issues/79)
@@ -755,6 +979,7 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 - NQ-029 (Low/2): Duplicate comma parsing -- **Closed**
 
 ### architecture
+- **NQ-060 (Low/24): parser.zig getEnvVar duplicates env.zig getEnvValueRuntime -- WON'T DO**
 - NQ-032 (High/60): Signal handler calls non-async-signal-safe callbacks -- **Closed** [#69](https://gitlab.com/devnw/zig/cli/-/issues/69)
 - NQ-036 (High/48): Subcommand flag inheritance only checks root -- **Closed** [#76](https://gitlab.com/devnw/zig/cli/-/issues/76)
 - NQ-044 (Medium/32): command_chain ArrayList deinit allocator mismatch risk -- **Closed** [#84](https://gitlab.com/devnw/zig/cli/-/issues/84)
@@ -765,6 +990,7 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 - NQ-026 (Low/3): Inconsistent allocator pattern -- **Won't Do**
 
 ### cleanup
+- **NQ-059 (Low/24): 51 lines dead code in parser.zig -- CLOSED**
 - GAP-0022 (Medium/40): Dead code printTextHelp/printFlag -- **Closed**
 - GAP-0026 (Low/10): `or true` dead branch -- **Closed**
 - NEW-Q001 (Low/8): FlagValue.deinit dead code -- **Closed**
@@ -772,6 +998,9 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 - NQ-028 (Low/2): Unused tty import -- **Closed**
 
 ### docs
+- **NQ-057 (Medium/32): ARCHITECTURE.md Command struct stale -- CLOSED** [#114](https://gitlab.com/devnw/zig/cli/-/issues/114)
+- **NQ-061 (Low/12): Makefile version says 0.15.1 vs 0.15.2 -- CLOSED**
+- **NQ-062 (Low/12): ROADMAP v0.2.0 lists shipped features -- CLOSED**
 - NQ-048 (Low/16): Secret handling workflow not documented -- **Closed** [#88](https://gitlab.com/devnw/zig/cli/-/issues/88)
 - NQ-049 (Low/8): ArgsValidator.only_valid empty args undocumented -- **Closed** [#89](https://gitlab.com/devnw/zig/cli/-/issues/89)
 - GAP-0039 (Low/15): suggestAll/findByPrefix ownership documented -- **Closed**
@@ -781,6 +1010,7 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 - NQ-025 (Low/3): config.zig no tests or re-export docs -- **Closed**
 
 ### ci-cd
+- **NQ-054 (Medium/48): No cross-compilation CI for Windows -- CLOSED** [#108](https://gitlab.com/devnw/zig/cli/-/issues/108)
 - NQ-018 (Medium/4): No Zig toolchain caching -- **Closed**
 - NQ-019 (Low/4): build.zig duplicate module definitions -- **Closed**
 - GAP-0020 (High/85): No CI build/test pipeline -- **Closed**
@@ -789,7 +1019,36 @@ closed in Gap-Close Round 4 (2026-03-24). 760/760 tests pass with 0 memory leaks
 
 ## Roadmap
 
-All quality findings from Phase 3 are now closed. No open roadmap items remain.
+### Quick Wins (< 1 day)
+
+| ID | Finding | Effort | Issue |
+|----|---------|--------|-------|
+| NQ-053 | Version string drift 0.1.0 vs v0.1.1 | S | [#106](https://gitlab.com/devnw/zig/cli/-/issues/106) |
+| NQ-054 | Add Windows cross-compilation CI job | S | [#108](https://gitlab.com/devnw/zig/cli/-/issues/108) |
+| NQ-057 | Update ARCHITECTURE.md Command struct | S | [#114](https://gitlab.com/devnw/zig/cli/-/issues/114) |
+| NQ-059 | Remove 51 lines dead code in parser.zig | S | -- |
+| NQ-060 | Replace parser.getEnvVar with env.getEnvValueRuntime | S | -- |
+| NQ-061 | Fix Makefile Zig version string | S | -- |
+| NQ-062 | Move shipped ROADMAP items to correct version | S | -- |
+| NQ-064 | Propagate pager subprocess errors | S | -- |
+| NQ-065 | Standardize stdout access pattern | S | -- |
+
+### Medium (1-5 days)
+
+| ID | Finding | Effort | Issue |
+|----|---------|--------|-------|
+| NQ-050 | applyEnvDefaults skips subcommand flags | S | [#101](https://gitlab.com/devnw/zig/cli/-/issues/101) |
+| NQ-052 | Windows password echo not disabled | S | [#104](https://gitlab.com/devnw/zig/cli/-/issues/104) |
+| NQ-055 | sanitizeBashIdentifier global mutable static | S | [#109](https://gitlab.com/devnw/zig/cli/-/issues/109) |
+| NQ-056 | Prompt buffer caps at 1024 ignoring max_length | S | [#112](https://gitlab.com/devnw/zig/cli/-/issues/112) |
+| NQ-058 | Windows signal tests completely skipped | S | [#116](https://gitlab.com/devnw/zig/cli/-/issues/116) |
+
+### Strategic (> 5 days)
+
+| ID | Finding | Effort | Issue |
+|----|---------|--------|-------|
+| NQ-051 | DeprecatedWriter migration (v0.2.0 API break) | M | [#102](https://gitlab.com/devnw/zig/cli/-/issues/102) |
+| NQ-063 | Completion generator boilerplate extraction | M | -- |
 
 Previous roadmap items (NQ-031 through NQ-049) were all completed in Gap-Close
 Round 4 (2026-03-24).

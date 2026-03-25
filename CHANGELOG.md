@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-25
+
+Audit hardening release: security, performance, quality, and documentation fixes
+identified by comprehensive gap analysis.
+
+### Fixed
+- Subcommand flags with `.env` set are now populated from environment variables (GAP-0090)
+- Windows password prompt now properly suppresses echo via SetConsoleMode (NQ-052/NS-047)
+- Windows terminal size detection uses safe i32 arithmetic instead of panicking intCast (NS-054)
+- Windows `WINAPI` calling convention updated for Zig 0.15.2 compatibility
+- Windows `GetModuleHandleW`/`GetStdHandle` null handle safety (cross-compile fix)
+
+### Changed
+- Help text and JSON help output are rendered into a memory buffer before writing, reducing syscall overhead (NP-019/NP-028)
+- Roff escaping uses span-based flushing for fewer write calls (NP-021)
+- Prompt input buffer is dynamically sized based on max_length config (NQ-056)
+- Bash `sanitizeBashIdentifier` uses arena allocator instead of static mutable buffer (NQ-055/NS-052)
+- Fish escape function strips NUL/newline/CR characters matching bash/zsh behavior (NS-048)
+- Fish `buildCondition` escapes command names for single-quoted contexts (NS-051)
+- PowerShell escape function strips NUL/newline/CR characters (NS-049)
+- Markdown escaping now handles backticks, `<`, and `>` (NS-053)
+- Pre-allocated capacity hints for escape functions and generators across all shells (NP-025)
+- Context.init pre-allocates flags HashMap, positionals, and command_path (NP-020/NP-027)
+- Man page and Markdown generators pre-allocate output buffers (NP-023/NP-024)
+- wordWrap pre-allocates output buffer (NP-026)
+
+### Removed
+- Dead code: handleFlag, findFlagInChain, findFlagByShortInChain from parser.zig (GAP-0092)
+
+### Security
+- Cross-compilation CI job validates Windows and aarch64 code paths compile (GAP-0094)
+- Parser getEnvVar handles Windows via FixedBufferAllocator pattern (GAP-0093)
+
+### Documentation
+- ARCHITECTURE.md Command struct updated to match actual field names (GAP-0085)
+- SECURITY.md fuzz testing claim corrected (GAP-0086)
+- ROADMAP.md v0.2.0 features moved to completed section (GAP-0087)
+- Makefile Zig version updated to match build.zig.zon (GAP-0089)
+
+### Added
+- Signal module tests for Config validation, Windows atomic flags, and cleanup callbacks (NQ-058)
+- Parser tests for subcommand env defaults and CLI priority over env (GAP-0090)
+- Cross-compilation CI job for x86_64-windows and aarch64-linux (GAP-0094)
+
 ## [0.1.0] - 2026-01-24
 
 Initial open source release under Apache-2.0 license.
@@ -78,7 +122,7 @@ Initial open source release under Apache-2.0 license.
 - GitLab CI/CD pipeline with DevNW CI Catalog components
 - SAST and Secret Detection
 - SBOM generation
-- Coverage support
+- Coverage-guided fuzz testing via `zig build test --fuzz`
 
 ### Security
 - Secrets must never be in flags or environment variables

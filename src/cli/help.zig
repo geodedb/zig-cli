@@ -177,9 +177,14 @@ pub fn printHelpWithTemplateReturningError(cmd: *const Command, ctx: *Context, t
     }
 }
 
-/// Print text-format help using a template
+/// Print text-format help using a template.
+/// Renders all sections into a memory buffer first, then writes to stdout
+/// in a single call to reduce syscall overhead.
 fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *const HelpTemplate) !void {
-    const w = ctx.stdout;
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(ctx.allocator);
+    buf.ensureTotalCapacity(ctx.allocator, 2048) catch {};
+    const w = buf.writer(ctx.allocator);
     const use_color = ctx.useColor();
 
     for (template.sections) |section| {
@@ -201,6 +206,8 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
             .footer => try printSectionFooter(w, cmd, template),
         }
     }
+
+    try ctx.stdout.writeAll(buf.items);
 }
 
 /// Print header section (name and summary)
@@ -515,9 +522,14 @@ pub fn writeJsonEscapedString(w: anytype, s: []const u8) !void {
     }
 }
 
-/// Print JSON-format help
+/// Print JSON-format help.
+/// Renders into a memory buffer first, then writes to stdout in a single
+/// call to reduce syscall overhead.
 fn printJsonHelp(cmd: *const Command, ctx: *Context) !void {
-    const w = ctx.stdout;
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(ctx.allocator);
+    buf.ensureTotalCapacity(ctx.allocator, 1024) catch {};
+    const w = buf.writer(ctx.allocator);
 
     try w.print("{{", .{});
     try w.writeAll("\"name\":\"");
@@ -569,6 +581,8 @@ fn printJsonHelp(cmd: *const Command, ctx: *Context) !void {
     try w.print("]", .{});
 
     try w.print("}}\n", .{});
+
+    try ctx.stdout.writeAll(buf.items);
 }
 
 fn printJsonFlag(w: anytype, flag: *const FlagSpec) !void {
@@ -600,49 +614,54 @@ fn printJsonFlag(w: anytype, flag: *const FlagSpec) !void {
 /// Escapes: `\` -> `\\`, `-` -> `\-`, leading `.` -> `\&.`, leading `'` -> `\&'`.
 /// After newlines, `.` and `'` at the start of a new line are also escaped
 /// to prevent roff command injection.
+///
+/// Uses span-based flushing: accumulates runs of clean characters and writes
+/// them in a single writeAll call, avoiding per-byte writeByte overhead.
 pub fn writeRoffEscaped(w: anytype, s: []const u8) !void {
     var at_line_start = true;
-    for (s) |c| {
-        switch (c) {
-            '\\' => {
-                try w.writeAll("\\\\");
-                at_line_start = false;
-            },
-            '-' => {
-                try w.writeAll("\\-");
-                at_line_start = false;
-            },
-            '.' => {
-                if (at_line_start) {
-                    try w.writeAll("\\&.");
-                } else {
-                    try w.writeByte(c);
-                }
-                at_line_start = false;
-            },
-            '\'' => {
-                if (at_line_start) {
-                    try w.writeAll("\\&'");
-                } else {
-                    try w.writeByte(c);
-                }
-                at_line_start = false;
-            },
-            '\n' => {
-                try w.writeByte('\n');
-                at_line_start = true;
-            },
-            else => {
-                try w.writeByte(c);
-                at_line_start = false;
-            },
+    var start: usize = 0;
+    for (s, 0..) |c, idx| {
+        const needs_escape = switch (c) {
+            '\\', '-' => true,
+            '.' => at_line_start,
+            '\'' => at_line_start,
+            '\n' => true,
+            else => false,
+        };
+        if (needs_escape) {
+            // Flush accumulated clean characters
+            if (idx > start) {
+                try w.writeAll(s[start..idx]);
+            }
+            switch (c) {
+                '\\' => try w.writeAll("\\\\"),
+                '-' => try w.writeAll("\\-"),
+                '.' => try w.writeAll("\\&."),
+                '\'' => try w.writeAll("\\&'"),
+                '\n' => {
+                    try w.writeByte('\n');
+                    at_line_start = true;
+                    start = idx + 1;
+                    continue;
+                },
+                else => unreachable,
+            }
+            at_line_start = false;
+            start = idx + 1;
+        } else {
+            at_line_start = false;
         }
+    }
+    // Flush remaining clean characters
+    if (start < s.len) {
+        try w.writeAll(s[start..]);
     }
 }
 
 /// Generate man page in roff format
 pub fn generateMan(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     var list: std.ArrayList(u8) = .empty;
+    list.ensureTotalCapacity(allocator, 4096) catch {};
     const w = list.writer(allocator);
 
     try w.writeAll(".TH ");
@@ -747,6 +766,7 @@ fn printVersionImpl(cmd: *const Command, ctx: *Context) !void {
 /// Generate Markdown documentation for a command tree
 pub fn generateMarkdown(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     var list: std.ArrayList(u8) = .empty;
+    list.ensureTotalCapacity(allocator, 4096) catch {};
     const w = list.writer(allocator);
 
     try generateMarkdownCommand(w, cmd, 1);
@@ -755,13 +775,20 @@ pub fn generateMarkdown(cmd: *const Command, allocator: std.mem.Allocator) ![]co
 }
 
 /// Write a string to `w` with characters escaped for Markdown table cells.
-/// Escapes: `|` -> `\|`, `\` -> `\\` (only before pipe or backslash).
+/// Escapes: `|` -> `\|`, `` ` `` -> `` \` ``, `<` -> `&lt;`, `>` -> `&gt;`.
 fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
     var start: usize = 0;
     for (s, 0..) |c, idx| {
-        if (c == '|') {
+        const esc: ?[]const u8 = switch (c) {
+            '|' => "\\|",
+            '`' => "\\`",
+            '<' => "&lt;",
+            '>' => "&gt;",
+            else => null,
+        };
+        if (esc) |escape_seq| {
             if (idx > start) try w.writeAll(s[start..idx]);
-            try w.writeAll("\\|");
+            try w.writeAll(escape_seq);
             start = idx + 1;
         }
     }
@@ -1441,6 +1468,33 @@ test "help: writeMarkdownEscaped no special chars" {
 
     try writeMarkdownEscaped(w, "hello world");
     try std.testing.expectEqualStrings("hello world", list.items);
+}
+
+test "help: writeMarkdownEscaped escapes backticks" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeMarkdownEscaped(w, "use `code` here");
+    try std.testing.expectEqualStrings("use \\`code\\` here", list.items);
+}
+
+test "help: writeMarkdownEscaped escapes angle brackets" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeMarkdownEscaped(w, "<script>alert('xss')</script>");
+    try std.testing.expectEqualStrings("&lt;script&gt;alert('xss')&lt;/script&gt;", list.items);
+}
+
+test "help: writeMarkdownEscaped mixed special chars" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+    const w = list.writer(std.testing.allocator);
+
+    try writeMarkdownEscaped(w, "a|b`c<d>e");
+    try std.testing.expectEqualStrings("a\\|b\\`c&lt;d&gt;e", list.items);
 }
 
 // ============================================================================

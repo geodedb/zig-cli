@@ -118,6 +118,15 @@ Contributions are welcome! Please:
 ## Version History
 
 ### v0.2.0 (Unreleased)
+- Zig package registry publishing (#12)
+
+### v0.1.1
+- Audit hardening: security, performance, quality, and documentation fixes
+- Cross-compilation CI for Windows and aarch64-linux
+- Subcommand environment variable defaults
+- Windows echo suppression for password prompts
+
+### v0.1.0
 - Command groups for organized help output
 - Markdown documentation generation
 - Table output formatter with multiple border styles
@@ -125,8 +134,6 @@ Contributions are welcome! Please:
 - Windows terminal size detection
 - Comprehensive shell completion tests
 - Help format tests
-
-### v0.1.0
 - Full Cobra feature parity for core CLI functionality
 - PowerShell completion support
 - Persistent hooks (PersistentPreRun/PersistentPostRun)

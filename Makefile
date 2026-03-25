@@ -142,6 +142,6 @@ help:
 	@echo "  ci               - Full CI pipeline (clean + build + all tests)"
 	@echo ""
 	@echo "Requirements:"
-	@echo "  - Zig 0.15.1 or compatible"
+	@echo "  - Zig 0.15.2 or compatible"
 	@echo ""
 	@echo "For more information, see README.md"

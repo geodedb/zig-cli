@@ -170,24 +170,34 @@ fn writePowerShellFlag(w: anytype, flag: *const FlagSpec, indent: []const u8, es
 
 /// Escape special characters for PowerShell single-quoted strings.
 /// Doubles single quotes: ' -> ''
-/// Fast path: if no single quotes, returns `s` directly (no allocation).
+/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapePowerShellString(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
-        if (c == '\'') {
-            needs_escape = true;
-            break;
+        switch (c) {
+            '\'', 0x00, '\n', '\r' => {
+                needs_escape = true;
+                break;
+            },
+            else => {},
         }
     }
     if (!needs_escape) return s;
 
     var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
-        if (c == '\'') {
-            list.append(allocator, '\'') catch return error.OutOfMemory;
-            list.append(allocator, '\'') catch return error.OutOfMemory;
-        } else {
-            list.append(allocator, c) catch return error.OutOfMemory;
+        switch (c) {
+            // Strip NUL bytes and newlines entirely
+            0x00, '\n', '\r' => {},
+            '\'' => {
+                list.append(allocator, '\'') catch return error.OutOfMemory;
+                list.append(allocator, '\'') catch return error.OutOfMemory;
+            },
+            else => {
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
         }
     }
     return list.toOwnedSlice(allocator);
@@ -210,6 +220,7 @@ pub fn escapeRegex(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     if (!needs_escape) return s;
 
     var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
         switch (c) {
             '\\', '.', '^', '$', '*', '+', '?', '(', ')', '{', '}', '[', ']', '|' => {
@@ -468,4 +479,16 @@ test "powershell: escapeRegex with backslash" {
 test "powershell: escapeRegex empty string" {
     const result = try escapeRegex(std.testing.allocator, "");
     try std.testing.expectEqualStrings("", result);
+}
+
+test "powershell: escapePowerShellString strips NUL bytes" {
+    const result = try escapePowerShellString(std.testing.allocator, "hello\x00world");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("helloworld", result);
+}
+
+test "powershell: escapePowerShellString strips newlines and CR" {
+    const result = try escapePowerShellString(std.testing.allocator, "line1\nline2\rline3");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("line1line2line3", result);
 }

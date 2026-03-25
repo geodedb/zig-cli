@@ -97,19 +97,20 @@ fn getTermSizeWindows() ?TermSize {
     };
 
     var csbi: CONSOLE_SCREEN_BUFFER_INFO = undefined;
-    const stdout_handle = kernel32.GetStdHandle(windows.STD_OUTPUT_HANDLE);
+    const stdout_handle = kernel32.GetStdHandle(windows.STD_OUTPUT_HANDLE) orelse return null;
 
     if (stdout_handle == windows.INVALID_HANDLE_VALUE) {
         return null;
     }
 
     // GetConsoleScreenBufferInfo
+    const kernel32_handle = kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")) orelse return null;
     const GetConsoleScreenBufferInfo = @as(*const fn (
         windows.HANDLE,
         *CONSOLE_SCREEN_BUFFER_INFO,
-    ) callconv(windows.WINAPI) windows.BOOL, @ptrCast(@alignCast(
+    ) callconv(.winapi) windows.BOOL, @ptrCast(@alignCast(
         kernel32.GetProcAddress(
-            kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")),
+            kernel32_handle,
             "GetConsoleScreenBufferInfo",
         ) orelse return null,
     )));
@@ -118,17 +119,18 @@ fn getTermSizeWindows() ?TermSize {
         return null;
     }
 
-    // Calculate visible window size
-    const width = @as(u16, @intCast(csbi.srWindow.Right - csbi.srWindow.Left + 1));
-    const height = @as(u16, @intCast(csbi.srWindow.Bottom - csbi.srWindow.Top + 1));
+    // Calculate visible window size as i32 to avoid intCast panic on
+    // negative or overflowing values from invalid console state.
+    const width_i32 = @as(i32, csbi.srWindow.Right) - @as(i32, csbi.srWindow.Left) + 1;
+    const height_i32 = @as(i32, csbi.srWindow.Bottom) - @as(i32, csbi.srWindow.Top) + 1;
 
-    if (width == 0 or height == 0) {
+    if (width_i32 <= 0 or height_i32 <= 0) {
         return null;
     }
 
     return .{
-        .cols = width,
-        .rows = height,
+        .cols = @intCast(width_i32),
+        .rows = @intCast(height_i32),
     };
 }
 

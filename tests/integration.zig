@@ -36,6 +36,13 @@ test "help shows examples first" {
     var ctx = cli.Context.init(testing.allocator);
     defer ctx.deinit();
 
+    // Redirect stdout to /dev/null to prevent pipe deadlock in test harness
+    const devnull = std.fs.openFileAbsolute("/dev/null", .{ .mode = .write_only }) catch {
+        return; // Skip if /dev/null not available
+    };
+    defer devnull.close();
+    ctx.stdout = devnull.deprecatedWriter();
+
     // Help generation doesn't crash
     cli.printHelp(&cmd, &ctx);
 }

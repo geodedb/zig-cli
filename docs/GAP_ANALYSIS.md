@@ -3,23 +3,22 @@
 > This file contains ONLY open gaps. Resolved and won't-do items are in
 > [GAP_ANALYSIS_RESOLVED.md](GAP_ANALYSIS_RESOLVED.md).
 
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 ## Summary
 
 | Severity | Count |
 |----------|-------|
 | Critical | 0 |
-| High | 0 |
+| High | 1 |
 | Medium | 0 |
 | Low | 1 |
-| **Total Open** | **1** |
+| **Total Open** | **2** |
 
-Phase 3 audit identified 10 new gaps (GAP-0075 through GAP-0084). 6 were
-regressions of previously-resolved documentation fixes lost in git stash data
-loss. 2 gaps (GAP-0082, GAP-0083) are marked Won't Do with documented reasons.
-All code/docs gaps are now closed except GAP-0084 (GitLab issue hygiene,
-requires manual action).
+Phase 4 gap closure completed 2026-03-25. 9 gaps closed (GAP-0085 through
+GAP-0090, GAP-0092 through GAP-0094). 1 marked Won't Do (GAP-0095). 1 marked
+Blocked (GAP-0091). GAP-0084 remains open (manual review required).
+786/786 tests pass. Format and build clean.
 
 ---
 
@@ -42,12 +41,39 @@ requires manual action).
 
 ---
 
-## Won't Do (Phase 3)
+### GAP-0091: Integration tests hang/timeout -- printHelp stdout deadlock
+
+- **Issue:** [#96](https://gitlab.com/devnw/zig/cli/-/issues/96)
+- **Category:** Bug
+- **Severity:** High
+- **Status:** **Blocked**
+- **Requirement source:** CI pipeline -- test-integration stage; test/integration/
+- **Current state (evidence):**
+  - `zig build test-integration` hangs indefinitely
+  - printHelp writes to stdout which deadlocks in the test harness
+  - Tests cannot complete, blocking CI validation of integration scenarios
+- **Why this is a gap:** Integration test suite is non-functional due to stdout deadlock, preventing CI from catching integration regressions.
+- **Impact/Risk:** High. Integration test suite is effectively unusable. Regressions in CLI integration behavior cannot be caught by CI.
+- **Blocker:** Pre-existing issue predating Phase 4. Requires investigation into Zig test runner stdout IPC protocol interaction with printHelp. Separate investigation track needed.
+- **Unblock steps:**
+  1. Investigate stdout deadlock in printHelp during test execution
+  2. Use buffered writer or capture output to avoid pipe deadlock
+  3. Add timeout guards to integration test runner
+  4. Verify `zig build test-integration` completes within reasonable time
+- **Acceptance criteria:**
+  - [ ] `zig build test-integration` completes without hanging
+  - [ ] All integration tests pass or fail with clear diagnostics (no deadlocks)
+  - [ ] CI can run integration tests reliably
+
+---
+
+## Won't Do (Phase 3-4)
 
 | Gap-ID | Title | Severity | Reason |
 |--------|-------|----------|--------|
 | GAP-0082 | DeprecatedWriter usage in command.zig and progress.zig | Medium | `DeprecatedWriter` is the Zig 0.15 name for the writer type. Migration to the renamed type requires Zig 0.16 which is not yet released. Will be addressed when the project upgrades to Zig 0.16. Tracked as issue #41. |
 | GAP-0083 | Package not published to Zig registry | Low | Publishing to the Zig package registry is planned for v0.2.0. The project is not yet stable enough for registry publication. Tracked as issue #12. |
+| GAP-0095 | No test coverage reporting in CI | Low | Zig 0.15 test coverage tooling is immature. `zig build test` does not produce standard coverage output. Adding coverage would require third-party tooling with significant maintenance burden for limited value. CHANGELOG coverage claim addressed separately. |
 
 ---
 
@@ -56,7 +82,7 @@ requires manual action).
 | Severity | Count | Gap-IDs |
 |----------|-------|---------|
 | Critical | 0 | -- |
-| High | 0 | -- |
+| High | 1 | GAP-0091 (Blocked) |
 | Medium | 0 | -- |
 | Low | 1 | GAP-0084 |
 
@@ -104,6 +130,7 @@ and have been re-implemented:
 Closed gaps have been moved to [GAP_ANALYSIS_RESOLVED.md](GAP_ANALYSIS_RESOLVED.md).
 Summary of closures:
 
+- **Phase 4 Gap Closure (2026-03-25):** GAP-0085 through GAP-0090, GAP-0092 through GAP-0094 (9 gaps)
 - **Wave 1 (Critical/High):** GAP-0060 through GAP-0064 (5 gaps)
 - **Wave 2 (Medium/Low):** GAP-0054, GAP-0065 through GAP-0074 (11 gaps)
 - **Gap-Close Round 2:** NQ-008, NP-010, NEW-P003, NEW-P004 (4 gaps)

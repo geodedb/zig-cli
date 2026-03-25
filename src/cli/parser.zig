@@ -257,6 +257,11 @@ pub const Parser = struct {
             i += 1;
         }
 
+        // Apply env defaults for resolved subcommand (if different from root)
+        if (current_cmd != self.root) {
+            self.applyEnvDefaultsForCommand(&ctx, current_cmd);
+        }
+
         // Check for required flags
         try self.applyDefaultValues(&ctx, current_cmd);
         try self.checkRequired(&ctx, current_cmd);
@@ -275,42 +280,7 @@ pub const Parser = struct {
         };
     }
 
-    /// Look up a command-specific flag by name, validate it, and store
-    /// the parsed value in the context. Rejects secret flags passed via CLI.
-    fn handleFlag(
-        self: *Self,
-        ctx: *Context,
-        cmd: *const Command,
-        name: []const u8,
-        value: []const u8,
-    ) ParseError!void {
-        // Find the flag spec
-        if (self.findFlagInChain(cmd, name)) |flag| {
-            // Check secret policy
-            if (flag.secret == .from_file_or_stdin) {
-                self.secret_flag_name = flag.name;
-                return ParseError.SecretInFlagOrEnv;
-            }
-
-            // Validate if needed
-            if (!flag.validate(value)) {
-                return ParseError.InvalidValue;
-            }
-
-            // Handle string arrays specially - they can be appended to
-            if (flag.ftype == .string_array) {
-                try self.appendToStringArray(ctx, name, value);
-            } else {
-                // Parse and set value
-                const fval = try self.parseValue(flag.ftype, value);
-                try self.setFlagValue(ctx, name, fval);
-            }
-        } else {
-            return ParseError.UnknownFlag;
-        }
-    }
-
-    /// Like `handleFlag` but walks the full command chain for flag lookup.
+    /// Walk the full command chain for flag lookup.
     fn handleFlagWithChain(
         self: *Self,
         ctx: *Context,
@@ -448,17 +418,6 @@ pub const Parser = struct {
         ctx.flags.put(name, value) catch return ParseError.OutOfMemory;
     }
 
-    /// Search for a long flag by name, walking the full command chain from
-    /// the current command back to the root (for inherited flags).
-    fn findFlagInChain(_: *Self, cmd: *const Command, name: []const u8) ?*const FlagSpec {
-        // Check command flags first (most specific)
-        if (cmd.findFlag(name)) |f| return f;
-
-        // Walk the full command chain (stored during parsing)
-        // Check all ancestors, handled by caller passing chain
-        return null;
-    }
-
     /// Search for a long flag by name, walking the full command chain.
     /// Checks current command first, then each ancestor up to root.
     fn findFlagInFullChain(_: *Self, cmd: *const Command, chain: []const *const Command, name: []const u8) ?*const FlagSpec {
@@ -474,14 +433,6 @@ pub const Parser = struct {
             if (ancestor == cmd) continue; // Skip current (already checked)
             if (ancestor.findFlag(name)) |f| return f;
         }
-
-        return null;
-    }
-
-    /// Search for a short flag by character, walking the full command chain.
-    fn findFlagByShortInChain(_: *Self, cmd: *const Command, short: u8) ?*const FlagSpec {
-        // Check command flags first
-        if (cmd.findFlagByShort(short)) |f| return f;
 
         return null;
     }
@@ -505,6 +456,7 @@ pub const Parser = struct {
 
     /// Populate context fields from environment variables (NO_COLOR,
     /// TERM=dumb) and fill flag values whose specs declare an `env` name.
+    /// Processes both root command flags and the resolved current command's flags.
     fn applyEnvDefaults(self: *Self, ctx: *Context) ParseError!void {
         // Check NO_COLOR
         if (self.getEnvVar("NO_COLOR")) |_| {
@@ -518,11 +470,21 @@ pub const Parser = struct {
             }
         }
 
-        // Apply environment variable flags
-        for (self.root.flags) |flag| {
+        // Apply environment variable flags for root command
+        self.applyEnvDefaultsForCommand(ctx, self.root);
+    }
+
+    /// Apply environment variable defaults for a specific command's flags.
+    /// Called for the root command during initial parsing, and again for
+    /// the resolved subcommand after subcommand resolution.
+    fn applyEnvDefaultsForCommand(self: *Self, ctx: *Context, cmd: *const Command) void {
+        for (cmd.flags) |flag| {
             if (flag.env) |env_name| {
                 // Check if secret - skip env for secrets
                 if (flag.secret == .from_file_or_stdin) continue;
+
+                // Skip if already set (CLI flag takes priority over env)
+                if (ctx.flags.get(flag.name) != null) continue;
 
                 if (self.getEnvVar(env_name)) |value| {
                     const fval = self.parseValue(flag.ftype, value) catch {
@@ -538,7 +500,7 @@ pub const Parser = struct {
                         }
                         continue;
                     };
-                    try self.setFlagValue(ctx, flag.name, fval);
+                    self.setFlagValue(ctx, flag.name, fval) catch continue;
                 }
             }
         }
@@ -546,9 +508,20 @@ pub const Parser = struct {
 
     /// Cross-platform environment variable lookup.
     /// On POSIX, returns a borrowed pointer into the environment block (no allocation).
-    /// On Windows, returns null since env-based flags are POSIX-focused.
+    /// On Windows, uses a stack-based FixedBufferAllocator to check the variable
+    /// and returns null (env-based flag defaults are POSIX-focused).
+    /// Note: this duplicates the pattern from term/env.zig because the cli module
+    /// does not depend on the term module. Both implementations use the same
+    /// cross-platform strategy.
     fn getEnvVar(_: *const Self, name: []const u8) ?[]const u8 {
-        if (comptime builtin.os.tag == .windows) return null;
+        if (comptime builtin.os.tag == .windows) {
+            // Windows does have environment variables; use FixedBufferAllocator
+            // to avoid page_allocator overhead, matching env.zig pattern.
+            var buf: [4096]u8 = undefined;
+            var fba = std.heap.FixedBufferAllocator.init(&buf);
+            const val = std.process.getEnvVarOwned(fba.allocator(), name) catch return null;
+            return val;
+        }
         return std.posix.getenv(name);
     }
 
@@ -2011,9 +1984,109 @@ test "run: no-input flag is parsed" {
         .summary = "Test command",
     };
 
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--no-input" });
+    var p = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try p.parse(&.{ "test", "--no-input" });
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expect(result.context.no_input);
+}
+
+test "parser: subcommand env defaults are applied" {
+    // Use HOME which is set on all POSIX test systems
+    if (comptime builtin.os.tag == .windows) return;
+
+    // Verify HOME is set so this test is meaningful
+    const home_val = std.posix.getenv("HOME") orelse return;
+
+    const subcmd = Command{
+        .name = "sub",
+        .summary = "Subcommand",
+        .flags = &.{
+            .{
+                .name = "sub-flag",
+                .help = "A subcommand flag",
+                .ftype = .string,
+                .env = "HOME",
+            },
+        },
+    };
+
+    const root = Command{
+        .name = "test",
+        .summary = "Test",
+        .subcommands = &.{&subcmd},
+    };
+
+    var p = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try p.parse(&.{ "test", "sub" });
+    defer result.deinit(std.testing.allocator);
+
+    // The subcommand's flag should have been populated from the env var
+    const val = result.context.getString("sub-flag");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings(home_val, val.?);
+}
+
+test "parser: root flag env still works (regression check)" {
+    if (comptime builtin.os.tag == .windows) return;
+
+    // Use HOME which is set on all POSIX test systems
+    const home_val = std.posix.getenv("HOME") orelse return;
+
+    const root = Command{
+        .name = "test",
+        .summary = "Test",
+        .flags = &.{
+            .{
+                .name = "root-flag",
+                .help = "A root flag",
+                .ftype = .string,
+                .env = "HOME",
+            },
+        },
+    };
+
+    var p = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try p.parse(&.{"test"});
+    defer result.deinit(std.testing.allocator);
+
+    const val = result.context.getString("root-flag");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings(home_val, val.?);
+}
+
+test "parser: subcommand env flag does not override CLI flag" {
+    // Verify CLI args take priority over env defaults for subcommand flags
+    if (comptime builtin.os.tag == .windows) return;
+
+    // Ensure HOME is set
+    _ = std.posix.getenv("HOME") orelse return;
+
+    const subcmd = Command{
+        .name = "sub",
+        .summary = "Subcommand",
+        .flags = &.{
+            .{
+                .name = "sub-flag",
+                .help = "A subcommand flag",
+                .ftype = .string,
+                .env = "HOME",
+            },
+        },
+    };
+
+    const root = Command{
+        .name = "test",
+        .summary = "Test",
+        .subcommands = &.{&subcmd},
+    };
+
+    var p = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try p.parse(&.{ "test", "sub", "--sub-flag", "explicit_value" });
+    defer result.deinit(std.testing.allocator);
+
+    // CLI value should take priority over env var
+    const val = result.context.getString("sub-flag");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("explicit_value", val.?);
 }

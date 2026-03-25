@@ -34,10 +34,10 @@ This project implements the following security measures:
 - Memory-safe Zig implementation
 - No external C dependencies (stdlib only)
 - Compile-time safety checks enabled
-- Fuzz testing for parser inputs
 - **Coverage-guided fuzz testing** via `zig build test --fuzz`
-  - Runs on scheduled CI jobs and manual trigger
+  - Integrated into CI on scheduled and manual pipelines
   - Crash artifacts are collected and triaged as security issues
+  - Note: fuzz testing exercises Zig's built-in fuzzer on the test suite; dedicated fuzz harnesses for specific parser inputs are not yet implemented
 
 ### Release Security
 - All releases are tagged and signed

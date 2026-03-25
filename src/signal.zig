@@ -220,12 +220,13 @@ fn installWindows(config: Config) !void {
     const kernel32 = windows.kernel32;
 
     // SetConsoleCtrlHandler
+    const k32_handle = kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")) orelse return error.FunctionNotFound;
     const SetConsoleCtrlHandler = @as(*const fn (
-        ?*const fn (windows.DWORD) callconv(windows.WINAPI) windows.BOOL,
+        ?*const fn (windows.DWORD) callconv(.winapi) windows.BOOL,
         windows.BOOL,
-    ) callconv(windows.WINAPI) windows.BOOL, @ptrCast(@alignCast(
+    ) callconv(.winapi) windows.BOOL, @ptrCast(@alignCast(
         kernel32.GetProcAddress(
-            kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")),
+            k32_handle,
             "SetConsoleCtrlHandler",
         ) orelse return error.FunctionNotFound,
     )));
@@ -243,12 +244,13 @@ fn uninstallWindows() void {
     const windows = std.os.windows;
     const kernel32 = windows.kernel32;
 
+    const k32_handle = kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")) orelse return;
     const SetConsoleCtrlHandler = @as(*const fn (
-        ?*const fn (windows.DWORD) callconv(windows.WINAPI) windows.BOOL,
+        ?*const fn (windows.DWORD) callconv(.winapi) windows.BOOL,
         windows.BOOL,
-    ) callconv(windows.WINAPI) windows.BOOL, @ptrCast(@alignCast(
+    ) callconv(.winapi) windows.BOOL, @ptrCast(@alignCast(
         kernel32.GetProcAddress(
-            kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")),
+            k32_handle,
             "SetConsoleCtrlHandler",
         ) orelse return,
     )));
@@ -256,7 +258,7 @@ fn uninstallWindows() void {
     _ = SetConsoleCtrlHandler(windowsCtrlHandler, 0);
 }
 
-fn windowsCtrlHandler(ctrl_type: std.os.windows.DWORD) callconv(std.os.windows.WINAPI) std.os.windows.BOOL {
+fn windowsCtrlHandler(ctrl_type: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL {
     const CTRL_C_EVENT: std.os.windows.DWORD = 0;
     const CTRL_BREAK_EVENT: std.os.windows.DWORD = 1;
     const CTRL_CLOSE_EVENT: std.os.windows.DWORD = 2;
@@ -328,4 +330,89 @@ test "register cleanup callback" {
 
     try onCleanup(cb);
     try std.testing.expectEqual(@as(usize, 1), callback_count.load(.acquire));
+}
+
+test "Config default values" {
+    // Verify the default config enables interrupt and terminate handling
+    const config = Config{};
+    try std.testing.expect(config.handle_interrupt);
+    try std.testing.expect(config.handle_terminate);
+    try std.testing.expect(!config.handle_hangup);
+    try std.testing.expect(!config.handle_quit);
+}
+
+test "Config custom values" {
+    const config = Config{
+        .handle_interrupt = false,
+        .handle_terminate = false,
+        .handle_hangup = true,
+        .handle_quit = true,
+    };
+    try std.testing.expect(!config.handle_interrupt);
+    try std.testing.expect(!config.handle_terminate);
+    try std.testing.expect(config.handle_hangup);
+    try std.testing.expect(config.handle_quit);
+}
+
+test "Windows atomic config flags" {
+    // Test the atomic flags used by the Windows handler.
+    // These are used cross-platform for the atomic store/load pattern.
+    win_handle_interrupt.store(true, .release);
+    win_handle_terminate.store(false, .release);
+    try std.testing.expect(win_handle_interrupt.load(.acquire));
+    try std.testing.expect(!win_handle_terminate.load(.acquire));
+
+    // Reset to defaults
+    win_handle_interrupt.store(false, .release);
+    win_handle_terminate.store(false, .release);
+}
+
+test "install with no-op config does not error" {
+    // An empty config (no signals to handle) should succeed on all platforms
+    if (comptime builtin.os.tag == .windows) {
+        // On Windows, install with no signals skips registration
+        try install(.{
+            .handle_interrupt = false,
+            .handle_terminate = false,
+        });
+    } else {
+        // On POSIX, install with no signals is a no-op
+        try install(.{
+            .handle_interrupt = false,
+            .handle_terminate = false,
+        });
+        uninstall();
+    }
+}
+
+test "runCleanupCallbacks with no callbacks is safe" {
+    // Reset state
+    callback_count.store(0, .release);
+    cleanup_callbacks = .{null} ** 16;
+
+    // Should not panic or crash
+    runCleanupCallbacks();
+}
+
+test "max callbacks limit" {
+    // Reset state
+    callback_count.store(0, .release);
+    cleanup_callbacks = .{null} ** 16;
+
+    const cb = struct {
+        fn callback() void {}
+    }.callback;
+
+    // Fill all 16 slots
+    for (0..16) |_| {
+        try onCleanup(cb);
+    }
+
+    // 17th should fail
+    const result = onCleanup(cb);
+    try std.testing.expectError(error.TooManyCallbacks, result);
+
+    // Reset for other tests
+    callback_count.store(0, .release);
+    cleanup_callbacks = .{null} ** 16;
 }

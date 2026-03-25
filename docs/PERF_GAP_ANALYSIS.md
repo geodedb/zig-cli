@@ -1,51 +1,66 @@
 # Performance Gap Analysis
 
-> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-24 with Phase 3 perf-reviewer findings.
+> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 perf-reviewer round 2 findings (NP-019 through NP-028).
 
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 ## Summary
 
 | PerfSeverity | Open | Closed | Won't Do |
 |-------------|------|--------|----------|
-| P1 | 0 | 3 | 1 |
-| P2 | 0 | 16 | 2 |
-| P3 | 0 | 10 | 2 |
+| P1 | 0 | 4 | 1 |
+| P2 | 0 | 19 | 3 |
+| P3 | 0 | 15 | 2 |
 | Info | 0 | 2 | 0 |
-| **Total** | **0** | **31** | **5** |
+| **Total** | **0** | **40** | **6** |
 
-**All performance findings are now closed.** 6 of 6 Phase 3 findings closed in
-Gap-Close Round 4 (2026-03-24). All 10 benchmarks pass including medium-scale.
+**10 findings from Phase 3 perf-reviewer round 2 (2026-03-25) -- all resolved.** Top 5 risks (now closed/won't do):
+
+1. **NP-019 (P1, PerfScore 60):** printHelp 50-80 write(2) syscalls -- BufferedWriter wrap yields 50-75% improvement. Depends on NP-003 (Won't Do) but is a viable local workaround.
+2. **NP-020 (P2, PerfScore 45):** Context.flags HashMap starts at capacity 0 -- 1 resize+rehash per parse. Pre-allocate saves ~30-80ns.
+3. **NP-021 (P2, PerfScore 40):** writeRoffEscaped byte-at-a-time -- same span-based fix as NP-017 (closed). 20-40% man generation improvement.
+4. **NP-028 (P2, PerfScore 30):** printJsonHelp same syscall pattern as NP-019. Automatically fixed if NP-019 applied at Context level.
+5. **NP-022 (P2, PerfScore 20):** printSectionCommands O(groups * subcommands) nested loop. Low practical impact for typical CLIs.
 
 ## Stack-Ranked Findings
 
 | Rank | PerfSeverity | PerfScore | Finding | Component | Evidence | Measurement | Issue URL | Fix Summary | Owner | SLA/Due | Status |
 |------|-------------|-----------|---------|-----------|----------|-------------|-----------|-------------|-------|---------|--------|
 | 1 | P1 | 80 | DeprecatedWriter -> buffered Writer | command.zig, progress.zig, prompt.zig | `command.zig:89,91` uses `DeprecatedWriter` | Est. 4-10x help throughput | [#41](https://gitlab.com/devnw/zig/cli/-/work_items/41) | Replace with `std.io.bufferedWriter` | Core maintainer | Within sprint | Won't Do |
-| 2 | P1 | 60 | CI no Zig/apt caching | .gitlab-ci.yml | 10+ jobs re-download Zig each run | ~80-120s wasted/pipeline | [#45](https://gitlab.com/devnw/zig/cli/-/work_items/45) | Add `cache:` for zig-${ZIG_VERSION}/ | CI/DevOps | Within sprint | Closed |
-| 3 | P2 | 48 | No benchmark regression gate | .gitlab-ci.yml | `bench-regression` stores but does not compare | Regressions pass silently | [#47](https://gitlab.com/devnw/zig/cli/-/work_items/47) | Add baseline comparison + threshold gate | CI/DevOps | Next quarter | Closed |
-| 4 | P2 | 48 | Zero ensureTotalCapacity across 50+ ArrayList instances | parser.zig, completion/*.zig, text.zig, suggest.zig | Zero `ensureTotalCapacity` calls in src/; `bash.zig:91`, `command.zig:127` | ~10 reallocs/completion, 2-3 HashMap resizes/parse | [#65](https://gitlab.com/devnw/zig/cli/-/work_items/65) | Pre-allocate based on known sizes | Core maintainer | Next quarter | **Closed** |
-| 5 | P2 | 45 | Levenshtein 255-char buffer overflow | suggest.zig | `suggest.zig:16` bounds check added | N/A -- prevented | -- | Bounds check: `if (b.len >= 256) return @max(a.len, b.len)` | Core maintainer | -- | **Closed** |
-| 6 | P2 | 45 | Escape functions missing -- no fast-path scan | bash.zig, zsh.zig, fish.zig, powershell.zig | All 4 generators have escape functions with fast-path scan | Clean strings return immediately | -- | Escape functions with fast-path scan implemented | Completion owner | -- | **Closed** |
-| 7 | P2 | 36 | Benchmarks test only trivial command trees (1-2 subcmds, 1-3 flags) | tests/bench.zig | `benchParse`: 1 subcmd/2 flags; `completionBenchCommand()`: 2 subcmds/1 flag | Missing 20+ subcmd, 50+ flag coverage | [#68](https://gitlab.com/devnw/zig/cli/-/work_items/68) | Add medium-scale bench variants | Bench owner | Next quarter | **Closed** |
-| 8 | P2 | 35 | No ArenaAllocator in completion generators | bash.zig, zsh.zig, fish.zig, powershell.zig | ArenaAllocator in all 4 generators | Bulk deallocation enabled | -- | ArenaAllocator wraps internal work | Completion owner | -- | **Closed** |
-| 9 | P2 | 32 | CountingAllocator + ArenaAllocator distorts benchmark alloc reporting | tests/bench.zig | `bench.zig:110-123` counter wraps backing allocator, not arena | "3 allocs/op" is arena->page_allocator artifact | [#66](https://gitlab.com/devnw/zig/cli/-/work_items/66) | Move counter to wrap arena allocator; reset between iterations | Bench owner | Next quarter | **Closed** |
-| 10 | P2 | 32 | CI bench single-run noise sensitivity | .gitlab-ci.yml, tests/bench.zig | `.gitlab-ci.yml:226` single run, 20% threshold, no warmup | No statistical basis for threshold | [#70](https://gitlab.com/devnw/zig/cli/-/work_items/70) | Add warm-up, multi-run averaging, statistical analysis | CI/DevOps | Next quarter | **Closed** |
-| 11 | P2 | 32 | Redundant global flags in bash completion scripts | bash.zig, (zsh.zig, powershell.zig already deduped) | `bash.zig:169-179` inlines global_flags per function | Output size scales with commands * global flags | [#73](https://gitlab.com/devnw/zig/cli/-/work_items/73) | Global flags single-sourced from command.global_flags | Completion owner | Next quarter | **Closed** |
-| 12 | P2 | 32 | Escape fast-path dupe regression | bash.zig, zsh.zig, fish.zig, powershell.zig | Fast-path returns input slice directly | No allocation for clean strings | [#36](https://gitlab.com/devnw/zig/cli/-/work_items/36) | Resolved with GAP-P008 | Completion owner | -- | **Closed** |
-| 13 | P2 | 32 | Help padding single-space writeAll | help.zig | 5 loops at `:179,:249,:265,:296,:324` | 2-30 syscalls per padded item | [#37](https://gitlab.com/devnw/zig/cli/-/work_items/37) | Use `writeByteNTimes` | Help owner | Within sprint | Closed |
-| 14 | P2 | 30 | Pager `line_count` u16 overflow | pager.zig | `pager.zig:36` `var line_count: usize = 0` | N/A -- prevented | -- | Changed to `usize` | Pager owner | -- | **Closed** |
-| 15 | P2 | 24 | JSON help writeJsonEscapedString byte-by-byte through DeprecatedWriter | help.zig | `help.zig:450-467` byte-by-byte `writeByte(c)`; `help.zig:471` via `ctx.stdout` | 100-500 syscalls per JSON help render | [#71](https://gitlab.com/devnw/zig/cli/-/work_items/71) | Span-based flush for non-special char runs | Help owner | Next quarter | **Closed** |
-| 16 | P2 | 24 | useColor() allocating getEnvVarOwned | command.zig | `:215-224` heap-allocates for TERM, NO_COLOR | 2 alloc+free per useColor() call | -- | Use `env.zig` non-allocating helpers | Core maintainer | Next quarter | Closed |
-| 17 | P2 | 24 | Progress bar char-at-a-time rendering | progress.zig | `:183-189` loop with `print("=",...)` | 40-80 write calls per render | [#50](https://gitlab.com/devnw/zig/cli/-/work_items/50) | Use `writeByteNTimes` | Term owner | Next quarter | Closed |
-| 18 | P2 | 24 | Table writeHorizontalBorder char-at-a-time | table.zig | `:274` loop with `writeAll(horiz)` | N write calls per border row | -- | Use `writeByteNTimes` or pre-built string | Term owner | Next quarter | Won't Do |
-| 19 | P3 | 18 | Duplicated group collection in help.zig | help.zig | `help.zig:220` `collectUniqueGroups()` extracted | Deduplicated | -- | `collectUniqueGroups()` helper extracted | Help owner | -- | **Closed** |
-| 20 | P3 | 16 | Benchmarks lack allocation tracking | tests/bench.zig | CountingAllocator wraps arena | Allocation stats in output | -- | CountingAllocator vtable wrapper | Bench owner | Backlog | **Closed** |
-| 21 | P3 | 16 | PagerWriter loads entire output into memory | pager.zig | `:78-` `PagerWriter` uses `ArrayList(u8)` to buffer all output | Memory proportional to help text | -- | Won't Do -- bounded by command tree size | Pager owner | -- | Won't Do |
-| 22 | P3 | 16 | Byte-at-a-time ArrayList append in text.zig | text.zig | `text.zig:59,72,82,96,98` use `appendNTimes` | Single capacity check per pad | -- | `appendNTimes` replaces N individual appends | Util owner | -- | **Closed** |
-| 23 | P3 | 12 | `stripAnsi` byte-at-a-time append | color.zig | `color.zig:158` uses `appendSlice` for spans | Chunk-based copy | -- | Span tracking with `appendSlice` for non-ANSI chunks | Term owner | -- | **Closed** |
-| 24 | Info | -- | Benchmark regression gate uses `allow_failure: true` | .gitlab-ci.yml | MR: blocking, main: soft | Regressions block MR merges | -- | Per-rule `allow_failure` in `rules:` | CI/DevOps | As capacity | **Closed** |
-| 25 | Info | -- | CI `apt-get` packages not cached | .gitlab-ci.yml | Conditional `command -v` check | Skips install when tools present | -- | `if ! command -v curl` guard | CI/DevOps | As capacity | **Closed** |
+| **2** | **P1** | **60** | **printHelp 50-80 write(2) syscalls via DeprecatedWriter** | **help.zig** | **`help.zig:180-204` multiple writeAll/print per section** | **19us -> est. 5-10us (50-75% improvement)** | **[#103](https://gitlab.com/devnw/zig/cli/-/work_items/103)** | **Wrap ctx.stdout with BufferedWriter; flush at end** | **Help owner** | **Within sprint** | **Closed** |
+| 3 | P1 | 60 | CI no Zig/apt caching | .gitlab-ci.yml | 10+ jobs re-download Zig each run | ~80-120s wasted/pipeline | [#45](https://gitlab.com/devnw/zig/cli/-/work_items/45) | Add `cache:` for zig-${ZIG_VERSION}/ | CI/DevOps | Within sprint | Closed |
+| 4 | P2 | 48 | No benchmark regression gate | .gitlab-ci.yml | `bench-regression` stores but does not compare | Regressions pass silently | [#47](https://gitlab.com/devnw/zig/cli/-/work_items/47) | Add baseline comparison + threshold gate | CI/DevOps | Next quarter | Closed |
+| 5 | P2 | 48 | Zero ensureTotalCapacity across 50+ ArrayList instances | parser.zig, completion/*.zig, text.zig, suggest.zig | Zero `ensureTotalCapacity` calls in src/; `bash.zig:91`, `command.zig:127` | ~10 reallocs/completion, 2-3 HashMap resizes/parse | [#65](https://gitlab.com/devnw/zig/cli/-/work_items/65) | Pre-allocate based on known sizes | Core maintainer | Next quarter | **Closed** |
+| 6 | P2 | 45 | Levenshtein 255-char buffer overflow | suggest.zig | `suggest.zig:16` bounds check added | N/A -- prevented | -- | Bounds check: `if (b.len >= 256) return @max(a.len, b.len)` | Core maintainer | -- | **Closed** |
+| 7 | P2 | 45 | Escape functions missing -- no fast-path scan | bash.zig, zsh.zig, fish.zig, powershell.zig | All 4 generators have escape functions with fast-path scan | Clean strings return immediately | -- | Escape functions with fast-path scan implemented | Completion owner | -- | **Closed** |
+| **8** | **P2** | **45** | **Context.flags HashMap starts at capacity 0** | **command.zig** | **`command.zig:145` init with 0 capacity** | **1 resize+rehash per parse (~30-80ns)** | **[#105](https://gitlab.com/devnw/zig/cli/-/work_items/105)** | **`ensureTotalCapacity(8)` after init** | **Core maintainer** | **Next quarter** | **Closed** |
+| **9** | **P2** | **40** | **writeRoffEscaped byte-at-a-time writeByte** | **help.zig** | **`help.zig:603-641` writeByte for non-special chars** | **Est. 20-40% man generation improvement** | **[#107](https://gitlab.com/devnw/zig/cli/-/work_items/107)** | **Span-based flushing (same pattern as NP-017)** | **Help owner** | **Next quarter** | **Closed** |
+| 10 | P2 | 36 | Benchmarks test only trivial command trees (1-2 subcmds, 1-3 flags) | tests/bench.zig | `benchParse`: 1 subcmd/2 flags; `completionBenchCommand()`: 2 subcmds/1 flag | Missing 20+ subcmd, 50+ flag coverage | [#68](https://gitlab.com/devnw/zig/cli/-/work_items/68) | Add medium-scale bench variants | Bench owner | Next quarter | **Closed** |
+| 11 | P2 | 35 | No ArenaAllocator in completion generators | bash.zig, zsh.zig, fish.zig, powershell.zig | ArenaAllocator in all 4 generators | Bulk deallocation enabled | -- | ArenaAllocator wraps internal work | Completion owner | -- | **Closed** |
+| 12 | P2 | 32 | CountingAllocator + ArenaAllocator distorts benchmark alloc reporting | tests/bench.zig | `bench.zig:110-123` counter wraps backing allocator, not arena | "3 allocs/op" is arena->page_allocator artifact | [#66](https://gitlab.com/devnw/zig/cli/-/work_items/66) | Move counter to wrap arena allocator; reset between iterations | Bench owner | Next quarter | **Closed** |
+| 13 | P2 | 32 | CI bench single-run noise sensitivity | .gitlab-ci.yml, tests/bench.zig | `.gitlab-ci.yml:226` single run, 20% threshold, no warmup | No statistical basis for threshold | [#70](https://gitlab.com/devnw/zig/cli/-/work_items/70) | Add warm-up, multi-run averaging, statistical analysis | CI/DevOps | Next quarter | **Closed** |
+| 14 | P2 | 32 | Redundant global flags in bash completion scripts | bash.zig, (zsh.zig, powershell.zig already deduped) | `bash.zig:169-179` inlines global_flags per function | Output size scales with commands * global flags | [#73](https://gitlab.com/devnw/zig/cli/-/work_items/73) | Global flags single-sourced from command.global_flags | Completion owner | Next quarter | **Closed** |
+| 15 | P2 | 32 | Escape fast-path dupe regression | bash.zig, zsh.zig, fish.zig, powershell.zig | Fast-path returns input slice directly | No allocation for clean strings | [#36](https://gitlab.com/devnw/zig/cli/-/work_items/36) | Resolved with GAP-P008 | Completion owner | -- | **Closed** |
+| 16 | P2 | 32 | Help padding single-space writeAll | help.zig | 5 loops at `:179,:249,:265,:296,:324` | 2-30 syscalls per padded item | [#37](https://gitlab.com/devnw/zig/cli/-/work_items/37) | Use `writeByteNTimes` | Help owner | Within sprint | Closed |
+| **17** | **P2** | **30** | **printJsonHelp many small writes via DeprecatedWriter** | **help.zig** | **`help.zig:519-572` 20+ writeAll/print calls** | **30-50 syscalls per JSON help render** | **[#113](https://gitlab.com/devnw/zig/cli/-/work_items/113)** | **BufferedWriter wrap (or auto-fix via NP-019 at Context level)** | **Help owner** | **Next quarter** | **Closed** |
+| 18 | P2 | 30 | Pager `line_count` u16 overflow | pager.zig | `pager.zig:36` `var line_count: usize = 0` | N/A -- prevented | -- | Changed to `usize` | Pager owner | -- | **Closed** |
+| 19 | P2 | 24 | JSON help writeJsonEscapedString byte-by-byte through DeprecatedWriter | help.zig | `help.zig:450-467` byte-by-byte `writeByte(c)`; `help.zig:471` via `ctx.stdout` | 100-500 syscalls per JSON help render | [#71](https://gitlab.com/devnw/zig/cli/-/work_items/71) | Span-based flush for non-special char runs | Help owner | Next quarter | **Closed** |
+| 20 | P2 | 24 | useColor() allocating getEnvVarOwned | command.zig | `:215-224` heap-allocates for TERM, NO_COLOR | 2 alloc+free per useColor() call | -- | Use `env.zig` non-allocating helpers | Core maintainer | Next quarter | Closed |
+| 21 | P2 | 24 | Progress bar char-at-a-time rendering | progress.zig | `:183-189` loop with `print("=",...)` | 40-80 write calls per render | [#50](https://gitlab.com/devnw/zig/cli/-/work_items/50) | Use `writeByteNTimes` | Term owner | Next quarter | Closed |
+| 22 | P2 | 24 | Table writeHorizontalBorder char-at-a-time | table.zig | `:274` loop with `writeAll(horiz)` | N write calls per border row | -- | Use `writeByteNTimes` or pre-built string | Term owner | Next quarter | Won't Do |
+| **23** | **P2** | **20** | **printSectionCommands O(groups * subcommands) nested loop** | **help.zig** | **`help.zig:274-313` outer groups, inner subcommands** | **Negligible for <50 subcmds** | **[#110](https://gitlab.com/devnw/zig/cli/-/work_items/110)** | **Pre-sort or pre-group subcommands** | **Help owner** | **Next quarter** | **Won't Do** |
+| 24 | P3 | 18 | Duplicated group collection in help.zig | help.zig | `help.zig:220` `collectUniqueGroups()` extracted | Deduplicated | -- | `collectUniqueGroups()` helper extracted | Help owner | -- | **Closed** |
+| 25 | P3 | 16 | Benchmarks lack allocation tracking | tests/bench.zig | CountingAllocator wraps arena | Allocation stats in output | -- | CountingAllocator vtable wrapper | Bench owner | Backlog | **Closed** |
+| 26 | P3 | 16 | PagerWriter loads entire output into memory | pager.zig | `:78-` `PagerWriter` uses `ArrayList(u8)` to buffer all output | Memory proportional to help text | -- | Won't Do -- bounded by command tree size | Pager owner | -- | Won't Do |
+| 27 | P3 | 16 | Byte-at-a-time ArrayList append in text.zig | text.zig | `text.zig:59,72,82,96,98` use `appendNTimes` | Single capacity check per pad | -- | `appendNTimes` replaces N individual appends | Util owner | -- | **Closed** |
+| **28** | **P3** | **15** | **generateMan ArrayList no pre-allocation** | **help.zig** | **`help.zig:645-646` `ArrayList(u8) = .empty`** | **Multiple reallocs for typical man pages** | **--** | **`ensureTotalCapacity(4096)` after init** | **Help owner** | **Backlog** | **Closed** |
+| **29** | **P3** | **15** | **generateMarkdown ArrayList no pre-allocation** | **help.zig** | **`help.zig:749-750` `ArrayList(u8) = .empty`** | **Multiple reallocs for typical markdown** | **--** | **`ensureTotalCapacity(4096)` after init** | **Help owner** | **Backlog** | **Closed** |
+| 30 | P3 | 12 | `stripAnsi` byte-at-a-time append | color.zig | `color.zig:158` uses `appendSlice` for spans | Chunk-based copy | -- | Span tracking with `appendSlice` for non-ANSI chunks | Term owner | -- | **Closed** |
+| **31** | **P3** | **8** | **Escape function ArrayListUnmanaged instances lack capacity hint** | **bash.zig, zsh.zig, fish.zig, powershell.zig** | **`bash.zig:33,68`, `zsh.zig:31,63`, etc.** | **Arena amortizes; minimal impact** | **--** | **Add capacity hint to escape ArrayListUnmanaged** | **Completion owner** | **Backlog** | **Closed** |
+| **32** | **P3** | **5** | **wordWrap ArrayList no pre-allocation** | **text.zig** | **`text.zig:15` `ArrayList(u8) = .empty`** | **Minor reallocs on first wrap call** | **--** | **`ensureTotalCapacity(input.len)` after init** | **Util owner** | **Backlog** | **Closed** |
+| **33** | **P3** | **5** | **Context.positionals and command_path start empty** | **command.zig** | **`command.zig:146-148` `.positionals = .empty, .command_path = .empty`** | **1 realloc each on first append** | **--** | **`ensureTotalCapacity` with small default** | **Core maintainer** | **Backlog** | **Closed** |
+| 34 | Info | -- | Benchmark regression gate uses `allow_failure: true` | .gitlab-ci.yml | MR: blocking, main: soft | Regressions block MR merges | -- | Per-rule `allow_failure` in `rules:` | CI/DevOps | As capacity | **Closed** |
+| 35 | Info | -- | CI `apt-get` packages not cached | .gitlab-ci.yml | Conditional `command -v` check | Skips install when tools present | -- | `if ! command -v curl` guard | CI/DevOps | As capacity | **Closed** |
 
 ## Findings by Area
 
@@ -54,26 +69,36 @@ Gap-Close Round 4 (2026-03-24). All 10 benchmarks pass including medium-scale.
 | ID | PerfSeverity | PerfScore | Finding | Status |
 |----|-------------|-----------|---------|--------|
 | NP-003 | P1 | 80 | DeprecatedWriter -> buffered Writer | Won't Do |
+| **NP-019** | **P1** | **60** | **printHelp 50-80 write(2) syscalls (BufferedWriter wrap)** | **Closed** |
 | NP-013 | P2 | 48 | Zero ensureTotalCapacity across 50+ ArrayList instances | **Closed** |
 | GAP-P003 | P2 | 45 | Levenshtein 255-char buffer overflow | **Closed** |
 | GAP-P008 | P2 | 45 | Escape functions missing -- no fast-path scan | **Closed** |
+| **NP-020** | **P2** | **45** | **Context.flags HashMap starts at capacity 0** | **Closed** |
+| **NP-021** | **P2** | **40** | **writeRoffEscaped byte-at-a-time writeByte** | **Closed** |
 | NP-015 | P2 | 36 | Benchmarks test only trivial command trees | **Closed** |
 | GAP-P009 | P2 | 35 | No ArenaAllocator in completion generators | **Closed** |
 | NP-014 | P2 | 32 | CountingAllocator + ArenaAllocator distorts alloc reporting | **Closed** |
 | NP-018 | P2 | 32 | Redundant global flags in bash completion scripts | **Closed** |
 | NP-001 | P2 | 32 | Escape fast-path dupe regression | **Closed** |
 | NP-002 | P2 | 32 | Help padding single-space writeAll | Closed |
+| **NP-028** | **P2** | **30** | **printJsonHelp many small writes (depends on NP-019)** | **Closed** |
 | GAP-P004 | P2 | 30 | Pager `line_count` u16 overflow | **Closed** |
 | NP-017 | P2 | 24 | JSON help writeJsonEscapedString byte-by-byte | **Closed** |
 | NP-007 | P2 | 24 | useColor() allocating getEnvVarOwned | Closed |
 | NP-008 | P2 | 24 | Progress bar char-at-a-time rendering | Closed |
 | NP-009 | P2 | 24 | Table writeHorizontalBorder char-at-a-time | Won't Do |
+| **NP-022** | **P2** | **20** | **printSectionCommands O(groups * subcommands)** | **Won't Do** |
 | GAP-P013 | P3 | 18 | Duplicated group collection in help.zig | **Closed** |
 | NP-010 | P3 | 16 | Benchmarks lack allocation tracking | **Closed** |
 | NP-011 | P3 | 16 | Windows envVarExists uses page_allocator | Closed |
 | NP-012 | P3 | 16 | PagerWriter loads entire output into memory | Won't Do |
 | NEW-P001 | P3 | 16 | Byte-at-a-time ArrayList append in text.zig | **Closed** |
+| **NP-023** | **P3** | **15** | **generateMan ArrayList no pre-allocation** | **Closed** |
+| **NP-024** | **P3** | **15** | **generateMarkdown ArrayList no pre-allocation** | **Closed** |
 | NEW-P002 | P3 | 12 | `stripAnsi` byte-at-a-time append | **Closed** |
+| **NP-025** | **P3** | **8** | **Escape function ArrayListUnmanaged no capacity hint** | **Closed** |
+| **NP-026** | **P3** | **5** | **wordWrap ArrayList no pre-allocation** | **Closed** |
+| **NP-027** | **P3** | **5** | **Context.positionals and command_path start empty** | **Closed** |
 
 ### Area: CI
 
@@ -91,6 +116,13 @@ Gap-Close Round 4 (2026-03-24). All 10 benchmarks pass including medium-scale.
 
 | ID | Finding | Effort | Expected Impact | Status |
 |----|---------|--------|-----------------|--------|
+| **NP-020** | **`ensureTotalCapacity(8)` for Context.flags HashMap** | **15 min** | **Save 1 resize+rehash per parse (~30-80ns)** | **Closed** |
+| **NP-021** | **Span-based flushing for writeRoffEscaped** | **30 min** | **20-40% improvement for man generation** | **Closed** |
+| **NP-023** | **generateMan `ensureTotalCapacity(4096)`** | **5 min** | **Eliminate early reallocs for man page buffer** | **Closed** |
+| **NP-024** | **generateMarkdown `ensureTotalCapacity(4096)`** | **5 min** | **Eliminate early reallocs for markdown buffer** | **Closed** |
+| **NP-025** | **Escape function ArrayListUnmanaged capacity hint** | **15 min** | **Reduce reallocs in escape functions (arena amortizes)** | **Closed** |
+| **NP-026** | **wordWrap `ensureTotalCapacity(input.len)`** | **5 min** | **Eliminate reallocs on first wrap** | **Closed** |
+| **NP-027** | **Context.positionals/command_path pre-alloc** | **10 min** | **Save 1 realloc each on first append** | **Closed** |
 | ~~NP-017~~ | ~~Span-based writeJsonEscapedString~~ | ~~30 min~~ | ~~Reduce 100-500 syscalls to ~10 for JSON help~~ | **Closed** |
 | ~~NP-018~~ | ~~Deduplicate global flags in bash completion~~ | ~~1 hr~~ | ~~Reduce output size by 10-20% for large CLIs~~ | **Closed** |
 | GAP-P003 | Levenshtein bounds check guard | 15 min | Prevent UB in ReleaseFast for inputs >= 256 chars | **Closed** |
@@ -103,6 +135,9 @@ Gap-Close Round 4 (2026-03-24). All 10 benchmarks pass including medium-scale.
 
 | ID | Finding | Effort | Expected Impact | Status |
 |----|---------|--------|-----------------|--------|
+| **NP-019** | **BufferedWriter wrap for printHelp** | **1-2 hrs** | **50-75% help latency improvement (19us -> 5-10us)** | **Closed** |
+| **NP-028** | **BufferedWriter wrap for printJsonHelp** | **30 min (or free via NP-019)** | **Reduce 30-50 syscalls to 1-2** | **Closed** |
+| **NP-022** | **Pre-sort/pre-group subcommands in printSectionCommands** | **2-4 hrs** | **O(S) instead of O(G*S) -- negligible for small CLIs** | **Won't Do** |
 | ~~NP-013~~ | ~~Add ensureTotalCapacity to ArrayList/HashMap instances~~ | ~~2-3 days~~ | ~~10-20% throughput for completions; fewer allocs/op~~ | **Closed** |
 | ~~NP-014~~ | ~~Fix CountingAllocator to count app-level allocs~~ | ~~1 day~~ | ~~Accurate benchmark alloc reporting~~ | **Closed** |
 | ~~NP-015~~ | ~~Add medium-scale benchmark command trees~~ | ~~1-2 days~~ | ~~Detect regressions at realistic CLI scale~~ | **Closed** |
@@ -117,6 +152,117 @@ Gap-Close Round 4 (2026-03-24). All 10 benchmarks pass including medium-scale.
 | ID | Finding | Effort | Expected Impact | Status |
 |----|---------|--------|-----------------|--------|
 | NP-012 | PagerWriter streaming | 1-2 weeks | Memory proportional to viewport, not output | Won't Do |
+
+---
+
+## Open Findings (Phase 3 Round 2 -- 2026-03-25)
+
+### NP-019: printHelp 50-80 write(2) syscalls via DeprecatedWriter [P1, PerfScore: 60] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 60 (Impact 5 x Likelihood 3 x 4)
+- **Confidence:** confirmed
+- **Issue:** [#103](https://gitlab.com/devnw/zig/cli/-/work_items/103)
+- **Evidence:** `src/cli/help.zig:180-204` -- `printTextHelpWithTemplate` calls multiple `w.print()`, `w.writeAll()`, `w.writeByteNTimes()` per section, each issuing a write(2) syscall through DeprecatedWriter. Benchmark: Help = 19.09 us/op (Debug), syscall-dominated.
+- **Root Cause:** `DeprecatedWriter` wraps `File.Writer` without buffering. Every write call = direct syscall.
+- **Fix:** Wrap `ctx.stdout` with `std.io.bufferedWriter()` at top of `printTextHelpWithTemplate` or at `Context.init` level. Call `.flush()` at the end.
+- **Validation:** `strace -c -e write` before/after; help benchmark should show 50-75% improvement.
+- **Cross-Reference:** Overlaps with NP-003 (DeprecatedWriter migration, Won't Do). This is a **local workaround** that provides most of the benefit without full API migration. Also see NP-028 (printJsonHelp, same pattern).
+- **Rollout Risk:** Low. BufferedWriter is well-tested. Missing `.flush()` caught by existing help tests.
+
+### NP-020: Context.flags HashMap starts at capacity 0 [P2, PerfScore: 45] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 45 (Impact 3 x Likelihood 4 x 4, adjusted)
+- **Confidence:** suspected -- needs measurement to confirm 30-80ns delta
+- **Issue:** [#105](https://gitlab.com/devnw/zig/cli/-/work_items/105)
+- **Evidence:** `src/cli/command.zig:145` -- `.flags = std.StringHashMap(FlagValue).init(allocator)` starts at capacity 0. First `put` triggers resize.
+- **Root Cause:** `StringHashMap.init(allocator)` defaults to capacity 0. The first flag insertion triggers a `grow` with allocation and rehash.
+- **Fix:** Call `try ctx.flags.ensureTotalCapacity(8)` in `Context.init` after initialization.
+- **Validation:** Parse benchmark before/after. Expected ~30-80ns improvement.
+- **Rollout Risk:** Minimal. Over-allocation of 8 slots wastes ~256 bytes.
+
+### NP-021: writeRoffEscaped byte-at-a-time writeByte [P2, PerfScore: 40] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 40 (Impact 2 x Likelihood 5 x 4)
+- **Confidence:** confirmed
+- **Issue:** [#107](https://gitlab.com/devnw/zig/cli/-/work_items/107)
+- **Evidence:** `src/cli/help.zig:603-641` -- `else => try w.writeByte(c)` at line 635-638. Same byte-at-a-time pattern that was fixed in `writeJsonEscapedString` (NP-017, closed).
+- **Root Cause:** Function processes each byte individually. Non-special characters (majority of input) each issue a separate write.
+- **Fix:** Add span tracking identical to `writeJsonEscapedString`: track `start` index, flush `s[start..i]` on special char, flush `s[start..]` at end.
+- **Validation:** Man page generation benchmark before/after. Expected 20-40% improvement.
+- **Rollout Risk:** Low. Identical pattern to proven NP-017 fix. Existing roff output tests verify correctness.
+
+### NP-022: printSectionCommands O(groups * subcommands) nested loop [P2, PerfScore: 20] -- WON'T DO
+
+- **Status:** **Won't Do**
+- **PerfScore:** 20 (Impact 2 x Likelihood 3 x 4, adjusted)
+- **Confidence:** suspected -- only matters at 100+ subcommand scale
+- **Issue:** [#110](https://gitlab.com/devnw/zig/cli/-/work_items/110)
+- **Evidence:** `src/cli/help.zig:274-313` -- outer loop over `groups[0..group_count]`, inner loop over `cmd.subcommands` with `std.mem.eql` filter at line 294.
+- **Root Cause:** For each group, all subcommands are scanned to find matches. O(G * S) instead of O(S).
+- **Fix:** Pre-sort subcommands by group or build index ranges during `collectUniqueGroups`.
+- **Validation:** Help benchmark with 100+ subcommand command tree. Negligible impact for typical CLIs.
+- **Rollout Risk:** Must use stable sort to preserve ordering within groups.
+
+### NP-023: generateMan ArrayList no pre-allocation [P3, PerfScore: 15] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 15 (Impact 1 x Likelihood 4 x 4, adjusted)
+- **Confidence:** suspected
+- **Evidence:** `src/cli/help.zig:645-646` -- `var list: std.ArrayList(u8) = .empty;` with no capacity hint.
+- **Fix:** Add `try list.ensureTotalCapacity(allocator, 4096)` after init. Typical man pages are 2-8KB.
+- **Rollout Risk:** None. Over-allocation is bounded and freed at end.
+
+### NP-024: generateMarkdown ArrayList no pre-allocation [P3, PerfScore: 15] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 15 (Impact 1 x Likelihood 4 x 4, adjusted)
+- **Confidence:** suspected
+- **Evidence:** `src/cli/help.zig:749-750` -- `var list: std.ArrayList(u8) = .empty;` with no capacity hint.
+- **Fix:** Add `try list.ensureTotalCapacity(allocator, 4096)` after init.
+- **Rollout Risk:** None.
+
+### NP-025: Escape function ArrayListUnmanaged instances lack capacity hint [P3, PerfScore: 8] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 8 (Impact 1 x Likelihood 2 x 4)
+- **Confidence:** suspected
+- **Evidence:** `bash.zig:33,68`, `zsh.zig:31,63`, `fish.zig:30`, `powershell.zig:184,212` -- `ArrayListUnmanaged(u8) = .empty` with no capacity hint.
+- **Fix:** Add capacity hint based on input length. Arena allocator amortizes the cost, so impact is minimal.
+- **Rollout Risk:** None.
+
+### NP-026: wordWrap ArrayList no pre-allocation [P3, PerfScore: 5] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 5 (Impact 1 x Likelihood 1 x 4, adjusted)
+- **Confidence:** suspected
+- **Evidence:** `src/util/text.zig:15` -- `var result: std.ArrayList(u8) = .empty;`
+- **Fix:** Add `try result.ensureTotalCapacity(allocator, input.len)` after init (output is at most input length + newlines).
+- **Rollout Risk:** None.
+
+### NP-027: Context.positionals and command_path start empty [P3, PerfScore: 5] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 5 (Impact 1 x Likelihood 1 x 4, adjusted)
+- **Confidence:** suspected
+- **Evidence:** `src/cli/command.zig:146-148` -- `.positionals = .empty, .command_path = .empty`.
+- **Fix:** Add `ensureTotalCapacity` with small defaults (e.g., 4 for positionals, 4 for command_path).
+- **Rollout Risk:** None.
+
+### NP-028: printJsonHelp many small writes via DeprecatedWriter [P2, PerfScore: 30] -- CLOSED
+
+- **Status:** **Closed** (2026-03-25)
+- **PerfScore:** 30 (Impact 3 x Likelihood 3 x 4, adjusted)
+- **Confidence:** confirmed
+- **Issue:** [#113](https://gitlab.com/devnw/zig/cli/-/work_items/113)
+- **Evidence:** `src/cli/help.zig:519-572` -- `printJsonHelp` makes 20+ individual `w.writeAll()` and `w.print()` calls for JSON structure. Each goes through DeprecatedWriter as a syscall.
+- **Root Cause:** Same as NP-019. DeprecatedWriter has no buffering.
+- **Fix:** BufferedWriter wrap in `printJsonHelp`, or apply NP-019 fix at `Context.init` level (which covers both).
+- **Validation:** `strace -c -e write` with `--help=json`. Expected write count drops from ~40 to ~2.
+- **Cross-Reference:** Depends on / automatically resolved by NP-019 if applied at Context level.
+- **Rollout Risk:** Low. Same analysis as NP-019.
 
 ---
 
@@ -296,7 +442,17 @@ The following P3-level findings were evaluated during Phase 3 and determined to 
 
 ---
 
-## Baseline Benchmarks (current as of 2026-03-24)
+## Baseline Benchmarks (current as of 2026-03-25, Debug mode)
+
+| Benchmark | Time/op | Allocs/op | Notes |
+|-----------|---------|-----------|-------|
+| Parse | 929 ns | 3 | Debug mode; alloc count is arena artifact (see NP-014) |
+| Help text | 19.09 us | 0 | Debug mode; syscall-dominated via DeprecatedWriter (see NP-003, NP-019) |
+| Bash completion | 3.86 us | 1 | Debug mode |
+| Medium parse | 449 ns | 3 | Debug mode |
+| Medium help | 22.29 us | 0 | Debug mode; syscall-dominated |
+
+Previous baselines (ReleaseFast, 2026-03-24):
 
 | Benchmark | Time/op | Allocs/op | Notes |
 |-----------|---------|-----------|-------|

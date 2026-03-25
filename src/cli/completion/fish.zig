@@ -13,12 +13,13 @@ const FlagSpec = command.FlagSpec;
 
 /// Escape a string for use inside fish single-quoted contexts.
 /// Escapes: ' as \', \ as \\
+/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
 /// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapeFishSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
         switch (c) {
-            '\'', '\\' => {
+            '\'', '\\', 0x00, '\n', '\r' => {
                 needs_escape = true;
                 break;
             },
@@ -28,8 +29,11 @@ pub fn escapeFishSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]con
     if (!needs_escape) return s;
 
     var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
         switch (c) {
+            // Strip NUL bytes and newlines entirely
+            0x00, '\n', '\r' => {},
             '\'', '\\' => {
                 list.append(allocator, '\\') catch return error.OutOfMemory;
                 list.append(allocator, c) catch return error.OutOfMemory;
@@ -68,7 +72,7 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
 fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []const u8, path: []const []const u8, esc_alloc: std.mem.Allocator) !void {
     // Build condition for this command level
     var condition_buf: [512]u8 = undefined;
-    const condition = buildCondition(&condition_buf, path, cmd);
+    const condition = buildCondition(&condition_buf, path, cmd, esc_alloc);
 
     // Section header
     if (path.len == 0) {
@@ -143,7 +147,7 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
 
         // Build condition for showing subcommands at this level
         var subcmd_condition_buf: [512]u8 = undefined;
-        const subcmd_condition = buildSubcommandCondition(&subcmd_condition_buf, path, cmd);
+        const subcmd_condition = buildSubcommandCondition(&subcmd_condition_buf, path, cmd, esc_alloc);
 
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
@@ -177,8 +181,9 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
     }
 }
 
-/// Build the fish condition for flag completions at a command level
-fn buildCondition(buf: []u8, path: []const []const u8, cmd: *const Command) []const u8 {
+/// Build the fish condition for flag completions at a command level.
+/// Path elements and subcommand names are escaped for use in single-quoted contexts.
+fn buildCondition(buf: []u8, path: []const []const u8, cmd: *const Command, esc_alloc: std.mem.Allocator) []const u8 {
     if (path.len == 0) {
         return "";
     }
@@ -190,7 +195,8 @@ fn buildCondition(buf: []u8, path: []const []const u8, cmd: *const Command) []co
     // Must have seen all parent commands
     w.print("__fish_seen_subcommand_from", .{}) catch return "";
     for (path) |p| {
-        w.print(" {s}", .{p}) catch return "";
+        const esc_p = escapeFishSingleQuote(esc_alloc, p) catch return "";
+        w.print(" {s}", .{esc_p}) catch return "";
     }
 
     // Must not have started any subcommand yet
@@ -198,7 +204,8 @@ fn buildCondition(buf: []u8, path: []const []const u8, cmd: *const Command) []co
         w.print("; and not __fish_seen_subcommand_from", .{}) catch return "";
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                w.print(" {s}", .{subcmd.name}) catch return "";
+                const esc_name = escapeFishSingleQuote(esc_alloc, subcmd.name) catch return "";
+                w.print(" {s}", .{esc_name}) catch return "";
             }
         }
     }
@@ -206,8 +213,9 @@ fn buildCondition(buf: []u8, path: []const []const u8, cmd: *const Command) []co
     return buf[0..stream.pos];
 }
 
-/// Build the fish condition for showing subcommands at a command level
-fn buildSubcommandCondition(buf: []u8, path: []const []const u8, cmd: *const Command) []const u8 {
+/// Build the fish condition for showing subcommands at a command level.
+/// Path elements and subcommand names are escaped for use in single-quoted contexts.
+fn buildSubcommandCondition(buf: []u8, path: []const []const u8, cmd: *const Command, esc_alloc: std.mem.Allocator) []const u8 {
     if (path.len == 0) {
         // Root level: use __fish_use_subcommand
         const result = std.fmt.bufPrint(buf, "__fish_use_subcommand", .{}) catch return "";
@@ -221,7 +229,8 @@ fn buildSubcommandCondition(buf: []u8, path: []const []const u8, cmd: *const Com
     // Must have seen all parent commands
     w.print("__fish_seen_subcommand_from", .{}) catch return "";
     for (path) |p| {
-        w.print(" {s}", .{p}) catch return "";
+        const esc_p = escapeFishSingleQuote(esc_alloc, p) catch return "";
+        w.print(" {s}", .{esc_p}) catch return "";
     }
 
     // Must not have started any subcommand yet
@@ -229,7 +238,8 @@ fn buildSubcommandCondition(buf: []u8, path: []const []const u8, cmd: *const Com
         w.print("; and not __fish_seen_subcommand_from", .{}) catch return "";
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                w.print(" {s}", .{subcmd.name}) catch return "";
+                const esc_name = escapeFishSingleQuote(esc_alloc, subcmd.name) catch return "";
+                w.print(" {s}", .{esc_name}) catch return "";
             }
         }
     }
@@ -542,4 +552,16 @@ test "fish: escapeFishSingleQuote with both special chars" {
     const result = try escapeFishSingleQuote(std.testing.allocator, "it's a \\path");
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("it\\'s a \\\\path", result);
+}
+
+test "fish: escapeFishSingleQuote strips NUL bytes" {
+    const result = try escapeFishSingleQuote(std.testing.allocator, "hello\x00world");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("helloworld", result);
+}
+
+test "fish: escapeFishSingleQuote strips newlines and CR" {
+    const result = try escapeFishSingleQuote(std.testing.allocator, "line1\nline2\rline3");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("line1line2line3", result);
 }

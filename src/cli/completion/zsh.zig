@@ -29,6 +29,7 @@ pub fn escapeZshSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]cons
     if (!needs_escape) return s;
 
     var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
         switch (c) {
             0x00, '\n', '\r' => {},
@@ -61,6 +62,7 @@ pub fn escapeZshDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]cons
     if (!needs_escape) return s;
 
     var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
         switch (c) {
             0x00, '\n', '\r' => {},
