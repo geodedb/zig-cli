@@ -29,3 +29,7 @@ description = "Private key file reference"
 regex = '''(?i)(private_key|privkey|id_rsa|id_ed25519)'''
 path = '''\.zig$'''
 tags = ["key", "zig"]
+
+  [rules.allowlist]
+  description = "Test path literals referencing SSH key filenames (not actual keys)"
+  regexes = ['''isSafePath\(''', '''redactPath\(''']
