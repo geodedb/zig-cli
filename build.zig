@@ -230,6 +230,7 @@ pub fn build(b: *std.Build) void {
     // Benchmarks
     // ========================================================================
 
+    // Quick benchmarks (tests/bench.zig)
     const bench = b.addExecutable(.{
         .name = "bench",
         .root_module = b.createModule(.{
@@ -244,8 +245,51 @@ pub fn build(b: *std.Build) void {
     });
 
     const run_bench = b.addRunArtifact(bench);
-    const bench_step = b.step("bench", "Run performance benchmarks");
+    const bench_step = b.step("bench", "Run quick performance benchmarks");
     bench_step.dependOn(&run_bench.step);
+
+    // Scale benchmarks with JSON output (benchmarks/scale_bench.zig)
+    const scale_bench_mod = b.createModule(.{
+        .root_source_file = b.path("benchmarks/scale_bench.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+        .imports = &.{
+            .{ .name = "cli", .module = cli_mod },
+            .{ .name = "util", .module = util_mod },
+            .{ .name = "parallel", .module = parallel_mod },
+            .{ .name = "build_options", .module = build_options_mod },
+        },
+    });
+    const scale_bench = b.addExecutable(.{
+        .name = "scale-bench",
+        .root_module = scale_bench_mod,
+    });
+    b.installArtifact(scale_bench);
+
+    const run_scale_bench = b.addRunArtifact(scale_bench);
+    if (b.args) |args| {
+        run_scale_bench.addArgs(args);
+    }
+    const scale_bench_step = b.step("scale-bench", "Run scale benchmarks with JSON output (pipe stdout to file)");
+    scale_bench_step.dependOn(&run_scale_bench.step);
+
+    // Benchmark comparison tool (benchmarks/compare.zig)
+    const compare_bench = b.addExecutable(.{
+        .name = "compare-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmarks/compare.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    b.installArtifact(compare_bench);
+
+    const run_compare_bench = b.addRunArtifact(compare_bench);
+    if (b.args) |args| {
+        run_compare_bench.addArgs(args);
+    }
+    const compare_bench_step = b.step("compare-bench", "Compare benchmark results against baseline");
+    compare_bench_step.dependOn(&run_compare_bench.step);
 
     // ========================================================================
     // Demo Executable

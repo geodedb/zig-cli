@@ -7,7 +7,8 @@
 #   make clean        - Clean build artifacts
 #   make help         - Show this help message
 
-.PHONY: all build test test-integration test-all demo clean check fmt help ci
+.PHONY: all build test test-integration test-all demo clean check fmt help ci \
+       bench scale-bench bench-save bench-compare bench-baseline
 
 # Default target - build and run all tests
 all: build test
@@ -106,6 +107,38 @@ man:
 	@zig build run -- man > man/demo.1 2>/dev/null || true
 	@echo "Man page generated in man/"
 
+# ========================================================================
+# Benchmarks
+# ========================================================================
+
+# Quick benchmarks (human-readable output)
+bench:
+	@echo "Running quick benchmarks..."
+	@zig build bench
+
+# Scale benchmarks with JSON output (human summary on stderr)
+scale-bench:
+	@zig build scale-bench 2>/dev/null
+
+# Save scale benchmark results with git commit hash
+bench-save:
+	@echo "Running scale benchmarks and saving results..."
+	@zig build scale-bench 2>/dev/null > benchmarks/results/$$(git rev-parse --short HEAD).json
+	@echo "Results saved to benchmarks/results/$$(git rev-parse --short HEAD).json"
+
+# Compare current performance against baseline
+bench-compare:
+	@echo "Running scale benchmarks..."
+	@zig build scale-bench 2>/dev/null > /tmp/cli-bench-current.json
+	@echo "Comparing against baseline..."
+	@zig build compare-bench -- benchmarks/results/baseline.json /tmp/cli-bench-current.json
+
+# Update baseline with current performance
+bench-baseline:
+	@echo "Running scale benchmarks to establish baseline..."
+	@zig build scale-bench 2>/dev/null > benchmarks/results/baseline.json
+	@echo "Baseline updated: benchmarks/results/baseline.json"
+
 # Show help message
 help:
 	@echo "zig-cli - CLI and Config Library for Zig"
@@ -133,6 +166,13 @@ help:
 	@echo "  test-release-fast  - Run tests with ReleaseFast"
 	@echo "  test-release-small - Run tests with ReleaseSmall"
 	@echo "  test-all-optimizations - Run tests with all optimization levels"
+	@echo ""
+	@echo "Benchmarks:"
+	@echo "  bench            - Run quick performance benchmarks"
+	@echo "  scale-bench      - Run scale benchmarks with JSON output"
+	@echo "  bench-save       - Save results keyed by git commit hash"
+	@echo "  bench-compare    - Compare current vs baseline (exit 1 on regression)"
+	@echo "  bench-baseline   - Update the baseline with current performance"
 	@echo ""
 	@echo "Code Generation:"
 	@echo "  completions      - Generate shell completion scripts"

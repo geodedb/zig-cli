@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "timestamp": "2026-03-30T17:27:29Z",
+  "git_commit": "unknown",
+  "system": { "os": "linux", "arch": "x86_64" },
+  "spice_enabled": true,
+  "tiers": [
+    {
+      "name": "small",
+      "subcmd_count": 8,
+      "total_flags": 24,
+      "parse_ns": 685,
+      "parse_ops_sec": 1459854,
+      "help_gen_ns": 48988,
+      "bash_completion_ns": 7556,
+      "zsh_completion_ns": 5885,
+      "fish_completion_ns": 6364,
+      "ps_completion_ns": 5609,
+      "levenshtein_ns": 656,
+      "parallel_foreach_ns": 142,
+      "skipped": false
+    },
+    {
+      "name": "medium",
+      "subcmd_count": 24,
+      "total_flags": 80,
+      "parse_ns": 873,
+      "parse_ops_sec": 1145475,
+      "help_gen_ns": 70508,
+      "bash_completion_ns": 21555,
+      "zsh_completion_ns": 15534,
+      "fish_completion_ns": 18855,
+      "ps_completion_ns": 14816,
+      "levenshtein_ns": 659,
+      "parallel_foreach_ns": 141,
+      "skipped": false
+    },
+    {
+      "name": "large",
+      "subcmd_count": 64,
+      "total_flags": 208,
+      "parse_ns": 693,
+      "parse_ops_sec": 1443001,
+      "help_gen_ns": 137771,
+      "bash_completion_ns": 56363,
+      "zsh_completion_ns": 38017,
+      "fish_completion_ns": 47276,
+      "ps_completion_ns": 36078,
+      "levenshtein_ns": 903,
+      "parallel_foreach_ns": 147,
+      "skipped": false
+    },
+    {
+      "name": "xlarge",
+      "subcmd_count": 128,
+      "total_flags": 400,
+      "parse_ns": 706,
+      "parse_ops_sec": 1416430,
+      "help_gen_ns": 224115,
+      "bash_completion_ns": 112991,
+      "zsh_completion_ns": 78794,
+      "fish_completion_ns": 92865,
+      "ps_completion_ns": 72279,
+      "levenshtein_ns": 667,
+      "parallel_foreach_ns": 137,
+      "skipped": false
+    }
+  ]
+}
