@@ -33,11 +33,12 @@
     // internet connectivity.
     .dependencies = .{
         .config = .{
-            .url = "https://gitlab.com/devnw/zig/config/-/archive/v0.1.0/config-v0.1.0.tar.gz",
-            .hash = "config-0.1.0-TiLumiKJBQDP5bfj9FFnfZB8unOVJZGv6eMQVN5_eUNH",
+            .url = "git+https://gitlab.com/devnw/zig/config.git#74039a997350180aef7a58816b85e749453189fa",
+            .hash = "config-0.1.0-TiLumi89CgBIOEJ6V7WMYKqo-JmihokRiTNMgAzxe3HF",
         },
         .spice = .{
-            .path = "../spice",
+            .url = "git+https://gitlab.com/devnw/zig/spice.git#bbf106dc8131a514a4d1687cc2173f124f5c8181",
+            .hash = "spice-0.0.0-HnDb58jJAACojBd1dquGT-Ngc6TORlC6izlAKf0f4Rno",
         },
     },
     // Specifies the set of files and directories that are included in this package.
