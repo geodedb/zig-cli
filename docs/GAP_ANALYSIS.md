@@ -3,7 +3,7 @@
 > This file contains ONLY open gaps. Resolved and won't-do items are in
 > [GAP_ANALYSIS_RESOLVED.md](GAP_ANALYSIS_RESOLVED.md).
 
-Last updated: 2026-03-25
+Last updated: 2026-03-30
 
 ## Summary
 
@@ -136,4 +136,5 @@ Summary of closures:
 - **Gap-Close Round 2:** NQ-008, NP-010, NEW-P003, NEW-P004 (4 gaps)
 - **Gap-Close Round 3:** GAP-0078, GAP-0079, GAP-0080 (3 gaps -- docs updates)
 - **Gap-Close Round 4:** GAP-0075, GAP-0076, GAP-0077, GAP-0081 (4 gaps -- docs + integration test fix)
+- **Phase 4 Parallelism:** GAP-0085, GAP-0086, GAP-0087, GAP-0088, GAP-0089 (5 gaps -- spice integration, thread safety, signal refactor, docs)
 - **Initial Audit:** GAP-0001, GAP-0002, GAP-0004, GAP-0032 through GAP-0036, GAP-0040 through GAP-0056, GAP-0058 (18 gaps)
