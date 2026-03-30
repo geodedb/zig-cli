@@ -25,7 +25,27 @@
 //!
 //! // Process items in parallel
 //! var results: [8]u64 = undefined;
-//! parallel.forEach(u64, &items, &results, computeItem);
+//! parallel.forEach(u32, u64, &items, &results, computeItem);
+//! ```
+//!
+//! ## Batch Processing in Commands
+//!
+//! ```zig
+//! const parallel = @import("parallel");
+//! const progress = @import("term").progress;
+//!
+//! fn batchProcess(ctx: *cli.Context) !void {
+//!     const files = ctx.positionalArgs();
+//!     parallel.initPool(.{});
+//!     defer parallel.deinitPool();
+//!
+//!     var bar = progress.ProgressBar.init(files.len, "Processing");
+//!     const results = try parallel.map(
+//!         []const u8, bool, ctx.allocator, files, processFile,
+//!     );
+//!     defer ctx.allocator.free(results);
+//!     bar.finish();
+//! }
 //! ```
 
 const std = @import("std");
