@@ -84,7 +84,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "build_options", .module = build_options_mod },
+            .{ .name = "cli_build_options", .module = build_options_mod },
         },
     });
     if (spice_mod) |sm| {
@@ -150,7 +150,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "build_options", .module = build_options_mod },
+            .{ .name = "cli_build_options", .module = build_options_mod },
         },
     });
     if (spice_mod) |sm| {
@@ -260,7 +260,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "cli", .module = cli_mod },
             .{ .name = "util", .module = util_mod },
             .{ .name = "parallel", .module = parallel_mod },
-            .{ .name = "build_options", .module = build_options_mod },
+            .{ .name = "cli_build_options", .module = build_options_mod },
         },
     });
     const scale_bench = b.addExecutable(.{

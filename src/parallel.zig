@@ -49,7 +49,7 @@
 //! ```
 
 const std = @import("std");
-const build_options = @import("build_options");
+const build_options = @import("cli_build_options");
 
 const spice_enabled = build_options.enable_spice;
 const spice = if (spice_enabled) @import("spice") else struct {};
