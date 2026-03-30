@@ -17,6 +17,21 @@ pub fn build(b: *std.Build) void {
     });
     const ext_config_mod = config_dep.module("config");
 
+    // Spice: optional heartbeat-scheduled parallelism
+    const enable_spice = b.option(bool, "spice", "Enable spice-based parallelism") orelse true;
+
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "enable_spice", enable_spice);
+    const build_options_mod = build_options.createModule();
+
+    const spice_mod: ?*std.Build.Module = if (enable_spice) blk: {
+        const spice_dep = b.dependency("spice", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        break :blk spice_dep.module("spice");
+    } else null;
+
     // ========================================================================
     // Define Library Modules
     // ========================================================================
@@ -57,6 +72,19 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    // Parallel Module: optional spice-based parallelism
+    const parallel_mod = b.addModule("parallel", .{
+        .root_source_file = b.path("src/parallel.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = build_options_mod },
+        },
+    });
+    if (spice_mod) |sm| {
+        parallel_mod.addImport("spice", sm);
+    }
 
     // Root Module: Public API
     _ = b.addModule("zig_cli", .{
@@ -112,6 +140,23 @@ pub fn build(b: *std.Build) void {
     });
     const run_util_tests = b.addRunArtifact(util_tests);
 
+    // Parallel module tests
+    const parallel_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/parallel.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = build_options_mod },
+        },
+    });
+    if (spice_mod) |sm| {
+        parallel_test_mod.addImport("spice", sm);
+    }
+    const parallel_tests = b.addTest(.{
+        .root_module = parallel_test_mod,
+    });
+    const run_parallel_tests = b.addRunArtifact(parallel_tests);
+
     // Root module tests
     const root_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -131,6 +176,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_config_tests.step);
     test_step.dependOn(&run_term_tests.step);
     test_step.dependOn(&run_util_tests.step);
+    test_step.dependOn(&run_parallel_tests.step);
     test_step.dependOn(&run_root_tests.step);
 
     // ========================================================================
@@ -147,6 +193,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "config", .module = config_mod },
                 .{ .name = "term", .module = term_mod },
                 .{ .name = "util", .module = util_mod },
+                .{ .name = "parallel", .module = parallel_mod },
             },
         }),
     });
@@ -176,6 +223,7 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&config_tests.step);
     check_step.dependOn(&term_tests.step);
     check_step.dependOn(&util_tests.step);
+    check_step.dependOn(&parallel_tests.step);
     check_step.dependOn(&root_tests.step);
 
     // ========================================================================

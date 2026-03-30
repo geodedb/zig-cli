@@ -36,6 +36,9 @@
             .url = "https://gitlab.com/devnw/zig/config/-/archive/v0.1.0/config-v0.1.0.tar.gz",
             .hash = "config-0.1.0-TiLumiKJBQDP5bfj9FFnfZB8unOVJZGv6eMQVN5_eUNH",
         },
+        .spice = .{
+            .path = "../spice",
+        },
     },
     // Specifies the set of files and directories that are included in this package.
     // Only files and directories listed here are included in the `hash` that
