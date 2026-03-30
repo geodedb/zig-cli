@@ -11,12 +11,18 @@ pub fn build(b: *std.Build) void {
     // External Dependencies
     // ========================================================================
 
-    const config_dep = b.dependency("config", .{
-        .target = target,
-        .optimize = optimize,
-        .spice = false,
-    });
-    const ext_config_mod = config_dep.module("config");
+    const use_config = b.option(bool, "config", "Use internal config dependency") orelse true;
+    const ext_config_mod: ?*std.Build.Module = if (use_config) blk: {
+        const config_dep = b.dependency("config", .{
+            .target = target,
+            .optimize = optimize,
+            .spice = false,
+            .json = false,
+            .yaml = false,
+            .toml = false,
+        });
+        break :blk config_dep.module("config");
+    } else null;
 
     // Spice: optional heartbeat-scheduled parallelism
     const enable_spice = b.option(bool, "spice", "Enable spice-based parallelism") orelse true;
@@ -55,10 +61,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/config.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "config", .module = ext_config_mod },
-        },
     });
+    if (ext_config_mod) |m| config_mod.addImport("config", m);
 
     // Terminal Module
     const term_mod = b.addModule("term", .{
@@ -109,15 +113,14 @@ pub fn build(b: *std.Build) void {
     const run_cli_tests = b.addRunArtifact(cli_tests);
 
     // Config module tests
+    const config_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/config.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    if (ext_config_mod) |m| config_tests_mod.addImport("config", m);
     const config_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/config.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "config", .module = ext_config_mod },
-            },
-        }),
+        .root_module = config_tests_mod,
     });
     const run_config_tests = b.addRunArtifact(config_tests);
 
@@ -159,15 +162,14 @@ pub fn build(b: *std.Build) void {
     const run_parallel_tests = b.addRunArtifact(parallel_tests);
 
     // Root module tests
+    const root_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    if (ext_config_mod) |m| root_tests_mod.addImport("config", m);
     const root_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "config", .module = ext_config_mod },
-            },
-        }),
+        .root_module = root_tests_mod,
     });
     const run_root_tests = b.addRunArtifact(root_tests);
 
