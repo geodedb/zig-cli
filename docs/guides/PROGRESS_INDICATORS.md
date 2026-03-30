@@ -234,28 +234,25 @@ pub fn buildProject(ctx: *cli.Context) !void {
 
 ## Concurrent Operations
 
-For parallel downloads or processing:
+`ProgressBar` is thread-safe: multiple threads can call `update()` and
+`increment()` concurrently. The current value uses atomic operations
+and render output is mutex-protected.
 
 ```zig
-pub fn downloadAll(ctx: *cli.Context, urls: []const []const u8) !void {
-    var bar = progress.ProgressBar.init(ctx.stdout, .{
-        .total = urls.len,
-        .format = "Downloading: [{bar}] {current}/{total}",
-    });
+const MAX_THREADS = 8;
 
-    bar.start();
-
-    // Thread-safe increment
-    var completed = std.atomic.Value(usize).init(0);
+pub fn downloadAll(urls: []const []const u8) !void {
+    var bar = progress.ProgressBar.init(urls.len, "Downloading");
 
     var threads: [MAX_THREADS]std.Thread = undefined;
-    for (urls, 0..) |url, i| {
+    const count = @min(urls.len, MAX_THREADS);
+    for (urls[0..count], 0..) |url, i| {
         threads[i] = try std.Thread.spawn(.{}, downloadOne, .{
-            url, &completed, &bar,
+            url, &bar,
         });
     }
 
-    for (&threads) |*t| {
+    for (threads[0..count]) |t| {
         t.join();
     }
 
@@ -264,12 +261,11 @@ pub fn downloadAll(ctx: *cli.Context, urls: []const []const u8) !void {
 
 fn downloadOne(
     url: []const u8,
-    completed: *std.atomic.Value(usize),
     bar: *progress.ProgressBar,
 ) void {
     download(url) catch return;
-    const new_val = completed.fetchAdd(1, .seq_cst) + 1;
-    bar.update(new_val);
+    // Thread-safe: increment() uses atomic counter + mutex-protected render
+    bar.increment();
 }
 ```
 

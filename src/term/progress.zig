@@ -5,6 +5,13 @@
 //!
 //! Progress indicators (spinners, bars) for long-running operations.
 //! Only shows progress when stdout is a TTY.
+//!
+//! ## Thread Safety
+//!
+//! `ProgressBar` is thread-safe: multiple threads may call `update()` or
+//! `increment()` concurrently. The current value uses atomic operations and
+//! render output is mutex-protected. `Progress` (spinner) is NOT thread-safe
+//! and should only be used from a single thread.
 
 const std = @import("std");
 const tty = @import("tty.zig");
@@ -119,14 +126,20 @@ pub const Progress = struct {
     }
 };
 
-/// Progress bar
+/// Thread-safe progress bar.
+///
+/// Multiple threads may call `update()` or `increment()` concurrently.
+/// The current value is stored atomically and render output is
+/// serialized with a mutex. The `total` and `message` fields are
+/// set at init time and should not be modified after creation.
 pub const ProgressBar = struct {
     total: usize,
-    current: usize,
+    current: std.atomic.Value(usize),
     width: u16,
     enabled: bool,
     message: []const u8,
     writer: std.fs.File.DeprecatedWriter,
+    render_mutex: std.Thread.Mutex,
 
     const Self = @This();
 
@@ -136,43 +149,64 @@ pub const ProgressBar = struct {
 
         return .{
             .total = total,
-            .current = 0,
+            .current = std.atomic.Value(usize).init(0),
             .width = @min(term_info.width - 20, 50),
             .enabled = term_info.is_tty,
             .message = message,
             .writer = std.fs.File.stderr().deprecatedWriter(),
+            .render_mutex = .{},
         };
     }
 
-    /// Update progress
+    /// Update progress (thread-safe)
     pub fn update(self: *Self, current: usize) void {
-        self.current = @min(current, self.total);
+        const clamped = @min(current, self.total);
+        self.current.store(clamped, .release);
         if (self.enabled) {
+            self.render_mutex.lock();
+            defer self.render_mutex.unlock();
             self.render() catch {};
         }
     }
 
-    /// Increment by one
+    /// Increment by one (thread-safe)
     pub fn increment(self: *Self) void {
-        self.update(self.current + 1);
+        const prev = self.current.fetchAdd(1, .acq_rel);
+        const new_val = @min(prev + 1, self.total);
+        self.current.store(new_val, .release);
+        if (self.enabled) {
+            self.render_mutex.lock();
+            defer self.render_mutex.unlock();
+            self.render() catch {};
+        }
     }
 
     /// Complete the progress bar
     pub fn finish(self: *Self) void {
-        self.update(self.total);
+        self.current.store(self.total, .release);
         if (self.enabled) {
+            self.render_mutex.lock();
+            defer self.render_mutex.unlock();
+            self.render() catch {};
             self.writer.print("\n", .{}) catch {};
         }
     }
 
+    /// Read the current progress value (thread-safe)
+    pub fn getCurrent(self: *const Self) usize {
+        return self.current.load(.acquire);
+    }
+
     fn render(self: *Self) !void {
+        const cur = self.current.load(.acquire);
+
         const percent = if (self.total > 0)
-            (self.current * 100) / self.total
+            (cur * 100) / self.total
         else
             0;
 
         const filled = if (self.total > 0)
-            (self.current * self.width) / self.total
+            (cur * self.width) / self.total
         else
             0;
 
@@ -199,7 +233,7 @@ test "Progress indicator creation" {
 
 test "ProgressBar initialization" {
     const bar = ProgressBar.init(100, "Progress");
-    try std.testing.expectEqual(@as(usize, 0), bar.current);
+    try std.testing.expectEqual(@as(usize, 0), bar.getCurrent());
     try std.testing.expectEqual(@as(usize, 100), bar.total);
 }
 
@@ -280,10 +314,10 @@ test "progress: ProgressBar update within bounds" {
     bar.enabled = false; // Disable TTY output for test
 
     bar.update(50);
-    try std.testing.expectEqual(@as(usize, 50), bar.current);
+    try std.testing.expectEqual(@as(usize, 50), bar.getCurrent());
 
     bar.update(100);
-    try std.testing.expectEqual(@as(usize, 100), bar.current);
+    try std.testing.expectEqual(@as(usize, 100), bar.getCurrent());
 }
 
 test "progress: ProgressBar update clamps to total" {
@@ -291,20 +325,20 @@ test "progress: ProgressBar update clamps to total" {
     bar.enabled = false;
 
     bar.update(150); // Over the total
-    try std.testing.expectEqual(@as(usize, 100), bar.current);
+    try std.testing.expectEqual(@as(usize, 100), bar.getCurrent());
 }
 
 test "progress: ProgressBar increment" {
     var bar = ProgressBar.init(100, "Progress");
     bar.enabled = false;
 
-    try std.testing.expectEqual(@as(usize, 0), bar.current);
+    try std.testing.expectEqual(@as(usize, 0), bar.getCurrent());
 
     bar.increment();
-    try std.testing.expectEqual(@as(usize, 1), bar.current);
+    try std.testing.expectEqual(@as(usize, 1), bar.getCurrent());
 
     bar.increment();
-    try std.testing.expectEqual(@as(usize, 2), bar.current);
+    try std.testing.expectEqual(@as(usize, 2), bar.getCurrent());
 }
 
 test "progress: ProgressBar finish sets to total" {
@@ -314,7 +348,7 @@ test "progress: ProgressBar finish sets to total" {
     bar.update(50);
     bar.finish();
 
-    try std.testing.expectEqual(@as(usize, 100), bar.current);
+    try std.testing.expectEqual(@as(usize, 100), bar.getCurrent());
 }
 
 test "progress: ProgressBar zero total" {
@@ -326,7 +360,7 @@ test "progress: ProgressBar zero total" {
     bar.increment();
     bar.finish();
 
-    try std.testing.expectEqual(@as(usize, 0), bar.current);
+    try std.testing.expectEqual(@as(usize, 0), bar.getCurrent());
 }
 
 test "progress: ProgressBar message" {
