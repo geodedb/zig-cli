@@ -17,19 +17,12 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .spice = false,
-            .json = false,
-            .yaml = false,
-            .toml = false,
         });
         break :blk config_dep.module("config");
     } else null;
 
     // Spice: optional heartbeat-scheduled parallelism
     const enable_spice = b.option(bool, "spice", "Enable spice-based parallelism") orelse true;
-
-    const build_options = b.addOptions();
-    build_options.addOption(bool, "enable_spice", enable_spice);
-    const build_options_mod = build_options.createModule();
 
     const spice_mod: ?*std.Build.Module = if (enable_spice) blk: {
         const spice_dep = b.dependency("spice", .{
@@ -38,6 +31,11 @@ pub fn build(b: *std.Build) void {
         });
         break :blk spice_dep.module("spice");
     } else null;
+
+    // Build options (enable_spice flag for scale-bench and parallel module)
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "enable_spice", enable_spice);
+    const build_options_mod = build_options.createModule();
 
     // ========================================================================
     // Define Library Modules
@@ -79,17 +77,14 @@ pub fn build(b: *std.Build) void {
     });
 
     // Parallel Module: optional spice-based parallelism
-    const parallel_mod = b.addModule("parallel", .{
+    const parallel_mod: ?*std.Build.Module = if (enable_spice) blk: {
+        break :blk b.addModule("parallel", .{
         .root_source_file = b.path("src/parallel.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "cli_build_options", .module = build_options_mod },
-        },
     });
-    if (spice_mod) |sm| {
-        parallel_mod.addImport("spice", sm);
-    }
+    } else null;
+    if (parallel_mod) |pm| { if (spice_mod) |sm| pm.addImport("spice", sm); }
 
     // Root Module: Public API
     _ = b.addModule("zig_cli", .{
@@ -149,9 +144,6 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/parallel.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "cli_build_options", .module = build_options_mod },
-        },
     });
     if (spice_mod) |sm| {
         parallel_test_mod.addImport("spice", sm);
@@ -196,7 +188,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "config", .module = config_mod },
                 .{ .name = "term", .module = term_mod },
                 .{ .name = "util", .module = util_mod },
-                .{ .name = "parallel", .module = parallel_mod },
+                
             },
         }),
     });
@@ -259,10 +251,10 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "cli", .module = cli_mod },
             .{ .name = "util", .module = util_mod },
-            .{ .name = "parallel", .module = parallel_mod },
-            .{ .name = "cli_build_options", .module = build_options_mod },
+            .{ .name = "build_options", .module = build_options_mod },
         },
     });
+    if (parallel_mod) |pm| scale_bench_mod.addImport("parallel", pm);
     const scale_bench = b.addExecutable(.{
         .name = "scale-bench",
         .root_module = scale_bench_mod,

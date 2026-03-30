@@ -33,8 +33,8 @@
     // internet connectivity.
     .dependencies = .{
         .config = .{
-            .url = "git+https://gitlab.com/devnw/zig/config.git#74039a997350180aef7a58816b85e749453189fa",
-            .hash = "config-0.1.0-TiLumi89CgBIOEJ6V7WMYKqo-JmihokRiTNMgAzxe3HF",
+            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=main#60461b3aad43f29665305625ddbf060428198f76",
+            .hash = "config-0.1.0-TiLumtlACgD_GHCxHiZgRockowtdFxWKTGvXYPyPm3yf",
         },
         .spice = .{
             .url = "git+https://gitlab.com/devnw/zig/spice.git#bbf106dc8131a514a4d1687cc2173f124f5c8181",
