@@ -4,7 +4,7 @@
 
 zig-cli is organized into several modules, each handling a specific aspect of CLI development.
 
-```
+```text
 zig-cli
 ├── cli        # Command parsing and execution
 ├── config     # Configuration management (re-exports zig-config)
@@ -16,7 +16,7 @@ zig-cli
 
 ## Module Dependencies
 
-```
+```text
                     ┌─────────────┐
                     │   config    │ (external: zig-config)
                     │ yaml,toml,  │
@@ -73,6 +73,7 @@ pub const Command = struct {
 ### Parser (`src/parser.zig`)
 
 Handles argument parsing with support for:
+
 - Short flags (`-v`)
 - Long flags (`--verbose`)
 - Flag values (`--config=file.toml` or `--config file.toml`)
@@ -96,6 +97,7 @@ Positional arguments are accessed via `ctx.positionals.items`.
 ### Config (`src/config.zig`)
 
 Re-exports the external `zig-config` library providing:
+
 - Multi-format parsing (YAML, TOML, JSON)
 - XDG Base Directory support
 - Precedence chain: flags > env > project > user > system > defaults
@@ -105,6 +107,7 @@ Re-exports the external `zig-config` library providing:
 ### Terminal (`src/term.zig`)
 
 Terminal utilities:
+
 - ANSI color codes with NO_COLOR support
 - Terminal size detection
 - Cursor manipulation
@@ -113,6 +116,7 @@ Terminal utilities:
 ### Completions (`src/completions.zig`)
 
 Generates shell completions for:
+
 - Bash
 - Zsh
 - Fish
@@ -145,15 +149,49 @@ pub const ParseError = error{
 ```
 
 Errors include context for helpful messages:
+
 - Which flag/command caused the error
 - Suggestions for typos (Levenshtein distance)
 - Expected types/values
 
 ## Thread Safety
 
-- Command and FlagSpec are compile-time constants (thread-safe)
-- Context is not thread-safe (single-threaded parsing)
-- Config loading is not thread-safe (use external synchronization)
+### Concurrency Model
+
+The CLI library is **single-threaded by design**. Command parsing, help
+generation, and completion output all run on the calling thread. The only
+concurrent contexts are signal handlers (which set atomic flags) and the
+optional spice thread pool (for parallel batch operations).
+
+### Module Thread-Safety Status
+
+| Module | Thread-Safe | Notes |
+|--------|-------------|-------|
+| `command` | Partial | `Command` and `FlagSpec` are compile-time constants (safe). `Context` is NOT safe (stateful parsing). |
+| `parser` | No | Stateful parsing; single-threaded only. |
+| `help` | No | Writes to a single output stream. |
+| `completion` | No | Generates output to a single stream. |
+| `config` | No | Config loading is not synchronized. Use external locking if shared. |
+| `signal` | **Yes** | Atomic flags with acquire/release ordering. Callback registration is mutex-protected. Callbacks run in normal context via `pollSignals()`. |
+| `progress` | Partial | `ProgressBar` is thread-safe (atomic counter + render mutex). `Progress` (spinner) is NOT safe. |
+| `pager` | No | Spawns and waits on a child process synchronously. |
+| `prompt` | No | Reads stdin interactively; not shareable. |
+| `parallel` | **Yes** | Spice thread pool manages all synchronization. Results written to caller-owned slices. |
+| `util` | **Yes** | Pure functions with no shared state. |
+
+### Signal Handling
+
+Signal handlers use the **flag-and-poll pattern**: POSIX/Windows handlers
+only set atomic flags. Cleanup callbacks run in normal execution context
+via `pollSignals()`, which means callbacks can safely allocate, lock, and
+perform I/O.
+
+### Parallel Operations
+
+The `parallel` module provides optional spice-based fork/join parallelism
+(enabled with `-Dspice=true`, the default). When disabled, all operations
+fall back to sequential execution transparently. See `src/parallel.zig`
+for the API.
 
 ## Memory Management
 
