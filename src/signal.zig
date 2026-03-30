@@ -5,21 +5,32 @@
 //!
 //! Cross-platform signal handling for graceful shutdown and interrupt handling.
 //!
+//! ## Design: Flag-and-Poll Pattern
+//!
+//! Signal handlers only set atomic flags. Cleanup callbacks run in normal
+//! execution context via `pollSignals()`, which makes them safe to perform
+//! any operation (allocate memory, acquire locks, do I/O, etc.).
+//!
+//! ## Thread Safety
+//!
+//! All public functions are thread-safe. Signal state uses atomic operations
+//! with acquire/release ordering. Callback registration is mutex-protected.
+//!
 //! ## Usage
 //!
 //! ```zig
 //! const signal = @import("cli").signal;
 //!
 //! pub fn main() !void {
-//!     // Install default handlers
 //!     signal.install(.{}) catch {};
+//!     signal.onCleanup(myCleanupFn);
 //!
-//!     while (!signal.wasInterrupted()) {
+//!     while (!signal.shouldShutdown()) {
 //!         // Do work...
 //!     }
 //!
-//!     // Or register a custom cleanup handler
-//!     signal.onCleanup(myCleanupFn);
+//!     // Run cleanup callbacks in normal context
+//!     _ = signal.pollSignals();
 //! }
 //! ```
 
@@ -52,25 +63,23 @@ pub const Config = struct {
 
 /// Cleanup callback function type.
 ///
-/// **IMPORTANT: Async-signal-safety requirement.**
-/// Cleanup callbacks are invoked directly from the POSIX signal handler
-/// (or the Windows console control handler). Callbacks MUST be
-/// async-signal-safe: they may only call functions that are safe to use
-/// inside a signal handler. In particular, callbacks MUST NOT:
+/// Cleanup callbacks are invoked from normal execution context via
+/// `pollSignals()`, NOT from the signal handler itself. This means
+/// callbacks are free to perform any operation (allocate memory,
+/// acquire locks, perform buffered I/O, etc.).
 ///
-/// - Allocate or free memory (no `allocator.alloc`, `allocator.free`)
-/// - Acquire mutexes or other locks (risk of deadlock)
-/// - Perform I/O through buffered streams (e.g., `std.debug.print`)
-/// - Call any function not on the POSIX async-signal-safe list
+/// The signal handler only sets atomic flags; `pollSignals()` checks
+/// those flags and runs callbacks safely outside signal context.
 ///
-/// Safe operations include: setting atomic flags, writing to a
-/// pre-opened file descriptor via `std.posix.write`, and calling
-/// `std.posix.exit`.
+/// Call `pollSignals()` periodically from your main loop or after
+/// checking `shouldShutdown()` to execute registered callbacks.
 pub const CleanupFn = *const fn () void;
 
 /// Global state for signal handling
 var interrupted: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var terminated: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+/// Set by signal handlers to indicate callbacks should be run via pollSignals().
+var signal_pending: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var cleanup_callbacks: [16]?CleanupFn = .{null} ** 16;
 var callback_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
 var mutex: std.Thread.Mutex = .{};
@@ -93,6 +102,33 @@ pub fn wasTerminated() bool {
 /// Check if any shutdown signal was received
 pub fn shouldShutdown() bool {
     return wasInterrupted() or wasTerminated();
+}
+
+/// Poll for pending signals and run cleanup callbacks in normal context.
+///
+/// This is the safe way to execute cleanup callbacks. The signal handler
+/// only sets atomic flags; this function checks those flags and runs
+/// callbacks outside signal context where any operation is safe.
+///
+/// Call this periodically from your main loop:
+/// ```zig
+/// while (!signal.shouldShutdown()) {
+///     // Do work...
+///     signal.pollSignals();
+/// }
+/// signal.pollSignals(); // Run final cleanup
+/// ```
+///
+/// Returns true if callbacks were executed, false if no signal was pending.
+pub fn pollSignals() bool {
+    if (!signal_pending.load(.acquire)) return false;
+
+    // Clear the pending flag before running callbacks.
+    // If another signal arrives during callback execution,
+    // signal_pending will be set again.
+    signal_pending.store(false, .release);
+    runCleanupCallbacks();
+    return true;
 }
 
 /// Register a cleanup callback to be called on signal.
@@ -194,8 +230,9 @@ fn posixSignalHandler(sig: c_int) callconv(.c) void {
         else => {},
     }
 
-    // Run cleanup callbacks
-    runCleanupCallbacks();
+    // Flag that callbacks need to run; pollSignals() will invoke them
+    // in normal execution context where any operation is safe.
+    signal_pending.store(true, .release);
 }
 
 // ============================================================================
@@ -267,13 +304,13 @@ fn windowsCtrlHandler(ctrl_type: std.os.windows.DWORD) callconv(.winapi) std.os.
         CTRL_C_EVENT, CTRL_BREAK_EVENT => {
             if (!win_handle_interrupt.load(.acquire)) return 0;
             interrupted.store(true, .release);
-            runCleanupCallbacks();
+            signal_pending.store(true, .release);
             return 1; // TRUE - handled
         },
         CTRL_CLOSE_EVENT => {
             if (!win_handle_terminate.load(.acquire)) return 0;
             terminated.store(true, .release);
-            runCleanupCallbacks();
+            signal_pending.store(true, .release);
             return 1; // TRUE - handled
         },
         else => return 0, // FALSE - not handled
@@ -285,8 +322,9 @@ fn windowsCtrlHandler(ctrl_type: std.os.windows.DWORD) callconv(.winapi) std.os.
 // ============================================================================
 
 fn runCleanupCallbacks() void {
-    // Note: Called from signal handler context, must be async-signal-safe
-    // We only read the array, no locking needed
+    // Called from pollSignals() in normal execution context (not signal handler).
+    // Safe to perform any operation. No locking needed for the read since
+    // callback_count is atomic and the array is append-only.
     const count = callback_count.load(.acquire);
     for (cleanup_callbacks[0..count]) |maybe_cb| {
         if (maybe_cb) |cb| {
@@ -333,7 +371,6 @@ test "register cleanup callback" {
 }
 
 test "Config default values" {
-    // Verify the default config enables interrupt and terminate handling
     const config = Config{};
     try std.testing.expect(config.handle_interrupt);
     try std.testing.expect(config.handle_terminate);
@@ -355,28 +392,22 @@ test "Config custom values" {
 }
 
 test "Windows atomic config flags" {
-    // Test the atomic flags used by the Windows handler.
-    // These are used cross-platform for the atomic store/load pattern.
     win_handle_interrupt.store(true, .release);
     win_handle_terminate.store(false, .release);
     try std.testing.expect(win_handle_interrupt.load(.acquire));
     try std.testing.expect(!win_handle_terminate.load(.acquire));
 
-    // Reset to defaults
     win_handle_interrupt.store(false, .release);
     win_handle_terminate.store(false, .release);
 }
 
 test "install with no-op config does not error" {
-    // An empty config (no signals to handle) should succeed on all platforms
     if (comptime builtin.os.tag == .windows) {
-        // On Windows, install with no signals skips registration
         try install(.{
             .handle_interrupt = false,
             .handle_terminate = false,
         });
     } else {
-        // On POSIX, install with no signals is a no-op
         try install(.{
             .handle_interrupt = false,
             .handle_terminate = false,
@@ -386,16 +417,12 @@ test "install with no-op config does not error" {
 }
 
 test "runCleanupCallbacks with no callbacks is safe" {
-    // Reset state
     callback_count.store(0, .release);
     cleanup_callbacks = .{null} ** 16;
-
-    // Should not panic or crash
     runCleanupCallbacks();
 }
 
 test "max callbacks limit" {
-    // Reset state
     callback_count.store(0, .release);
     cleanup_callbacks = .{null} ** 16;
 
@@ -403,16 +430,45 @@ test "max callbacks limit" {
         fn callback() void {}
     }.callback;
 
-    // Fill all 16 slots
     for (0..16) |_| {
         try onCleanup(cb);
     }
 
-    // 17th should fail
     const result = onCleanup(cb);
     try std.testing.expectError(error.TooManyCallbacks, result);
 
-    // Reset for other tests
     callback_count.store(0, .release);
     cleanup_callbacks = .{null} ** 16;
+}
+
+test "pollSignals returns false when no signal pending" {
+    signal_pending.store(false, .release);
+    try std.testing.expect(!pollSignals());
+}
+
+test "pollSignals runs callbacks when signal pending" {
+    callback_count.store(0, .release);
+    cleanup_callbacks = .{null} ** 16;
+    signal_pending.store(false, .release);
+
+    const cb = struct {
+        fn callback() void {}
+    }.callback;
+
+    try onCleanup(cb);
+
+    signal_pending.store(true, .release);
+    try std.testing.expect(pollSignals());
+
+    try std.testing.expect(!signal_pending.load(.acquire));
+    try std.testing.expect(!pollSignals());
+}
+
+test "pollSignals clears pending flag" {
+    callback_count.store(0, .release);
+    cleanup_callbacks = .{null} ** 16;
+
+    signal_pending.store(true, .release);
+    _ = pollSignals();
+    try std.testing.expect(!signal_pending.load(.acquire));
 }
