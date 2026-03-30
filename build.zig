@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
     const config_dep = b.dependency("config", .{
         .target = target,
         .optimize = optimize,
+        .spice = false,
     });
     const ext_config_mod = config_dep.module("config");
 
