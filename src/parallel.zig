@@ -3,15 +3,15 @@
 
 //! # Parallel Module
 //!
-//! Optional spice-based parallelism for CLI operations.
+//! Optional thread-pool-based parallelism for CLI operations.
 //!
-//! When built with `-Dspice=true` (the default), provides heartbeat-scheduled
-//! fork/join parallelism via the spice thread pool. When spice is disabled,
-//! all operations fall back to sequential execution transparently.
+//! When built with `-Dthread-pool=true` (the default), provides flat-chunk
+//! parallelism via the thread-pool library. When disabled, all operations
+//! fall back to sequential execution transparently.
 //!
 //! ## Thread Safety
 //!
-//! The parallel module is thread-safe. The underlying spice thread pool manages
+//! The parallel module is thread-safe. The underlying thread pool manages
 //! all synchronization internally. Results are collected into caller-owned slices.
 //!
 //! ## Usage
@@ -50,53 +50,50 @@
 
 const std = @import("std");
 
-const spice_enabled = true;
-const spice = if (spice_enabled) @import("spice") else struct {};
+const tp_enabled = true;
+const tp = if (tp_enabled) @import("thread_pool") else struct {};
 
 /// Thread pool configuration.
 pub const PoolConfig = struct {
     /// Number of background worker threads. null = auto-detect from CPU count.
     worker_count: ?usize = null,
-    /// Heartbeat interval in nanoseconds.
+    /// (unused; kept for API compatibility)
     heartbeat_interval: usize = 100 * std.time.ns_per_us,
 };
 
-/// Whether spice-based parallelism is available at compile time.
-pub const is_enabled = spice_enabled;
+/// Whether thread-pool-based parallelism is available at compile time.
+pub const is_enabled = tp_enabled;
 
 // ---------------------------------------------------------------------------
 // Thread pool lifecycle
 // ---------------------------------------------------------------------------
 
-var pool: if (spice_enabled) spice.ThreadPool else void = if (spice_enabled)
-    spice.ThreadPool.init(std.heap.page_allocator)
-else {};
+var pool: if (tp_enabled) tp.ThreadPool else void = undefined;
 var pool_started: bool = false;
 
 /// Initialize and start the thread pool.
-/// Call once at program startup. No-op if spice is disabled.
+/// Call once at program startup. No-op if thread-pool is disabled.
 pub fn initPool(config: PoolConfig) void {
-    if (!spice_enabled) return;
+    if (!tp_enabled) return;
 
     if (pool_started) return;
 
-    pool.start(.{
-        .background_worker_count = config.worker_count,
-        .heartbeat_interval = config.heartbeat_interval,
-    });
+    const max: usize = if (config.worker_count) |n| n else 0;
+    pool = tp.ThreadPool.init(std.heap.page_allocator, .{
+        .max_threads = max,
+    }) catch @panic("thread-pool: init failed");
     pool_started = true;
 }
 
 /// Shut down the thread pool and release resources.
-/// Call once at program exit. No-op if spice is disabled.
+/// Call once at program exit. No-op if thread-pool is disabled.
 pub fn deinitPool() void {
-    if (!spice_enabled) return;
+    if (!tp_enabled) return;
 
     if (!pool_started) return;
 
     pool.deinit();
     pool_started = false;
-    pool = spice.ThreadPool.init(std.heap.page_allocator);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,15 +104,14 @@ pub fn deinitPool() void {
 /// Below this threshold, sequential execution is used.
 pub const min_parallel_items = 4;
 
-/// Process items in parallel using spice fork/join.
+/// Maximum number of chunks to split work into.
+const MAX_CHUNKS = 64;
+
+/// Process items in parallel using flat chunking + submitBatch + WaitGroup.
 ///
-/// Calls `func(task, item)` for each item, storing results in `results`.
-/// Falls back to sequential execution when spice is disabled or when
+/// Calls `func(item)` for each item, storing results in `results`.
+/// Falls back to sequential execution when thread-pool is disabled or when
 /// there are fewer than `min_parallel_items` items.
-///
-/// The `func` signature must be: `fn (*spice.Task, T) R` when spice is
-/// enabled, or `fn (*void, T) R` when disabled (the task pointer is unused
-/// in sequential mode).
 pub fn forEach(
     comptime T: type,
     comptime R: type,
@@ -125,14 +121,12 @@ pub fn forEach(
 ) void {
     std.debug.assert(results.len >= items.len);
 
-    if (!spice_enabled or !pool_started or items.len < min_parallel_items) {
+    if (!tp_enabled or !pool_started or items.len < min_parallel_items) {
         sequentialForEach(T, R, items, results, func);
         return;
     }
 
-    if (spice_enabled) {
-        spiceForEach(T, R, items, results, func);
-    }
+    tpForEach(T, R, items, results, func);
 }
 
 fn sequentialForEach(
@@ -147,70 +141,60 @@ fn sequentialForEach(
     }
 }
 
-fn spiceForEach(
+fn tpForEach(
     comptime T: type,
     comptime R: type,
     items: []const T,
     results: []R,
     comptime func: anytype,
 ) void {
-    if (!spice_enabled) return;
+    if (!tp_enabled) return;
 
-    const Ctx = struct {
+    const num_chunks = @min(items.len, MAX_CHUNKS);
+    const chunk_size = (items.len + num_chunks - 1) / num_chunks;
+
+    const ChunkContext = struct {
         items_ptr: []const T,
         results_ptr: []R,
+        start: usize,
+        end: usize,
 
-        fn compute(task: *spice.Task, ctx: @This()) void {
-            forEachRecursive(T, R, task, ctx.items_ptr, ctx.results_ptr, func);
+        fn run(ctx_ptr: *anyopaque, _: *tp.TaskContext) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx_ptr));
+            for (self.start..self.end) |i| {
+                self.results_ptr[i] = func(self.items_ptr[i]);
+            }
         }
     };
 
-    pool.call(void, Ctx.compute, Ctx{
-        .items_ptr = items,
-        .results_ptr = results,
-    });
-}
+    var ctxs: [MAX_CHUNKS]ChunkContext = undefined;
+    var tasks: [MAX_CHUNKS]tp.BatchTask = undefined;
+    var wg: tp.WaitGroup = .{};
 
-fn forEachRecursive(
-    comptime T: type,
-    comptime R: type,
-    task: *spice.Task,
-    items: []const T,
-    results: []R,
-    comptime func: anytype,
-) void {
-    if (!spice_enabled) return;
-
-    if (items.len <= 1) {
-        if (items.len == 1) {
-            results[0] = func(items[0]);
-        }
-        return;
+    var n_chunks: usize = 0;
+    var start: usize = 0;
+    while (start < items.len) : (start += chunk_size) {
+        const end = @min(start + chunk_size, items.len);
+        ctxs[n_chunks] = ChunkContext{
+            .items_ptr = items,
+            .results_ptr = results,
+            .start = start,
+            .end = end,
+        };
+        tasks[n_chunks] = tp.BatchTask{
+            .task_fn = ChunkContext.run,
+            .ctx = &ctxs[n_chunks],
+        };
+        n_chunks += 1;
     }
 
-    const mid = items.len / 2;
-
-    const Ctx = struct {
-        items_half: []const T,
-        results_half: []R,
-
-        fn compute(t: *spice.Task, ctx: @This()) void {
-            forEachRecursive(T, R, t, ctx.items_half, ctx.results_half, func);
-        }
+    _ = pool.submitBatch(tasks[0..n_chunks], .{ .wait_group = &wg }) catch {
+        // Fallback: process sequentially
+        sequentialForEach(T, R, items, results, func);
+        return;
     };
 
-    // Fork the right half to potentially run on another thread
-    var future = spice.Future(Ctx, void).init();
-    future.fork(task, Ctx.compute, Ctx{
-        .items_half = items[mid..],
-        .results_half = results[mid..],
-    });
-
-    // Process the left half on this thread
-    forEachRecursive(T, R, task, items[0..mid], results[0..mid], func);
-
-    // Join the right half
-    _ = future.tryJoin(task);
+    wg.wait();
 }
 
 // ---------------------------------------------------------------------------
@@ -251,12 +235,10 @@ test "parallel: forEach sequential fallback" {
 }
 
 test "parallel: forEach with enough items for parallel" {
-    // This tests the parallel path if spice is enabled,
-    // or falls back to sequential otherwise.
     const items = [_]u32{ 10, 20, 30, 40, 50 };
     var results: [5]u64 = undefined;
 
-    if (spice_enabled) {
+    if (tp_enabled) {
         initPool(.{ .worker_count = 2 });
         defer deinitPool();
     }
@@ -297,7 +279,7 @@ test "parallel: forEach single item" {
 }
 
 test "parallel: is_enabled matches build option" {
-    try std.testing.expectEqual(spice_enabled, is_enabled);
+    try std.testing.expectEqual(tp_enabled, is_enabled);
 }
 
 test "parallel: map allocates and computes" {

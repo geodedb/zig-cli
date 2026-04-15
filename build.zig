@@ -16,25 +16,25 @@ pub fn build(b: *std.Build) void {
         const config_dep = b.dependency("config", .{
             .target = target,
             .optimize = optimize,
-            .spice = false,
+            .thread_pool = false,
         });
         break :blk config_dep.module("config");
     } else null;
 
-    // Spice: optional heartbeat-scheduled parallelism
-    const enable_spice = b.option(bool, "spice", "Enable spice-based parallelism") orelse true;
+    // thread-pool: optional parallelism
+    const enable_tp = b.option(bool, "thread-pool", "Enable thread-pool-based parallelism") orelse true;
 
-    const spice_mod: ?*std.Build.Module = if (enable_spice) blk: {
-        const spice_dep = b.dependency("spice", .{
+    const tp_mod: ?*std.Build.Module = if (enable_tp) blk: {
+        const tp_dep = b.dependency("thread_pool", .{
             .target = target,
             .optimize = optimize,
         });
-        break :blk spice_dep.module("spice");
+        break :blk tp_dep.module("thread_pool");
     } else null;
 
-    // Build options (enable_spice flag for scale-bench and parallel module)
+    // Build options (enable_tp flag for scale-bench and parallel module)
     const build_options = b.addOptions();
-    build_options.addOption(bool, "enable_spice", enable_spice);
+    build_options.addOption(bool, "enable_tp", enable_tp);
     const build_options_mod = build_options.createModule();
 
     // ========================================================================
@@ -76,15 +76,17 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Parallel Module: optional spice-based parallelism
-    const parallel_mod: ?*std.Build.Module = if (enable_spice) blk: {
+    // Parallel Module: optional thread-pool-based parallelism
+    const parallel_mod: ?*std.Build.Module = if (enable_tp) blk: {
         break :blk b.addModule("parallel", .{
-        .root_source_file = b.path("src/parallel.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+            .root_source_file = b.path("src/parallel.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
     } else null;
-    if (parallel_mod) |pm| { if (spice_mod) |sm| pm.addImport("spice", sm); }
+    if (parallel_mod) |pm| {
+        if (tp_mod) |tm| pm.addImport("thread_pool", tm);
+    }
 
     // Root Module: Public API
     _ = b.addModule("zig_cli", .{
@@ -145,8 +147,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    if (spice_mod) |sm| {
-        parallel_test_mod.addImport("spice", sm);
+    if (tp_mod) |tm| {
+        parallel_test_mod.addImport("thread_pool", tm);
     }
     const parallel_tests = b.addTest(.{
         .root_module = parallel_test_mod,
@@ -188,7 +190,6 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "config", .module = config_mod },
                 .{ .name = "term", .module = term_mod },
                 .{ .name = "util", .module = util_mod },
-                
             },
         }),
     });

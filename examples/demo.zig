@@ -307,7 +307,7 @@ fn configRun(ctx: *cli.Context) !void {
     } else {
         try ctx.print("Configuration (source precedence: flag > env > project > user > system > default)\n\n", .{});
         const tracker = loader.getTracker();
-        for (tracker.getAll()) |val| {
+        for (try tracker.getAll()) |val| {
             try ctx.print("{s} = {s} (from: {s})\n", .{ val.key, val.value, val.source.format() });
         }
     }

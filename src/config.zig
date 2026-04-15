@@ -38,7 +38,7 @@ pub const provenance = ext_config.provenance;
 pub const xdg = ext_config.xdg;
 pub const dotenv = ext_config.dotenv;
 pub const secret = ext_config.secret;
-pub const validate = ext_config.validate;
+pub const validate = ext_config.validation;
 
 // Re-export commonly used types
 pub const Loader = ext_config.Loader;

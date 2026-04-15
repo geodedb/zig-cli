@@ -231,10 +231,10 @@ fn benchCompletion(comptime gen: anytype, cmd: *const cli.Command, iterations: u
 
 fn benchLevenshtein(iterations: usize) u64 {
     const candidates = [_][]const u8{
-        "create", "delete", "get",    "list",    "update",
-        "describe", "apply", "deploy", "rollback", "scale",
-        "logs",   "exec",   "auth",   "config",  "plugin",
-        "version", "status", "diff",  "export",  "import",
+        "create",   "delete", "get",    "list",     "update",
+        "describe", "apply",  "deploy", "rollback", "scale",
+        "logs",     "exec",   "auth",   "config",   "plugin",
+        "version",  "status", "diff",   "export",   "import",
     };
 
     for (0..WARMUP) |_| {
@@ -254,11 +254,11 @@ fn benchParallelForEach(iterations: usize) u64 {
     const items = [_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
     var results: [16]u64 = undefined;
 
-    if (build_options.enable_spice) {
+    if (build_options.enable_tp) {
         parallel.initPool(.{ .worker_count = 4 });
     }
     defer {
-        if (build_options.enable_spice) parallel.deinitPool();
+        if (build_options.enable_tp) parallel.deinitPool();
     }
 
     const compute = struct {
@@ -354,8 +354,8 @@ pub fn main() void {
         @tagName(@import("builtin").os.tag),
         @tagName(@import("builtin").cpu.arch),
     });
-    json.print("  \"spice_enabled\": {s},\n", .{
-        if (build_options.enable_spice) "true" else "false",
+    json.print("  \"thread_pool_enabled\": {s},\n", .{
+        if (build_options.enable_tp) "true" else "false",
     });
     json.write("  \"tiers\": [\n");
 
@@ -416,7 +416,7 @@ pub fn main() void {
 
     json.write("\n  ]\n}\n");
 
-    stderr.print("\n  Spice: {s}\n\n", .{
-        if (build_options.enable_spice) "enabled" else "disabled",
+    stderr.print("\n  thread-pool: {s}\n\n", .{
+        if (build_options.enable_tp) "enabled" else "disabled",
     }) catch {};
 }
