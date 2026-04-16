@@ -37,11 +37,11 @@ test "help shows examples first" {
     defer ctx.deinit();
 
     // Redirect stdout to /dev/null to prevent pipe deadlock in test harness
-    const devnull = std.fs.openFileAbsolute("/dev/null", .{ .mode = .write_only }) catch {
+    const devnull = std.Io.Dir.openFileAbsolute("/dev/null", .{ .mode = .write_only }) catch {
         return; // Skip if /dev/null not available
     };
     defer devnull.close();
-    ctx.stdout = devnull.deprecatedWriter();
+    ctx.stdout = devnull.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
 
     // Help generation doesn't crash
     cli.printHelp(&cmd, &ctx);

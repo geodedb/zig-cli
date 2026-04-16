@@ -178,9 +178,9 @@ fn benchHelpGeneration(_: std.mem.Allocator) !BenchResult {
     defer ctx.deinit();
 
     // Redirect to discard writer to avoid output
-    const devnull = try std.fs.openFileAbsolute("/dev/null", .{ .mode = .write_only });
+    const devnull = try std.Io.Dir.openFileAbsolute("/dev/null", .{ .mode = .write_only });
     defer devnull.close();
-    ctx.stdout = devnull.deprecatedWriter();
+    ctx.stdout = devnull.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
 
     // Warm-up phase
     for (0..WARMUP) |_| {
@@ -610,9 +610,9 @@ fn benchHelpMedium(_: std.mem.Allocator) !BenchResult {
     var ctx = cli.Context.init(alloc);
     defer ctx.deinit();
 
-    const devnull = try std.fs.openFileAbsolute("/dev/null", .{ .mode = .write_only });
+    const devnull = try std.Io.Dir.openFileAbsolute("/dev/null", .{ .mode = .write_only });
     defer devnull.close();
-    ctx.stdout = devnull.deprecatedWriter();
+    ctx.stdout = devnull.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
 
     // Warm-up phase
     for (0..WARMUP) |_| {
