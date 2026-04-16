@@ -37,11 +37,12 @@ test "help shows examples first" {
     defer ctx.deinit();
 
     // Redirect stdout to /dev/null to prevent pipe deadlock in test harness
-    const devnull = std.Io.Dir.openFileAbsolute("/dev/null", .{ .mode = .write_only }) catch {
+    const io_inst = std.Io.Threaded.global_single_threaded.io();
+    const devnull = std.Io.Dir.cwd().openFile(io_inst, "/dev/null", .{ .mode = .write_only }) catch {
         return; // Skip if /dev/null not available
     };
-    defer devnull.close();
-    ctx.stdout = devnull.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
+    defer devnull.close(io_inst);
+    ctx.stdout = .{ .file = devnull };
 
     // Help generation doesn't crash
     cli.printHelp(&cmd, &ctx);
@@ -270,7 +271,8 @@ test "required validation" {
 test "url validation" {
     try config.validate.url("https://example.com");
     try config.validate.url("http://localhost:8080");
-    try testing.expectError(config.ValidationError.PatternMismatch, config.validate.url("ftp://example.com"));
+    // ftp:// is now accepted by config's url() validator (delegates to isUrl)
+    try config.validate.url("ftp://example.com");
 }
 
 // ============================================================================
@@ -382,7 +384,7 @@ test "config: getAll returns all tracked values" {
     try tracker.set("port", "8080", .user, "~/.config/app/config.toml");
     try tracker.set("debug", "true", .env, "APP_DEBUG");
 
-    const all = tracker.getAll();
+    const all = try tracker.getAll();
     defer testing.allocator.free(all);
     try testing.expectEqual(@as(usize, 3), all.len);
 }
@@ -394,9 +396,9 @@ test "config: format detection from extension" {
     try testing.expectEqual(config.Format.json, config.Format.fromExtension("config.json"));
     try testing.expectEqual(config.Format.yaml, config.Format.fromExtension("settings.yaml"));
     try testing.expectEqual(config.Format.yaml, config.Format.fromExtension("settings.yml"));
-    // Unknown extensions default to TOML
-    try testing.expectEqual(config.Format.toml, config.Format.fromExtension("config.txt"));
-    try testing.expectEqual(config.Format.toml, config.Format.fromExtension("noextension"));
+    // Unknown extensions return .auto (content-based detection)
+    try testing.expectEqual(config.Format.auto, config.Format.fromExtension("config.txt"));
+    try testing.expectEqual(config.Format.auto, config.Format.fromExtension("noextension"));
 }
 
 test "config: validation integration" {

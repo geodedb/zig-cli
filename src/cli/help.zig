@@ -181,10 +181,10 @@ pub fn printHelpWithTemplateReturningError(cmd: *const Command, ctx: *Context, t
 /// Renders all sections into a memory buffer first, then writes to stdout
 /// in a single call to reduce syscall overhead.
 fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *const HelpTemplate) !void {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(ctx.allocator);
-    buf.ensureTotalCapacity(ctx.allocator, 2048) catch {};
-    const w = buf.writer(ctx.allocator);
+    var buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer buf.deinit();
+    buf.ensureUnusedCapacity(2048) catch {};
+    const w = &buf.writer;
     const use_color = ctx.useColor();
 
     for (template.sections) |section| {
@@ -207,7 +207,7 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
         }
     }
 
-    try ctx.stdout.writeAll(buf.items);
+    try ctx.stdout.writeAll(buf.written());
 }
 
 /// Print header section (name and summary)
@@ -236,7 +236,7 @@ fn printSectionExamples(w: anytype, cmd: *const Command, template: *const HelpTe
     try w.print("\n{s}:\n", .{template.examples_header});
     for (cmd.examples) |example| {
         // Write indent
-        try w.writeByteNTimes(' ', template.indent);
+        try w.splatByteAll(' ', template.indent);
         try w.print("{s}\n", .{example});
     }
 }
@@ -301,7 +301,7 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
             if (!std.mem.eql(u8, subcmd.group, group_name)) continue;
 
             // Write indent
-            try w.writeByteNTimes(' ', template.indent);
+            try w.splatByteAll(' ', template.indent);
 
             if (use_color) {
                 try w.print(ansi_cyan ++ "{s}" ++ ansi_reset, .{subcmd.name});
@@ -314,7 +314,7 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
             const col_width: usize = @as(usize, template.name_column_width) - template.indent;
             const sub_min_len: usize = @min(sub_name_len, col_width);
             const sub_padding: usize = col_width - sub_min_len;
-            try w.writeByteNTimes(' ', sub_padding);
+            try w.splatByteAll(' ', sub_padding);
             try w.print("{s}\n", .{subcmd.summary});
         }
     }
@@ -389,7 +389,7 @@ fn printSectionEnvVars(w: anytype, use_color: bool, cmd: *const Command, templat
 
 /// Print a single environment variable entry in the env section.
 fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, name: []const u8, description: []const u8) !void {
-    try w.writeByteNTimes(' ', template.indent);
+    try w.splatByteAll(' ', template.indent);
 
     if (use_color) {
         try w.print(ansi_cyan ++ "{s}" ++ ansi_reset, .{name});
@@ -402,7 +402,7 @@ fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, 
     const col_width: usize = @as(usize, template.name_column_width) - template.indent;
     const min_len: usize = @min(name_len, col_width);
     const pad: usize = col_width - min_len;
-    try w.writeByteNTimes(' ', pad);
+    try w.splatByteAll(' ', pad);
 
     try w.print("{s}\n", .{description});
 }
@@ -410,7 +410,7 @@ fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, 
 /// Print a single flag with template settings
 fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTemplate, flag: *const FlagSpec) !void {
     // Write indent
-    try w.writeByteNTimes(' ', template.indent);
+    try w.splatByteAll(' ', template.indent);
 
     // Short flag
     if (flag.short) |s| {
@@ -435,7 +435,7 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     const col_width: usize = @as(usize, template.name_column_width) - template.indent - 6; // -6 for "  -X, "
     const min_len: usize = @min(name_len, col_width);
     const padding_amount: usize = if (col_width > min_len) col_width - min_len else 0;
-    try w.writeByteNTimes(' ', padding_amount);
+    try w.splatByteAll(' ', padding_amount);
 
     // Help text
     try w.print("{s}", .{flag.help});
@@ -526,10 +526,10 @@ pub fn writeJsonEscapedString(w: anytype, s: []const u8) !void {
 /// Renders into a memory buffer first, then writes to stdout in a single
 /// call to reduce syscall overhead.
 fn printJsonHelp(cmd: *const Command, ctx: *Context) !void {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(ctx.allocator);
-    buf.ensureTotalCapacity(ctx.allocator, 1024) catch {};
-    const w = buf.writer(ctx.allocator);
+    var buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer buf.deinit();
+    buf.ensureUnusedCapacity(1024) catch {};
+    const w = &buf.writer;
 
     try w.print("{{", .{});
     try w.writeAll("\"name\":\"");
@@ -582,7 +582,7 @@ fn printJsonHelp(cmd: *const Command, ctx: *Context) !void {
 
     try w.print("}}\n", .{});
 
-    try ctx.stdout.writeAll(buf.items);
+    try ctx.stdout.writeAll(buf.written());
 }
 
 fn printJsonFlag(w: anytype, flag: *const FlagSpec) !void {
@@ -660,9 +660,10 @@ pub fn writeRoffEscaped(w: anytype, s: []const u8) !void {
 
 /// Generate man page in roff format
 pub fn generateMan(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
-    var list: std.ArrayList(u8) = .empty;
-    list.ensureTotalCapacity(allocator, 4096) catch {};
-    const w = list.writer(allocator);
+    var buf: std.Io.Writer.Allocating = .init(allocator);
+    errdefer buf.deinit();
+    buf.ensureUnusedCapacity(4096) catch {};
+    const w = &buf.writer;
 
     try w.writeAll(".TH ");
     try writeRoffEscaped(w, cmd.name);
@@ -731,7 +732,7 @@ pub fn generateMan(cmd: *const Command, allocator: std.mem.Allocator) ![]const u
     try writeRoffEscaped(w, author);
     try w.writeAll("\n");
 
-    return list.toOwnedSlice(allocator);
+    return buf.toOwnedSlice();
 }
 
 /// Print version information.
@@ -765,13 +766,14 @@ fn printVersionImpl(cmd: *const Command, ctx: *Context) !void {
 
 /// Generate Markdown documentation for a command tree
 pub fn generateMarkdown(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
-    var list: std.ArrayList(u8) = .empty;
-    list.ensureTotalCapacity(allocator, 4096) catch {};
-    const w = list.writer(allocator);
+    var buf: std.Io.Writer.Allocating = .init(allocator);
+    errdefer buf.deinit();
+    buf.ensureUnusedCapacity(4096) catch {};
+    const w = &buf.writer;
 
     try generateMarkdownCommand(w, cmd, 1);
 
-    return list.toOwnedSlice(allocator);
+    return buf.toOwnedSlice();
 }
 
 /// Write a string to `w` with characters escaped for Markdown table cells.
@@ -910,41 +912,41 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
 // ============================================================================
 
 test "writeRoffEscaped escapes special chars" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeRoffEscaped(w, "hello-world");
-    try std.testing.expectEqualStrings("hello\\-world", list.items);
+    try std.testing.expectEqualStrings("hello\\-world", buf.written());
 
-    list.clearRetainingCapacity();
+    buf.clearRetainingCapacity();
     try writeRoffEscaped(w, "path\\to");
-    try std.testing.expectEqualStrings("path\\\\to", list.items);
+    try std.testing.expectEqualStrings("path\\\\to", buf.written());
 
-    list.clearRetainingCapacity();
+    buf.clearRetainingCapacity();
     try writeRoffEscaped(w, ".TH inject");
-    try std.testing.expectEqualStrings("\\&.TH inject", list.items);
+    try std.testing.expectEqualStrings("\\&.TH inject", buf.written());
 
-    list.clearRetainingCapacity();
+    buf.clearRetainingCapacity();
     try writeRoffEscaped(w, "'comment");
-    try std.testing.expectEqualStrings("\\&'comment", list.items);
+    try std.testing.expectEqualStrings("\\&'comment", buf.written());
 
-    list.clearRetainingCapacity();
+    buf.clearRetainingCapacity();
     try writeRoffEscaped(w, "normal text");
-    try std.testing.expectEqualStrings("normal text", list.items);
+    try std.testing.expectEqualStrings("normal text", buf.written());
 }
 
 test "writeRoffEscaped escapes dot after newline to prevent injection" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeRoffEscaped(w, "line1\n.system echo pwned");
-    try std.testing.expectEqualStrings("line1\n\\&.system echo pwned", list.items);
+    try std.testing.expectEqualStrings("line1\n\\&.system echo pwned", buf.written());
 
-    list.clearRetainingCapacity();
+    buf.clearRetainingCapacity();
     try writeRoffEscaped(w, "line1\n'comment injection");
-    try std.testing.expectEqualStrings("line1\n\\&'comment injection", list.items);
+    try std.testing.expectEqualStrings("line1\n\\&'comment injection", buf.written());
 }
 
 test "generateMan" {
@@ -1452,49 +1454,49 @@ test "help: env vars shown with dash when not set" {
 }
 
 test "help: writeMarkdownEscaped escapes pipe in table cells" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeMarkdownEscaped(w, "a|b|c");
-    const result = list.items;
+    const result = buf.written();
     try std.testing.expectEqualStrings("a\\|b\\|c", result);
 }
 
 test "help: writeMarkdownEscaped no special chars" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeMarkdownEscaped(w, "hello world");
-    try std.testing.expectEqualStrings("hello world", list.items);
+    try std.testing.expectEqualStrings("hello world", buf.written());
 }
 
 test "help: writeMarkdownEscaped escapes backticks" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeMarkdownEscaped(w, "use `code` here");
-    try std.testing.expectEqualStrings("use \\`code\\` here", list.items);
+    try std.testing.expectEqualStrings("use \\`code\\` here", buf.written());
 }
 
 test "help: writeMarkdownEscaped escapes angle brackets" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeMarkdownEscaped(w, "<script>alert('xss')</script>");
-    try std.testing.expectEqualStrings("&lt;script&gt;alert('xss')&lt;/script&gt;", list.items);
+    try std.testing.expectEqualStrings("&lt;script&gt;alert('xss')&lt;/script&gt;", buf.written());
 }
 
 test "help: writeMarkdownEscaped mixed special chars" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeMarkdownEscaped(w, "a|b`c<d>e");
-    try std.testing.expectEqualStrings("a\\|b\\`c&lt;d&gt;e", list.items);
+    try std.testing.expectEqualStrings("a\\|b\\`c&lt;d&gt;e", buf.written());
 }
 
 // ============================================================================
@@ -1588,67 +1590,67 @@ test "help: HelpSection enum values" {
 // ============================================================================
 
 test "help: writeJsonEscapedString plain text" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeJsonEscapedString(w, "hello world");
-    try std.testing.expectEqualStrings("hello world", list.items);
+    try std.testing.expectEqualStrings("hello world", buf.written());
 }
 
 test "help: writeJsonEscapedString with double quote" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeJsonEscapedString(w, "say \"hi\"");
-    try std.testing.expectEqualStrings("say \\\"hi\\\"", list.items);
+    try std.testing.expectEqualStrings("say \\\"hi\\\"", buf.written());
 }
 
 test "help: writeJsonEscapedString with backslash" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeJsonEscapedString(w, "path\\to\\file");
-    try std.testing.expectEqualStrings("path\\\\to\\\\file", list.items);
+    try std.testing.expectEqualStrings("path\\\\to\\\\file", buf.written());
 }
 
 test "help: writeJsonEscapedString with newline" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeJsonEscapedString(w, "line1\nline2");
-    try std.testing.expectEqualStrings("line1\\nline2", list.items);
+    try std.testing.expectEqualStrings("line1\\nline2", buf.written());
 }
 
 test "help: writeJsonEscapedString with tab and carriage return" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeJsonEscapedString(w, "a\tb\rc");
-    try std.testing.expectEqualStrings("a\\tb\\rc", list.items);
+    try std.testing.expectEqualStrings("a\\tb\\rc", buf.written());
 }
 
 test "help: writeJsonEscapedString with control char" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     // ASCII 0x01 (SOH)
     try writeJsonEscapedString(w, "\x01");
-    try std.testing.expectEqualStrings("\\u0001", list.items);
+    try std.testing.expectEqualStrings("\\u0001", buf.written());
 }
 
 test "help: writeJsonEscapedString empty string" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     try writeJsonEscapedString(w, "");
-    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+    try std.testing.expectEqual(@as(usize, 0), buf.written().len);
 }
 
 // ============================================================================
@@ -1656,9 +1658,9 @@ test "help: writeJsonEscapedString empty string" {
 // ============================================================================
 
 test "help: env section prints flag-sourced env vars when enabled" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     const cmd = Command{
         .name = "myapp",
@@ -1690,7 +1692,7 @@ test "help: env section prints flag-sourced env vars when enabled" {
     };
 
     try printSectionEnvVars(w, false, &cmd, &template);
-    const output = list.items;
+    const output = buf.written();
 
     // Section header
     try std.testing.expect(mem.indexOf(u8, output, "Environment Variables:") != null);
@@ -1704,9 +1706,9 @@ test "help: env section prints flag-sourced env vars when enabled" {
 }
 
 test "help: env section includes standard env vars by default" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     const cmd = Command{
         .name = "myapp",
@@ -1719,7 +1721,7 @@ test "help: env section includes standard env vars by default" {
     };
 
     try printSectionEnvVars(w, false, &cmd, &template);
-    const output = list.items;
+    const output = buf.written();
 
     // Standard env vars should be listed
     try std.testing.expect(mem.indexOf(u8, output, "NO_COLOR") != null);
@@ -1728,9 +1730,9 @@ test "help: env section includes standard env vars by default" {
 }
 
 test "help: env section hidden when show_env_section is false" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     const cmd = Command{
         .name = "myapp",
@@ -1751,13 +1753,13 @@ test "help: env section hidden when show_env_section is false" {
 
     try printSectionEnvVars(w, false, &cmd, &template);
     // Should produce no output
-    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+    try std.testing.expectEqual(@as(usize, 0), buf.written().len);
 }
 
 test "help: env section custom header" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     const cmd = Command{
         .name = "myapp",
@@ -1779,7 +1781,7 @@ test "help: env section custom header" {
     };
 
     try printSectionEnvVars(w, false, &cmd, &template);
-    const output = list.items;
+    const output = buf.written();
 
     try std.testing.expect(mem.indexOf(u8, output, "ENV VARS:") != null);
     try std.testing.expect(mem.indexOf(u8, output, "MYAPP_TOKEN") != null);
@@ -1792,9 +1794,9 @@ test "help: HelpTemplate show_env_section defaults to false" {
 }
 
 test "help: env section in template sections list renders correctly" {
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(std.testing.allocator);
-    const w = list.writer(std.testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
 
     const cmd = Command{
         .name = "envapp",
@@ -1826,7 +1828,7 @@ test "help: env section in template sections list renders correctly" {
         }
     }
 
-    const output = list.items;
+    const output = buf.written();
     try std.testing.expect(mem.indexOf(u8, output, "Environment Variables:") != null);
     try std.testing.expect(mem.indexOf(u8, output, "ENVAPP_HOST") != null);
     try std.testing.expect(mem.indexOf(u8, output, "NO_COLOR") != null);

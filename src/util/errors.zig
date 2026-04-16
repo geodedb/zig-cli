@@ -150,8 +150,8 @@ test "errors: Severity colorCode returns ANSI codes" {
 
 test "errors: FormattedError print without color" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     const err = FormattedError{
         .severity = .@"error",
@@ -160,7 +160,7 @@ test "errors: FormattedError print without color" {
     };
 
     try err.print(writer, false);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     try std.testing.expect(std.mem.indexOf(u8, output, "error:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "something went wrong") != null);
@@ -169,8 +169,8 @@ test "errors: FormattedError print without color" {
 
 test "errors: FormattedError print with color" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     const err = FormattedError{
         .severity = .@"error",
@@ -178,7 +178,7 @@ test "errors: FormattedError print with color" {
     };
 
     try err.print(writer, true);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     // Should contain ANSI color codes
     try std.testing.expect(std.mem.indexOf(u8, output, "\x1b[31m") != null);
@@ -188,8 +188,8 @@ test "errors: FormattedError print with color" {
 
 test "errors: FormattedError with context" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     const err = FormattedError{
         .severity = .warning,
@@ -198,7 +198,7 @@ test "errors: FormattedError with context" {
     };
 
     try err.print(writer, false);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     try std.testing.expect(std.mem.indexOf(u8, output, "warning:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "deprecated function") != null);
@@ -207,8 +207,8 @@ test "errors: FormattedError with context" {
 
 test "errors: FormattedError with all fields" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     const err = FormattedError{
         .severity = .@"error",
@@ -218,7 +218,7 @@ test "errors: FormattedError with all fields" {
     };
 
     try err.print(writer, false);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     try std.testing.expect(std.mem.indexOf(u8, output, "error:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "file not found") != null);
@@ -228,8 +228,8 @@ test "errors: FormattedError with all fields" {
 
 test "errors: FormattedError info severity" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     const err = FormattedError{
         .severity = .info,
@@ -237,7 +237,7 @@ test "errors: FormattedError info severity" {
     };
 
     try err.print(writer, false);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     try std.testing.expect(std.mem.indexOf(u8, output, "info:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "operation completed") != null);
@@ -245,11 +245,11 @@ test "errors: FormattedError info severity" {
 
 test "errors: printError helper" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     try printError(writer, "test error message", false);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     try std.testing.expect(std.mem.indexOf(u8, output, "error:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "test error message") != null);
@@ -257,11 +257,11 @@ test "errors: printError helper" {
 
 test "errors: printWarning helper" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     try printWarning(writer, "test warning message", false);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     try std.testing.expect(std.mem.indexOf(u8, output, "warning:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "test warning message") != null);
@@ -269,11 +269,11 @@ test "errors: printWarning helper" {
 
 test "errors: printErrorWithSuggestion helper" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     try printErrorWithSuggestion(writer, "invalid option", "use --help", false);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     try std.testing.expect(std.mem.indexOf(u8, output, "error:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "invalid option") != null);
@@ -283,11 +283,11 @@ test "errors: printErrorWithSuggestion helper" {
 
 test "errors: printErrorWithSuggestion without suggestion" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
+    var stream = std.Io.Writer.fixed(&buffer);
+    const writer = &stream;
 
     try printErrorWithSuggestion(writer, "error message", null, false);
-    const output = stream.getWritten();
+    const output = stream.buffered();
 
     try std.testing.expect(std.mem.indexOf(u8, output, "error:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "hint:") == null);

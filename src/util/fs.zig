@@ -6,8 +6,15 @@
 //! Filesystem utilities with security-conscious design.
 
 const std = @import("std");
-const fs = std.fs;
 const mem = std.mem;
+
+inline fn io() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
+inline fn cwd() std.Io.Dir {
+    return std.Io.Dir.cwd();
+}
 
 /// File operation errors
 pub const FsError = error{
@@ -20,34 +27,40 @@ pub const FsError = error{
 
 /// Check if a path exists
 pub fn exists(path: []const u8) bool {
-    fs.cwd().access(path, .{}) catch return false;
+    cwd().access(io(), path, .{}) catch return false;
     return true;
 }
 
 /// Check if path is a directory
 pub fn isDirectory(path: []const u8) bool {
-    const stat = fs.cwd().statFile(path) catch return false;
+    const stat = cwd().statFile(io(), path, .{}) catch return false;
     return stat.kind == .directory;
 }
 
 /// Check if path is a regular file
 pub fn isFile(path: []const u8) bool {
-    const stat = fs.cwd().statFile(path) catch return false;
+    const stat = cwd().statFile(io(), path, .{}) catch return false;
     return stat.kind == .file;
 }
 
 /// Read file contents with size limit
 pub fn readFile(path: []const u8, allocator: std.mem.Allocator, max_size: usize) FsError![]const u8 {
-    const file = fs.cwd().openFile(path, .{}) catch |err| {
+    var file = cwd().openFile(io(), path, .{}) catch |err| {
         return switch (err) {
             error.FileNotFound => FsError.NotFound,
             error.AccessDenied => FsError.PermissionDenied,
             else => FsError.IoError,
         };
     };
-    defer file.close();
+    defer file.close(io());
 
-    return file.readToEndAlloc(allocator, max_size) catch FsError.IoError;
+    const sz = file.length(io()) catch return FsError.IoError;
+    if (sz > max_size) return FsError.IoError;
+    const buf = allocator.alloc(u8, @intCast(sz)) catch return FsError.IoError;
+    errdefer allocator.free(buf);
+    var reader = file.reader(io(), &.{});
+    reader.interface.readSliceAll(buf) catch return FsError.IoError;
+    return buf;
 }
 
 /// Write file atomically (write to temp with random suffix, then rename).
@@ -56,14 +69,21 @@ pub fn readFile(path: []const u8, allocator: std.mem.Allocator, max_size: usize)
 /// Data integrity: fsync is called before close to ensure data reaches disk
 /// before the rename makes it visible.
 pub fn writeFileAtomic(path: []const u8, content: []const u8) FsError!void {
-    const dir = fs.cwd();
+    const dir = cwd();
 
     // Create temp file with random suffix to avoid collisions
-    var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const temp_path = std.fmt.bufPrint(&tmp_buf, "{s}.{x:0>8}", .{ path, std.crypto.random.int(u32) }) catch return FsError.PathTooLong;
+    var tmp_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var seed_bytes: [8]u8 = undefined;
+    std.posix.getrandom(&seed_bytes) catch {
+        // Fallback: use pointer address + path hash for uniqueness
+        const seed_u64 = @as(u64, @intFromPtr(path.ptr)) ^ std.hash.Wyhash.hash(0, path);
+        std.mem.writeInt(u64, &seed_bytes, seed_u64, .little);
+    };
+    var prng = std.Random.DefaultPrng.init(std.mem.readInt(u64, &seed_bytes, .little));
+    const temp_path = std.fmt.bufPrint(&tmp_buf, "{s}.{x:0>8}", .{ path, prng.random().int(u32) }) catch return FsError.PathTooLong;
 
     // Write to temp file with restrictive permissions (0o600)
-    const temp_file = dir.createFile(temp_path, .{ .mode = 0o600 }) catch |err| {
+    var temp_file = dir.createFile(io(), temp_path, .{ .permissions = .{ .readable = true, .writable = true, .mode = 0o600 } }) catch |err| {
         return switch (err) {
             error.AccessDenied => FsError.PermissionDenied,
             else => FsError.IoError,
@@ -71,26 +91,29 @@ pub fn writeFileAtomic(path: []const u8, content: []const u8) FsError!void {
     };
     errdefer {
         // Clean up temp file on failure
-        temp_file.close();
-        dir.deleteFile(temp_path) catch {};
+        temp_file.close(io());
+        dir.deleteFile(io(), temp_path) catch {};
     }
 
-    temp_file.writeAll(content) catch return FsError.IoError;
+    var wbuf: [4096]u8 = undefined;
+    var fw = temp_file.writer(io(), &wbuf);
+    fw.interface.writeAll(content) catch return FsError.IoError;
+    fw.interface.flush() catch return FsError.IoError;
 
     // Ensure data is flushed to disk before rename
-    temp_file.sync() catch return FsError.IoError;
-    temp_file.close();
+    temp_file.sync(io()) catch return FsError.IoError;
+    temp_file.close(io());
 
     // Rename temp to target; clean up temp on failure
-    dir.rename(temp_path, path) catch {
-        dir.deleteFile(temp_path) catch {};
+    dir.rename(temp_path, dir, path, io()) catch {
+        dir.deleteFile(io(), temp_path) catch {};
         return FsError.IoError;
     };
 }
 
 /// Ensure a directory exists, creating it if necessary
 pub fn ensureDir(path: []const u8) FsError!void {
-    fs.cwd().makePath(path) catch |err| {
+    cwd().createDirPath(io(), path) catch |err| {
         return switch (err) {
             error.AccessDenied => FsError.PermissionDenied,
             else => FsError.IoError,
@@ -100,7 +123,8 @@ pub fn ensureDir(path: []const u8) FsError!void {
 
 /// Get absolute path
 pub fn absolutePath(relative: []const u8, allocator: std.mem.Allocator) FsError![]const u8 {
-    return fs.cwd().realpathAlloc(allocator, relative) catch FsError.NotFound;
+    const result = cwd().realPathFileAlloc(io(), relative, allocator) catch return FsError.NotFound;
+    return result;
 }
 
 /// Redact path for error messages (hide sensitive parts)

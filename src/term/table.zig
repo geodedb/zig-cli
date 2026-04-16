@@ -150,12 +150,12 @@ pub const Table = struct {
 
     /// Render the table to a string
     pub fn render(self: *Self) ![]const u8 {
-        var list: std.ArrayList(u8) = .empty;
-        const w = list.writer(self.allocator);
+        var buf: std.Io.Writer.Allocating = .init(self.allocator);
+        defer buf.deinit();
 
-        try self.renderTo(w);
+        try self.renderTo(&buf.writer);
 
-        return list.toOwnedSlice(self.allocator);
+        return buf.toOwnedSlice();
     }
 
     /// Render the table to a writer
@@ -180,7 +180,7 @@ pub const Table = struct {
                 const width = self.column_widths.items[i];
 
                 // Padding
-                try writer.writeByteNTimes(' ', pad);
+                try writer.splatByteAll(' ', pad);
 
                 // Header with optional color
                 if (self.config.use_color) {
@@ -192,7 +192,7 @@ pub const Table = struct {
                 }
 
                 // Padding
-                try writer.writeByteNTimes(' ', pad);
+                try writer.splatByteAll(' ', pad);
 
                 try writer.writeAll(chars.vertical);
             }
@@ -216,7 +216,7 @@ pub const Table = struct {
                 const col = self.columns.items[i];
 
                 // Padding
-                try writer.writeByteNTimes(' ', pad);
+                try writer.splatByteAll(' ', pad);
 
                 // Cell content (possibly truncated)
                 var display_cell = cell;
@@ -226,7 +226,7 @@ pub const Table = struct {
                 try self.writeAligned(writer, display_cell, width, col.alignment);
 
                 // Padding
-                try writer.writeByteNTimes(' ', pad);
+                try writer.splatByteAll(' ', pad);
 
                 try writer.writeAll(chars.vertical);
             }
@@ -250,18 +250,18 @@ pub const Table = struct {
         switch (alignment) {
             .left => {
                 try writer.writeAll(text);
-                try writer.writeByteNTimes(' ', space);
+                try writer.splatByteAll(' ', space);
             },
             .right => {
-                try writer.writeByteNTimes(' ', space);
+                try writer.splatByteAll(' ', space);
                 try writer.writeAll(text);
             },
             .center => {
                 const left_pad = space / 2;
                 const right_pad = space - left_pad;
-                try writer.writeByteNTimes(' ', left_pad);
+                try writer.splatByteAll(' ', left_pad);
                 try writer.writeAll(text);
-                try writer.writeByteNTimes(' ', right_pad);
+                try writer.splatByteAll(' ', right_pad);
             },
         }
     }
@@ -287,9 +287,9 @@ pub const Table = struct {
         try writer.writeAll("|");
         for (self.column_widths.items, 0..) |width, i| {
             _ = i;
-            try writer.writeByteNTimes(' ', pad);
-            try writer.writeByteNTimes('-', width);
-            try writer.writeByteNTimes(' ', pad);
+            try writer.splatByteAll(' ', pad);
+            try writer.splatByteAll('-', width);
+            try writer.splatByteAll(' ', pad);
             try writer.writeAll("|");
         }
         try writer.writeAll("\n");

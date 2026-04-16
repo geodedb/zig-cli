@@ -345,14 +345,9 @@ fn psRun(ctx: *cli.Context) !void {
 // Main
 // ============================================================================
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     const exit_code = try cli.run(&root_cmd, args, allocator);
     std.process.exit(exit_code);
 }

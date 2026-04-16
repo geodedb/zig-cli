@@ -23,12 +23,17 @@ pub const PagerConfig = struct {
 
 /// Write content through a pager if appropriate
 pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
+    const io = std.Io.Threaded.global_single_threaded.io();
     const stdout = std.Io.File.stdout();
 
     // Check if we should use pager
-    if (!config.force and !stdout.isTty()) {
+    const is_tty = stdout.isTty(io) catch false;
+    if (!config.force and !is_tty) {
         // Not a TTY, write directly
-        try stdout.writeAll(content);
+        var wbuf: [4096]u8 = undefined;
+        var fw = stdout.writer(io, &wbuf);
+        fw.interface.writeAll(content) catch return error.WriteFailed;
+        fw.interface.flush() catch return error.WriteFailed;
         return;
     }
 
@@ -43,13 +48,19 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
 
     // If content fits in terminal OR is below the min_lines threshold, write directly
     if (line_count < term_info.height or line_count < config.min_lines) {
-        try stdout.writeAll(content);
+        var wbuf: [4096]u8 = undefined;
+        var fw = stdout.writer(io, &wbuf);
+        fw.interface.writeAll(content) catch return error.WriteFailed;
+        fw.interface.flush() catch return error.WriteFailed;
         return;
     }
 
     if (builtin.os.tag == .windows) {
         // Windows: fall back to direct output
-        try stdout.writeAll(content);
+        var wbuf: [4096]u8 = undefined;
+        var fw = stdout.writer(io, &wbuf);
+        fw.interface.writeAll(content) catch return error.WriteFailed;
+        fw.interface.flush() catch return error.WriteFailed;
         return;
     }
 
@@ -71,7 +82,10 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
         argv_len += 1;
     }
     if (argv_len == 0) {
-        try stdout.writeAll(content);
+        var wbuf: [4096]u8 = undefined;
+        var fw = stdout.writer(io, &wbuf);
+        fw.interface.writeAll(content) catch return error.WriteFailed;
+        fw.interface.flush() catch return error.WriteFailed;
         return;
     }
 
@@ -85,8 +99,11 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
 
     // Write content to pager stdin
     if (child.stdin) |stdin| {
-        stdin.writeAll(content) catch {};
-        stdin.close();
+        var wbuf: [4096]u8 = undefined;
+        var fw = stdin.writer(io, &wbuf);
+        fw.interface.writeAll(content) catch {};
+        fw.interface.flush() catch {};
+        stdin.close(io);
     }
 
     // Wait for pager to finish
@@ -95,7 +112,7 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
 
 /// Create a pager writer that buffers output
 pub const PagerWriter = struct {
-    buffer: std.ArrayList(u8),
+    buffer: std.Io.Writer.Allocating,
     allocator: std.mem.Allocator,
     config: PagerConfig,
 
@@ -103,22 +120,26 @@ pub const PagerWriter = struct {
 
     pub fn init(allocator: std.mem.Allocator, config: PagerConfig) Self {
         return .{
-            .buffer = .empty,
+            .buffer = .init(allocator),
             .allocator = allocator,
             .config = config,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.buffer.deinit(self.allocator);
+        self.buffer.deinit();
     }
 
-    pub fn writer(self: *Self) std.ArrayList(u8).Writer {
-        return self.buffer.writer(self.allocator);
+    pub fn writer(self: *Self) *std.Io.Writer {
+        return &self.buffer.writer;
+    }
+
+    pub fn items(self: *Self) []u8 {
+        return self.buffer.written();
     }
 
     pub fn flush(self: *Self) !void {
-        try writeIfTty(self.buffer.items, self.config);
+        try writeIfTty(self.buffer.written(), self.config);
         self.buffer.clearRetainingCapacity();
     }
 };
@@ -134,7 +155,7 @@ test "PagerWriter initialization" {
     const w = pw.writer();
     try w.print("Hello, World!\n", .{});
 
-    try std.testing.expect(pw.buffer.items.len > 0);
+    try std.testing.expect(pw.items().len > 0);
 }
 
 test "pager: PagerConfig default values" {
@@ -169,7 +190,7 @@ test "pager: PagerWriter write multiple lines" {
     try w.print("Line 2\n", .{});
     try w.print("Line 3\n", .{});
 
-    const output = pw.buffer.items;
+    const output = pw.items();
     try std.testing.expect(std.mem.indexOf(u8, output, "Line 1") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "Line 2") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "Line 3") != null);
@@ -186,7 +207,7 @@ test "pager: PagerWriter buffer grows" {
         try w.print("Line {d}: This is some content to fill the buffer\n", .{i});
     }
 
-    try std.testing.expect(pw.buffer.items.len > 1000);
+    try std.testing.expect(pw.items().len > 1000);
 }
 
 test "pager: PagerWriter deinit cleans up" {
@@ -208,7 +229,7 @@ test "pager: PagerWriter writer returns valid writer" {
     // Test writing formatted output
     try w.print("{s}: {d}\n", .{ "count", 42 });
 
-    const output = pw.buffer.items;
+    const output = pw.items();
     try std.testing.expectEqualStrings("count: 42\n", output);
 }
 
@@ -219,7 +240,7 @@ test "pager: PagerWriter handles empty writes" {
     const w = pw.writer();
     try w.print("", .{});
 
-    try std.testing.expectEqual(@as(usize, 0), pw.buffer.items.len);
+    try std.testing.expectEqual(@as(usize, 0), pw.items().len);
 }
 
 test "pager: PagerWriter preserves content order" {
@@ -231,5 +252,5 @@ test "pager: PagerWriter preserves content order" {
     try w.print("second", .{});
     try w.print("third", .{});
 
-    try std.testing.expectEqualStrings("firstsecondthird", pw.buffer.items);
+    try std.testing.expectEqualStrings("firstsecondthird", pw.items());
 }

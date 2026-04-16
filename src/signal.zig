@@ -82,7 +82,23 @@ var terminated: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var signal_pending: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var cleanup_callbacks: [16]?CleanupFn = .{null} ** 16;
 var callback_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
-var mutex: std.Thread.Mutex = .{};
+var mutex: Mutex = .{};
+
+inline fn io_() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
+const Mutex = struct {
+    inner: std.Io.Mutex = .init,
+
+    fn lock(self: *Mutex) void {
+        self.inner.lockUncancelable(io_());
+    }
+
+    fn unlock(self: *Mutex) void {
+        self.inner.unlock(io_());
+    }
+};
 /// Atomic flags for Windows console control handler (thread-safe).
 /// These replace a plain `Config` struct to avoid data races between
 /// the main thread (install) and the handler thread (windowsCtrlHandler).
@@ -216,18 +232,15 @@ fn uninstallPosix() void {
     std.posix.sigaction(std.posix.SIG.QUIT, &default_handler, null);
 }
 
-fn posixSignalHandler(sig: c_int) callconv(.c) void {
-    switch (sig) {
-        std.posix.SIG.INT => {
-            interrupted.store(true, .release);
-        },
-        std.posix.SIG.TERM => {
-            terminated.store(true, .release);
-        },
-        std.posix.SIG.HUP, std.posix.SIG.QUIT => {
-            terminated.store(true, .release);
-        },
-        else => {},
+const SigType = @TypeOf(std.posix.SIG.INT);
+
+fn posixSignalHandler(sig: SigType) callconv(.c) void {
+    if (sig == std.posix.SIG.INT) {
+        interrupted.store(true, .release);
+    } else if (sig == std.posix.SIG.TERM) {
+        terminated.store(true, .release);
+    } else if (sig == std.posix.SIG.HUP or sig == std.posix.SIG.QUIT) {
+        terminated.store(true, .release);
     }
 
     // Flag that callbacks need to run; pollSignals() will invoke them

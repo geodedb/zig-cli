@@ -99,14 +99,42 @@ pub const FlagSpec = struct {
     }
 };
 
+/// Minimal stdout/stderr writer wrapper that supports print/writeAll with
+/// ephemeral buffering. Uses std.Io.Threaded.global_single_threaded.io().
+pub const StdioWriter = struct {
+    file: std.Io.File,
+
+    pub fn print(self: StdioWriter, comptime fmt: []const u8, args: anytype) !void {
+        var wbuf: [4096]u8 = undefined;
+        var fw = self.file.writer(io_global(), &wbuf);
+        try fw.interface.print(fmt, args);
+        try fw.interface.flush();
+    }
+
+    pub fn writeAll(self: StdioWriter, data: []const u8) !void {
+        var wbuf: [4096]u8 = undefined;
+        var fw = self.file.writer(io_global(), &wbuf);
+        try fw.interface.writeAll(data);
+        try fw.interface.flush();
+    }
+
+    pub fn writeByte(self: StdioWriter, byte: u8) !void {
+        return self.writeAll(&[_]u8{byte});
+    }
+};
+
+inline fn io_global() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 /// Command execution context
 pub const Context = struct {
     /// Memory allocator
     allocator: Allocator,
     /// Standard output writer
-    stdout: std.Io.File.DeprecatedWriter,
+    stdout: StdioWriter,
     /// Standard error writer
-    stderr: std.Io.File.DeprecatedWriter,
+    stderr: StdioWriter,
     /// Whether stdout is a TTY
     is_tty_out: bool,
     /// Whether stderr is a TTY
@@ -146,10 +174,10 @@ pub const Context = struct {
         command_path.ensureTotalCapacity(allocator, 4) catch {};
         return .{
             .allocator = allocator,
-            .stdout = stdout_file.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
-            .stderr = stderr_file.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
-            .is_tty_out = stdout_file.isTty(),
-            .is_tty_err = stderr_file.isTty(),
+            .stdout = .{ .file = stdout_file },
+            .stderr = .{ .file = stderr_file },
+            .is_tty_out = stdout_file.isTty(io_global()) catch false,
+            .is_tty_err = stderr_file.isTty(io_global()) catch false,
             .flags = flags,
             .positionals = positionals,
             .command_path = command_path,

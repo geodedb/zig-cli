@@ -14,6 +14,26 @@ const ITERATIONS = 10_000;
 const WARMUP = 100;
 const RUNS = 3;
 
+/// Minimal monotonic-clock timer shim (Zig 0.16 removed `std.time.Timer`).
+const Timer = struct {
+    start_ns: u128,
+
+    fn start() !Timer {
+        return .{ .start_ns = nowNs() };
+    }
+
+    fn read(t: Timer) u64 {
+        const elapsed = nowNs() - t.start_ns;
+        return @intCast(elapsed);
+    }
+
+    fn nowNs() u128 {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const ts = std.Io.Clock.now(.awake, io);
+        return @intCast(ts.nanoseconds);
+    }
+};
+
 /// Allocator wrapper that counts allocations, frees, and total bytes allocated.
 /// Wraps any backing allocator and forwards all operations while tracking stats.
 const CountingAllocator = struct {
@@ -124,7 +144,7 @@ fn benchParse(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
 
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
@@ -178,9 +198,10 @@ fn benchHelpGeneration(_: std.mem.Allocator) !BenchResult {
     defer ctx.deinit();
 
     // Redirect to discard writer to avoid output
-    const devnull = try std.Io.Dir.openFileAbsolute("/dev/null", .{ .mode = .write_only });
-    defer devnull.close();
-    ctx.stdout = devnull.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
+    const io_inst = std.Io.Threaded.global_single_threaded.io();
+    const devnull = try std.Io.Dir.cwd().openFile(io_inst, "/dev/null", .{ .mode = .write_only });
+    defer devnull.close(io_inst);
+    ctx.stdout = .{ .file = devnull };
 
     // Warm-up phase
     for (0..WARMUP) |_| {
@@ -188,7 +209,7 @@ fn benchHelpGeneration(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
     var total_bytes: usize = 0;
@@ -242,7 +263,7 @@ fn benchBashCompletion(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
     var total_bytes: usize = 0;
@@ -283,7 +304,7 @@ fn benchZshCompletion(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
     var total_bytes: usize = 0;
@@ -324,7 +345,7 @@ fn benchFishCompletion(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
     var total_bytes: usize = 0;
@@ -365,7 +386,7 @@ fn benchPowerShellCompletion(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
     var total_bytes: usize = 0;
@@ -572,7 +593,7 @@ fn benchParseMedium(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
 
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
@@ -610,9 +631,10 @@ fn benchHelpMedium(_: std.mem.Allocator) !BenchResult {
     var ctx = cli.Context.init(alloc);
     defer ctx.deinit();
 
-    const devnull = try std.Io.Dir.openFileAbsolute("/dev/null", .{ .mode = .write_only });
-    defer devnull.close();
-    ctx.stdout = devnull.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
+    const io_inst2 = std.Io.Threaded.global_single_threaded.io();
+    const devnull = try std.Io.Dir.cwd().openFile(io_inst2, "/dev/null", .{ .mode = .write_only });
+    defer devnull.close(io_inst2);
+    ctx.stdout = .{ .file = devnull };
 
     // Warm-up phase
     for (0..WARMUP) |_| {
@@ -620,7 +642,7 @@ fn benchHelpMedium(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
     var total_bytes: usize = 0;
@@ -659,7 +681,7 @@ fn benchBashCompletionMedium(_: std.mem.Allocator) !BenchResult {
     }
     counter.reset();
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
     var total_allocs: usize = 0;
     var total_frees: usize = 0;
     var total_bytes: usize = 0;
@@ -696,7 +718,7 @@ fn benchLevenshtein() !BenchResult {
         _ = util.suggestClosest("serch", choices, 3);
     }
 
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
 
     for (0..ITERATIONS * 10) |_| {
         _ = util.suggestClosest("staus", choices, 3);
@@ -781,7 +803,7 @@ fn printResult(name: []const u8, bench: BenchResult, iterations: u64) void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

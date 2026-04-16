@@ -85,16 +85,22 @@ fn parseTiers(allocator: std.mem.Allocator, json_bytes: []const u8) ![]JsonTier 
     return result;
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
+    const stderr = &stderr_writer.interface;
+    defer stderr.flush() catch {};
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    const stdout = &stdout_writer.interface;
+    defer stdout.flush() catch {};
 
     if (args.len < 3) {
-        const stderr = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
         try stderr.print("Usage: compare-bench <baseline.json> <current.json> [threshold]\n", .{});
         try stderr.print("  Default threshold: 20 percent\n", .{});
         std.process.exit(2);
@@ -107,30 +113,29 @@ pub fn main() !void {
     } else 20.0;
 
     // Read files
-    const baseline_bytes = std.fs.cwd().readFileAlloc(allocator, baseline_path, 10 * 1024 * 1024) catch |err| {
-        std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0).print("Error reading baseline: {s}: {}\n", .{ baseline_path, err }) catch {};
+    const baseline_bytes = std.Io.Dir.cwd().readFileAlloc(io, baseline_path, allocator, .limited(10 * 1024 * 1024)) catch |err| {
+        stderr.print("Error reading baseline: {s}: {}\n", .{ baseline_path, err }) catch {};
         std.process.exit(2);
     };
     defer allocator.free(baseline_bytes);
 
-    const current_bytes = std.fs.cwd().readFileAlloc(allocator, current_path, 10 * 1024 * 1024) catch |err| {
-        std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0).print("Error reading current: {s}: {}\n", .{ current_path, err }) catch {};
+    const current_bytes = std.Io.Dir.cwd().readFileAlloc(io, current_path, allocator, .limited(10 * 1024 * 1024)) catch |err| {
+        stderr.print("Error reading current: {s}: {}\n", .{ current_path, err }) catch {};
         std.process.exit(2);
     };
     defer allocator.free(current_bytes);
 
     // Parse
     const baseline_tiers = parseTiers(allocator, baseline_bytes) catch |err| {
-        std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0).print("Error parsing baseline JSON: {}\n", .{err}) catch {};
+        stderr.print("Error parsing baseline JSON: {}\n", .{err}) catch {};
         std.process.exit(2);
     };
     const current_tiers = parseTiers(allocator, current_bytes) catch |err| {
-        std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0).print("Error parsing current JSON: {}\n", .{err}) catch {};
+        stderr.print("Error parsing current JSON: {}\n", .{err}) catch {};
         std.process.exit(2);
     };
 
     // Compare
-    const stdout = std.Io.File.stdout().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
     try stdout.print("\n  Benchmark Comparison (threshold: {d:.0})\n", .{threshold});
     try stdout.print("  =======================================\n\n", .{});
     try stdout.print("  {s:<8} {s:<24} {s:>14} {s:>14} {s:>8} {s:>6}\n", .{

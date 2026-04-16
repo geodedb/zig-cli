@@ -17,9 +17,10 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     defer arena.deinit();
     const esc_alloc = arena.allocator();
 
-    var list: std.ArrayList(u8) = .empty;
-    list.ensureTotalCapacity(allocator, 4096) catch {};
-    const w = list.writer(allocator);
+    var buf: std.Io.Writer.Allocating = .init(allocator);
+    errdefer buf.deinit();
+    buf.ensureUnusedCapacity(4096) catch {};
+    const w = &buf.writer;
 
     // Header
     try w.print("# PowerShell completion for {s}\n", .{cmd.name});
@@ -88,7 +89,7 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     try w.writeAll("    $completions | ForEach-Object { $_ }\n");
     try w.print("}}\n", .{});
 
-    return list.toOwnedSlice(allocator);
+    return buf.toOwnedSlice();
 }
 
 /// Generate switch cases for command paths

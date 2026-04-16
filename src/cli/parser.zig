@@ -519,10 +519,10 @@ pub const Parser = struct {
             // to avoid page_allocator overhead, matching env.zig pattern.
             var buf: [4096]u8 = undefined;
             var fba = std.heap.FixedBufferAllocator.init(&buf);
-            const val = std.process.getEnvVarOwned(fba.allocator(), name) catch return null;
+            const val = std.Io.Threaded.global_single_threaded.environ.process_environ.getAlloc(fba.allocator(), name) catch return null;
             return val;
         }
-        return std.posix.getenv(name);
+        return std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix(name);
     }
 
     /// Apply default values to flags that were not set during parsing,
@@ -799,7 +799,11 @@ pub fn run(root: *const Command, argv: []const []const u8, allocator: Allocator)
     var parser = Parser.init(allocator, root, version, "");
 
     var result = parser.parse(argv) catch |err| {
-        const stderr = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var stderr_buf: [4096]u8 = undefined;
+        var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
+        const stderr = &stderr_writer.interface;
+        defer stderr.flush() catch {};
         try formatParseError(&parser, err, stderr);
 
         // Show help for the current command on error
@@ -1996,7 +2000,7 @@ test "parser: subcommand env defaults are applied" {
     if (comptime builtin.os.tag == .windows) return;
 
     // Verify HOME is set so this test is meaningful
-    const home_val = std.posix.getenv("HOME") orelse return;
+    const home_val = std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix("HOME") orelse return;
 
     const subcmd = Command{
         .name = "sub",
@@ -2031,7 +2035,7 @@ test "parser: root flag env still works (regression check)" {
     if (comptime builtin.os.tag == .windows) return;
 
     // Use HOME which is set on all POSIX test systems
-    const home_val = std.posix.getenv("HOME") orelse return;
+    const home_val = std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix("HOME") orelse return;
 
     const root = Command{
         .name = "test",
@@ -2060,7 +2064,7 @@ test "parser: subcommand env flag does not override CLI flag" {
     if (comptime builtin.os.tag == .windows) return;
 
     // Ensure HOME is set
-    _ = std.posix.getenv("HOME") orelse return;
+    _ = std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix("HOME") orelse return;
 
     const subcmd = Command{
         .name = "sub",

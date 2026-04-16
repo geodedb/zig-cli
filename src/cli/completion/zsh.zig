@@ -89,8 +89,10 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     defer arena.deinit();
     const esc_alloc = arena.allocator();
 
-    var aw: std.Io.Writer.Allocating = try .initCapacity(allocator, 4096);
-    const w = &aw.writer;
+    var buf: std.Io.Writer.Allocating = .init(allocator);
+    errdefer buf.deinit();
+    buf.ensureUnusedCapacity(4096) catch {};
+    const w = &buf.writer;
 
     try w.print("#compdef {s}\n\n", .{cmd.name});
     try w.print("# Zsh completion for {s}\n", .{cmd.name});
@@ -132,8 +134,7 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     // Entry point
     try w.print("_{s}\n", .{cmd.name});
 
-    var al = aw.toArrayList();
-    return try al.toOwnedSlice(allocator);
+    return buf.toOwnedSlice();
 }
 
 /// Generate active help support functions for zsh

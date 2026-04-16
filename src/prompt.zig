@@ -44,6 +44,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+inline fn globalIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 /// Error types for prompt operations
 pub const PromptError = error{
     /// Input was cancelled (Ctrl+C or EOF)
@@ -72,21 +76,64 @@ pub const InputConfig = struct {
     allow_empty: bool = true,
 };
 
+/// Read a single line (up to '\n', exclusive) into a newly-allocated slice.
+/// Consumes the trailing '\n' if present. Returns null on EOF with no data buffered.
+fn readLineAlloc(reader: *std.Io.Reader, allocator: std.mem.Allocator) PromptError!?[]u8 {
+    const slice = reader.takeDelimiterExclusive('\n') catch |err| switch (err) {
+        error.EndOfStream => return null,
+        error.StreamTooLong => return PromptError.ReadError,
+        error.ReadFailed => return PromptError.ReadError,
+    };
+    const out = allocator.dupe(u8, slice) catch return PromptError.OutOfMemory;
+    // takeDelimiterExclusive leaves the delimiter in the buffer; discard it.
+    _ = reader.takeByte() catch {};
+    return out;
+}
+
+/// Read a single line into `buf`. Consumes the trailing '\n' if present.
+/// Returns the slice of `buf` that was filled, or null on EOF.
+fn readLineInto(reader: *std.Io.Reader, buf: []u8) PromptError!?[]u8 {
+    const slice = reader.takeDelimiterExclusive('\n') catch |err| switch (err) {
+        error.EndOfStream => return null,
+        error.StreamTooLong => return PromptError.ReadError,
+        error.ReadFailed => return PromptError.ReadError,
+    };
+    if (slice.len > buf.len) return PromptError.ReadError;
+    @memcpy(buf[0..slice.len], slice);
+    const len = slice.len;
+    // takeDelimiterExclusive leaves the delimiter in the buffer; discard it.
+    _ = reader.takeByte() catch {};
+    return buf[0..len];
+}
+
 /// Read a line of text input from the user
 pub fn input(message: []const u8, config: InputConfig, allocator: std.mem.Allocator) PromptError![]const u8 {
-    const stdin = std.Io.getStdIn();
-    const stdout = std.Io.getStdOut();
+    const io = globalIo();
+    const stdin_file = std.Io.File.stdin();
+    const stdout_file = std.Io.File.stdout();
 
     // Check if interactive
-    if (!stdin.isTty()) {
+    const is_tty = stdin_file.isTty(io) catch false;
+    if (!is_tty) {
         return PromptError.NotInteractive;
     }
 
-    return inputInternal(stdin.reader(), stdout.writer(), message, config, allocator);
+    // Use a buffer large enough for the maximum line length plus room for the
+    // delimiter. takeDelimiterExclusive works on the reader's internal buffer.
+    const rbuf_size = @min(@max(config.max_length + 2, 4096), 65536);
+    const rbuf = allocator.alloc(u8, rbuf_size) catch return PromptError.OutOfMemory;
+    defer allocator.free(rbuf);
+    var reader_state = stdin_file.reader(io, rbuf);
+
+    var wbuf: [4096]u8 = undefined;
+    var writer_state = stdout_file.writer(io, &wbuf);
+    defer writer_state.interface.flush() catch {};
+
+    return inputInternal(&reader_state.interface, &writer_state.interface, message, config, allocator);
 }
 
-/// Internal input implementation that accepts generic reader/writer for testability.
-fn inputInternal(reader: anytype, writer: anytype, message: []const u8, config: InputConfig, allocator: std.mem.Allocator) PromptError![]const u8 {
+/// Internal input implementation that accepts std.Io reader/writer for testability.
+fn inputInternal(reader: *std.Io.Reader, writer: *std.Io.Writer, message: []const u8, config: InputConfig, allocator: std.mem.Allocator) PromptError![]const u8 {
     while (true) {
         // Print prompt
         writer.print("{s}", .{message}) catch return PromptError.ReadError;
@@ -94,23 +141,16 @@ fn inputInternal(reader: anytype, writer: anytype, message: []const u8, config: 
             writer.print(" [{s}]", .{def}) catch return PromptError.ReadError;
         }
         writer.print(": ", .{}) catch return PromptError.ReadError;
+        writer.flush() catch return PromptError.ReadError;
 
-        // Read line with allocator-backed buffer.
-        // Use at least 1024 bytes (the original default), but grow up to
-        // max_length + 1 for prompts that allow longer input. Cap at 65536.
-        const buf_size = @min(@max(config.max_length + 1, 1024), 65536);
-        const buffer = allocator.alloc(u8, buf_size) catch return PromptError.OutOfMemory;
-        defer allocator.free(buffer);
-        const line = reader.readUntilDelimiterOrEof(buffer, '\n') catch {
-            return PromptError.ReadError;
-        };
-
-        if (line == null) {
-            // EOF
+        const line_opt = try readLineAlloc(reader, allocator);
+        if (line_opt == null) {
             return PromptError.Cancelled;
         }
+        const line = line_opt.?;
+        defer allocator.free(line);
 
-        const trimmed = std.mem.trim(u8, line.?, " \t\r");
+        const trimmed = std.mem.trim(u8, line, " \t\r");
 
         // Handle empty input
         if (trimmed.len == 0) {
@@ -119,6 +159,7 @@ fn inputInternal(reader: anytype, writer: anytype, message: []const u8, config: 
             }
             if (!config.allow_empty) {
                 writer.print("Input cannot be empty. Please try again.\n", .{}) catch {};
+                writer.flush() catch {};
                 continue;
             }
             return allocator.dupe(u8, "") catch return PromptError.OutOfMemory;
@@ -127,6 +168,7 @@ fn inputInternal(reader: anytype, writer: anytype, message: []const u8, config: 
         // Check length
         if (trimmed.len > config.max_length) {
             writer.print("Input too long (max {d} characters). Please try again.\n", .{config.max_length}) catch {};
+            writer.flush() catch {};
             continue;
         }
 
@@ -134,6 +176,7 @@ fn inputInternal(reader: anytype, writer: anytype, message: []const u8, config: 
         if (config.validator) |validate| {
             if (!validate(trimmed)) {
                 writer.print("{s}. Please try again.\n", .{config.validation_error}) catch {};
+                writer.flush() catch {};
                 continue;
             }
         }
@@ -153,22 +196,33 @@ fn inputInternal(reader: anytype, writer: anytype, message: []const u8, config: 
 ///         allocator.free(pw);
 ///     }
 pub fn password(message: []const u8, allocator: std.mem.Allocator) PromptError![]const u8 {
-    const stdin = std.Io.getStdIn();
-    const stdout = std.Io.getStdOut();
+    const io = globalIo();
+    const stdin_file = std.Io.File.stdin();
+    const stdout_file = std.Io.File.stdout();
 
     // Check if interactive
-    if (!stdin.isTty()) {
+    const is_tty = stdin_file.isTty(io) catch false;
+    if (!is_tty) {
         return PromptError.NotInteractive;
     }
 
+    var wbuf: [4096]u8 = undefined;
+    var stdout_writer = stdout_file.writer(io, &wbuf);
+    const stdout_w = &stdout_writer.interface;
+
     // Print prompt
-    stdout.writer().print("{s}", .{message}) catch return PromptError.ReadError;
+    stdout_w.print("{s}", .{message}) catch return PromptError.ReadError;
+    stdout_w.flush() catch return PromptError.ReadError;
+
+    var rbuf: [2048]u8 = undefined;
+    var stdin_reader = stdin_file.reader(io, &rbuf);
+    const stdin_r = &stdin_reader.interface;
 
     // Disable echo
     if (comptime builtin.os.tag == .windows) {
         // Windows: manipulate console mode to suppress echo
         const windows = std.os.windows;
-        const handle = stdin.handle;
+        const handle = stdin_file.handle;
         var original_mode: windows.DWORD = undefined;
         if (windows.kernel32.GetConsoleMode(handle, &original_mode) != 0) {
             // Clear ENABLE_ECHO_INPUT (0x0004) to suppress echo
@@ -176,82 +230,73 @@ pub fn password(message: []const u8, allocator: std.mem.Allocator) PromptError![
             _ = windows.kernel32.SetConsoleMode(handle, new_mode);
             defer {
                 _ = windows.kernel32.SetConsoleMode(handle, original_mode);
-                stdout.writer().print("\n", .{}) catch {};
+                stdout_w.print("\n", .{}) catch {};
+                stdout_w.flush() catch {};
             }
-            return passwordInternal(stdin.reader(), allocator);
+            return passwordInternal(stdin_r, allocator);
         } else {
             // GetConsoleMode failed -- fall back to simple read
-            return inputSimple(stdin, allocator);
+            return passwordInternal(stdin_r, allocator);
         }
     } else {
-        var termios = std.posix.tcgetattr(stdin.handle) catch return PromptError.ReadError;
+        var termios = std.posix.tcgetattr(stdin_file.handle) catch return PromptError.ReadError;
         const original = termios;
 
         // Disable ECHO
         termios.lflag.ECHO = false;
-        std.posix.tcsetattr(stdin.handle, .FLUSH, termios) catch return PromptError.ReadError;
+        std.posix.tcsetattr(stdin_file.handle, .FLUSH, termios) catch return PromptError.ReadError;
 
         defer {
             // Restore original settings
-            std.posix.tcsetattr(stdin.handle, .FLUSH, original) catch {};
-            stdout.writer().print("\n", .{}) catch {};
+            std.posix.tcsetattr(stdin_file.handle, .FLUSH, original) catch {};
+            stdout_w.print("\n", .{}) catch {};
+            stdout_w.flush() catch {};
         }
 
-        return passwordInternal(stdin.reader(), allocator);
+        return passwordInternal(stdin_r, allocator);
     }
 }
 
-/// Internal password implementation that accepts a generic reader for testability.
+/// Internal password implementation that accepts a std.Io.Reader for testability.
 /// Reads a single line and returns a heap-allocated trimmed copy.
-fn passwordInternal(reader: anytype, allocator: std.mem.Allocator) PromptError![]const u8 {
-    var buffer: [1024]u8 = undefined;
-    defer @memset(&buffer, 0);
-    const line = reader.readUntilDelimiterOrEof(&buffer, '\n') catch {
-        return PromptError.ReadError;
-    };
-
-    if (line == null) {
+fn passwordInternal(reader: *std.Io.Reader, allocator: std.mem.Allocator) PromptError![]const u8 {
+    const line_opt = try readLineAlloc(reader, allocator);
+    if (line_opt == null) {
         return PromptError.Cancelled;
     }
-
-    return allocator.dupe(u8, std.mem.trim(u8, line.?, " \t\r")) catch return PromptError.OutOfMemory;
-}
-
-/// Simple line input fallback (used for password on Windows).
-/// The returned slice is heap-allocated; callers should zero it before
-/// freeing if it may contain sensitive data.
-fn inputSimple(stdin: std.Io.File, allocator: std.mem.Allocator) PromptError![]const u8 {
-    var buffer: [1024]u8 = undefined;
-    defer @memset(&buffer, 0);
-    const line = stdin.reader().readUntilDelimiterOrEof(&buffer, '\n') catch {
-        return PromptError.ReadError;
-    };
-
-    if (line == null) {
-        return PromptError.Cancelled;
+    const line = line_opt.?;
+    defer {
+        @memset(line, 0);
+        allocator.free(line);
     }
 
-    const stdout = std.Io.getStdOut();
-    stdout.writer().print("\n", .{}) catch {};
-
-    return allocator.dupe(u8, std.mem.trim(u8, line.?, " \t\r")) catch return PromptError.OutOfMemory;
+    return allocator.dupe(u8, std.mem.trim(u8, line, " \t\r")) catch return PromptError.OutOfMemory;
 }
 
 /// Ask for yes/no confirmation
 pub fn confirm(message: []const u8, default: bool) PromptError!bool {
-    const stdin = std.Io.getStdIn();
-    const stdout = std.Io.getStdOut();
+    const io = globalIo();
+    const stdin_file = std.Io.File.stdin();
+    const stdout_file = std.Io.File.stdout();
 
     // Check if interactive
-    if (!stdin.isTty()) {
+    const is_tty = stdin_file.isTty(io) catch false;
+    if (!is_tty) {
         return PromptError.NotInteractive;
     }
 
-    return confirmInternal(stdin.reader(), stdout.writer(), message, default);
+    var rbuf: [256]u8 = undefined;
+    var reader_state = stdin_file.reader(io, &rbuf);
+
+    var wbuf: [4096]u8 = undefined;
+    var writer_state = stdout_file.writer(io, &wbuf);
+    defer writer_state.interface.flush() catch {};
+
+    return confirmInternal(&reader_state.interface, &writer_state.interface, message, default);
 }
 
-/// Internal confirm implementation that accepts generic reader/writer for testability.
-fn confirmInternal(reader: anytype, writer: anytype, message: []const u8, default: bool) PromptError!bool {
+/// Internal confirm implementation that accepts std.Io reader/writer for testability.
+fn confirmInternal(reader: *std.Io.Reader, writer: *std.Io.Writer, message: []const u8, default: bool) PromptError!bool {
     while (true) {
         // Print prompt with default indicator
         if (default) {
@@ -259,18 +304,17 @@ fn confirmInternal(reader: anytype, writer: anytype, message: []const u8, defaul
         } else {
             writer.print("{s} [y/N]: ", .{message}) catch return PromptError.ReadError;
         }
+        writer.flush() catch return PromptError.ReadError;
 
         // Read response
         var buffer: [64]u8 = undefined;
-        const line = reader.readUntilDelimiterOrEof(&buffer, '\n') catch {
-            return PromptError.ReadError;
-        };
-
-        if (line == null) {
+        const line_opt = try readLineInto(reader, &buffer);
+        if (line_opt == null) {
             return PromptError.Cancelled;
         }
+        const line = line_opt.?;
 
-        const trimmed = std.mem.trim(u8, line.?, " \t\r");
+        const trimmed = std.mem.trim(u8, line, " \t\r");
 
         // Handle empty input (use default)
         if (trimmed.len == 0) {
@@ -284,30 +328,45 @@ fn confirmInternal(reader: anytype, writer: anytype, message: []const u8, defaul
             if (c == 'n') return false;
         }
 
-        // Check for full words
-        const lower = std.ascii.lowerString(&buffer, trimmed);
-        if (std.mem.eql(u8, lower, "yes")) return true;
-        if (std.mem.eql(u8, lower, "no")) return false;
+        // Check for full words (copy to a scratch buffer because `trimmed`
+        // aliases the reader's internal buffer, and lowerString writes in place).
+        var lower_buf: [64]u8 = undefined;
+        if (trimmed.len <= lower_buf.len) {
+            @memcpy(lower_buf[0..trimmed.len], trimmed);
+            const lower = std.ascii.lowerString(lower_buf[0..trimmed.len], lower_buf[0..trimmed.len]);
+            if (std.mem.eql(u8, lower, "yes")) return true;
+            if (std.mem.eql(u8, lower, "no")) return false;
+        }
 
         writer.print("Please enter 'y' or 'n'.\n", .{}) catch {};
+        writer.flush() catch {};
     }
 }
 
 /// Select one option from a list
 pub fn select(message: []const u8, options: []const []const u8) PromptError!usize {
-    const stdin = std.Io.getStdIn();
-    const stdout = std.Io.getStdOut();
+    const io = globalIo();
+    const stdin_file = std.Io.File.stdin();
+    const stdout_file = std.Io.File.stdout();
 
     // Check if interactive
-    if (!stdin.isTty()) {
+    const is_tty = stdin_file.isTty(io) catch false;
+    if (!is_tty) {
         return PromptError.NotInteractive;
     }
 
-    return selectInternal(stdin.reader(), stdout.writer(), message, options);
+    var rbuf: [256]u8 = undefined;
+    var reader_state = stdin_file.reader(io, &rbuf);
+
+    var wbuf: [4096]u8 = undefined;
+    var writer_state = stdout_file.writer(io, &wbuf);
+    defer writer_state.interface.flush() catch {};
+
+    return selectInternal(&reader_state.interface, &writer_state.interface, message, options);
 }
 
-/// Internal select implementation that accepts generic reader/writer for testability.
-fn selectInternal(reader: anytype, writer: anytype, message: []const u8, options: []const []const u8) PromptError!usize {
+/// Internal select implementation that accepts std.Io reader/writer for testability.
+fn selectInternal(reader: *std.Io.Reader, writer: *std.Io.Writer, message: []const u8, options: []const []const u8) PromptError!usize {
     if (options.len == 0) {
         return PromptError.InvalidInput;
     }
@@ -319,22 +378,22 @@ fn selectInternal(reader: anytype, writer: anytype, message: []const u8, options
             writer.print("  {d}. {s}\n", .{ i + 1, opt }) catch return PromptError.ReadError;
         }
         writer.print("Enter choice [1-{d}]: ", .{options.len}) catch return PromptError.ReadError;
+        writer.flush() catch return PromptError.ReadError;
 
         // Read response
         var buffer: [64]u8 = undefined;
-        const line = reader.readUntilDelimiterOrEof(&buffer, '\n') catch {
-            return PromptError.ReadError;
-        };
-
-        if (line == null) {
+        const line_opt = try readLineInto(reader, &buffer);
+        if (line_opt == null) {
             return PromptError.Cancelled;
         }
+        const line = line_opt.?;
 
-        const trimmed = std.mem.trim(u8, line.?, " \t\r");
+        const trimmed = std.mem.trim(u8, line, " \t\r");
 
         // Parse number
         const choice = std.fmt.parseInt(usize, trimmed, 10) catch {
             writer.print("Please enter a number between 1 and {d}.\n", .{options.len}) catch {};
+            writer.flush() catch {};
             continue;
         };
 
@@ -343,24 +402,34 @@ fn selectInternal(reader: anytype, writer: anytype, message: []const u8, options
         }
 
         writer.print("Please enter a number between 1 and {d}.\n", .{options.len}) catch {};
+        writer.flush() catch {};
     }
 }
 
 /// Select multiple options from a list
 pub fn multiSelect(message: []const u8, options: []const []const u8, allocator: std.mem.Allocator) PromptError![]usize {
-    const stdin = std.Io.getStdIn();
-    const stdout = std.Io.getStdOut();
+    const io = globalIo();
+    const stdin_file = std.Io.File.stdin();
+    const stdout_file = std.Io.File.stdout();
 
     // Check if interactive
-    if (!stdin.isTty()) {
+    const is_tty = stdin_file.isTty(io) catch false;
+    if (!is_tty) {
         return PromptError.NotInteractive;
     }
 
-    return multiSelectInternal(stdin.reader(), stdout.writer(), message, options, allocator);
+    var rbuf: [1024]u8 = undefined;
+    var reader_state = stdin_file.reader(io, &rbuf);
+
+    var wbuf: [4096]u8 = undefined;
+    var writer_state = stdout_file.writer(io, &wbuf);
+    defer writer_state.interface.flush() catch {};
+
+    return multiSelectInternal(&reader_state.interface, &writer_state.interface, message, options, allocator);
 }
 
-/// Internal multiSelect implementation that accepts generic reader/writer for testability.
-fn multiSelectInternal(reader: anytype, writer: anytype, message: []const u8, options: []const []const u8, allocator: std.mem.Allocator) PromptError![]usize {
+/// Internal multiSelect implementation that accepts std.Io reader/writer for testability.
+fn multiSelectInternal(reader: *std.Io.Reader, writer: *std.Io.Writer, message: []const u8, options: []const []const u8, allocator: std.mem.Allocator) PromptError![]usize {
     if (options.len == 0) {
         return PromptError.InvalidInput;
     }
@@ -372,18 +441,17 @@ fn multiSelectInternal(reader: anytype, writer: anytype, message: []const u8, op
             writer.print("  {d}. {s}\n", .{ i + 1, opt }) catch return PromptError.ReadError;
         }
         writer.print("Enter choices (comma-separated, e.g., 1,3,4): ", .{}) catch return PromptError.ReadError;
+        writer.flush() catch return PromptError.ReadError;
 
         // Read response
         var buffer: [256]u8 = undefined;
-        const line = reader.readUntilDelimiterOrEof(&buffer, '\n') catch {
-            return PromptError.ReadError;
-        };
-
-        if (line == null) {
+        const line_opt = try readLineInto(reader, &buffer);
+        if (line_opt == null) {
             return PromptError.Cancelled;
         }
+        const line = line_opt.?;
 
-        const trimmed = std.mem.trim(u8, line.?, " \t\r");
+        const trimmed = std.mem.trim(u8, line, " \t\r");
 
         // Parse selections
         var selections: std.ArrayList(usize) = .empty;
@@ -411,6 +479,7 @@ fn multiSelectInternal(reader: anytype, writer: anytype, message: []const u8, op
         if (!valid or selections.items.len == 0) {
             selections.deinit(allocator);
             writer.print("Please enter valid numbers between 1 and {d}.\n", .{options.len}) catch {};
+            writer.flush() catch {};
             continue;
         }
 
@@ -439,22 +508,22 @@ test "PromptError is error type" {
 // --- inputInternal tests ---
 
 test "input: valid input returned" {
-    var reader_buf = std.Io.fixedBufferStream("hello world\n");
+    var reader = std.Io.Reader.fixed("hello world\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{}, std.testing.allocator);
+    const result = try inputInternal(&reader, &writer, "Name", .{}, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualStrings("hello world", result);
 }
 
 test "input: empty with default returns default" {
-    var reader_buf = std.Io.fixedBufferStream("\n");
+    var reader = std.Io.Reader.fixed("\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{ .default = "Alice" }, std.testing.allocator);
+    const result = try inputInternal(&reader, &writer, "Name", .{ .default = "Alice" }, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualStrings("Alice", result);
@@ -462,30 +531,30 @@ test "input: empty with default returns default" {
 
 test "input: empty with allow_empty=false retries then accepts" {
     // First line is empty (triggers retry), second line has valid input
-    var reader_buf = std.Io.fixedBufferStream("\ngood\n");
+    var reader = std.Io.Reader.fixed("\ngood\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{ .allow_empty = false }, std.testing.allocator);
+    const result = try inputInternal(&reader, &writer, "Name", .{ .allow_empty = false }, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualStrings("good", result);
     // Verify retry message was printed
-    const output = writer.getWritten();
+    const output = writer.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "Input cannot be empty") != null);
 }
 
 test "input: max_length exceeded retries then accepts" {
     // First line is too long, second is within limit
-    var reader_buf = std.Io.fixedBufferStream("toolong\nok\n");
+    var reader = std.Io.Reader.fixed("toolong\nok\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try inputInternal(reader_buf.reader(), writer.writer(), "Val", .{ .max_length = 3 }, std.testing.allocator);
+    const result = try inputInternal(&reader, &writer, "Val", .{ .max_length = 3 }, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualStrings("ok", result);
-    const output = writer.getWritten();
+    const output = writer.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "Input too long") != null);
 }
 
@@ -500,37 +569,37 @@ test "input: validator rejection retries then accepts" {
     };
 
     // "abc123" fails validation, "abc" passes
-    var reader_buf = std.Io.fixedBufferStream("abc123\nabc\n");
+    var reader = std.Io.Reader.fixed("abc123\nabc\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{
+    const result = try inputInternal(&reader, &writer, "Name", .{
         .validator = &S.noDigits,
         .validation_error = "No digits allowed",
     }, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualStrings("abc", result);
-    const output = writer.getWritten();
+    const output = writer.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "No digits allowed") != null);
 }
 
 test "input: EOF returns Cancelled" {
     // Empty stream (no newline) = EOF
-    var reader_buf = std.Io.fixedBufferStream("");
+    var reader = std.Io.Reader.fixed("");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = inputInternal(reader_buf.reader(), writer.writer(), "Name", .{}, std.testing.allocator);
+    const result = inputInternal(&reader, &writer, "Name", .{}, std.testing.allocator);
     try std.testing.expectError(PromptError.Cancelled, result);
 }
 
 test "input: empty with allow_empty=true returns empty string" {
-    var reader_buf = std.Io.fixedBufferStream("\n");
+    var reader = std.Io.Reader.fixed("\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{ .allow_empty = true }, std.testing.allocator);
+    const result = try inputInternal(&reader, &writer, "Name", .{ .allow_empty = true }, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqualStrings("", result);
@@ -539,9 +608,9 @@ test "input: empty with allow_empty=true returns empty string" {
 // --- passwordInternal tests ---
 
 test "password: valid input returned" {
-    var reader_buf = std.Io.fixedBufferStream("s3cret\n");
+    var reader = std.Io.Reader.fixed("s3cret\n");
 
-    const result = try passwordInternal(reader_buf.reader(), std.testing.allocator);
+    const result = try passwordInternal(&reader, std.testing.allocator);
     defer {
         @memset(@constCast(result), 0);
         std.testing.allocator.free(result);
@@ -551,16 +620,16 @@ test "password: valid input returned" {
 }
 
 test "password: EOF returns Cancelled" {
-    var reader_buf = std.Io.fixedBufferStream("");
+    var reader = std.Io.Reader.fixed("");
 
-    const result = passwordInternal(reader_buf.reader(), std.testing.allocator);
+    const result = passwordInternal(&reader, std.testing.allocator);
     try std.testing.expectError(PromptError.Cancelled, result);
 }
 
 test "password: input is trimmed" {
-    var reader_buf = std.Io.fixedBufferStream("  mypass  \n");
+    var reader = std.Io.Reader.fixed("  mypass  \n");
 
-    const result = try passwordInternal(reader_buf.reader(), std.testing.allocator);
+    const result = try passwordInternal(&reader, std.testing.allocator);
     defer {
         @memset(@constCast(result), 0);
         std.testing.allocator.free(result);
@@ -572,163 +641,163 @@ test "password: input is trimmed" {
 // --- confirmInternal tests ---
 
 test "confirm: y returns true" {
-    var reader_buf = std.Io.fixedBufferStream("y\n");
+    var reader = std.Io.Reader.fixed("y\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
+    const result = try confirmInternal(&reader, &writer, "Continue?", false);
     try std.testing.expect(result == true);
 }
 
 test "confirm: Y returns true" {
-    var reader_buf = std.Io.fixedBufferStream("Y\n");
+    var reader = std.Io.Reader.fixed("Y\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
+    const result = try confirmInternal(&reader, &writer, "Continue?", false);
     try std.testing.expect(result == true);
 }
 
 test "confirm: yes returns true" {
-    var reader_buf = std.Io.fixedBufferStream("yes\n");
+    var reader = std.Io.Reader.fixed("yes\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
+    const result = try confirmInternal(&reader, &writer, "Continue?", false);
     try std.testing.expect(result == true);
 }
 
 test "confirm: n returns false" {
-    var reader_buf = std.Io.fixedBufferStream("n\n");
+    var reader = std.Io.Reader.fixed("n\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", true);
+    const result = try confirmInternal(&reader, &writer, "Continue?", true);
     try std.testing.expect(result == false);
 }
 
 test "confirm: N returns false" {
-    var reader_buf = std.Io.fixedBufferStream("N\n");
+    var reader = std.Io.Reader.fixed("N\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", true);
+    const result = try confirmInternal(&reader, &writer, "Continue?", true);
     try std.testing.expect(result == false);
 }
 
 test "confirm: no returns false" {
-    var reader_buf = std.Io.fixedBufferStream("no\n");
+    var reader = std.Io.Reader.fixed("no\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", true);
+    const result = try confirmInternal(&reader, &writer, "Continue?", true);
     try std.testing.expect(result == false);
 }
 
 test "confirm: empty returns default true" {
-    var reader_buf = std.Io.fixedBufferStream("\n");
+    var reader = std.Io.Reader.fixed("\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", true);
+    const result = try confirmInternal(&reader, &writer, "Continue?", true);
     try std.testing.expect(result == true);
 }
 
 test "confirm: empty returns default false" {
-    var reader_buf = std.Io.fixedBufferStream("\n");
+    var reader = std.Io.Reader.fixed("\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
+    const result = try confirmInternal(&reader, &writer, "Continue?", false);
     try std.testing.expect(result == false);
 }
 
 test "confirm: invalid input retries then accepts" {
     // "maybe" is invalid, then "y" is valid
-    var reader_buf = std.Io.fixedBufferStream("maybe\ny\n");
+    var reader = std.Io.Reader.fixed("maybe\ny\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
+    const result = try confirmInternal(&reader, &writer, "Continue?", false);
     try std.testing.expect(result == true);
-    const output = writer.getWritten();
+    const output = writer.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "Please enter 'y' or 'n'.") != null);
 }
 
 test "confirm: EOF returns Cancelled" {
-    var reader_buf = std.Io.fixedBufferStream("");
+    var reader = std.Io.Reader.fixed("");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
-    const result = confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
+    const result = confirmInternal(&reader, &writer, "Continue?", false);
     try std.testing.expectError(PromptError.Cancelled, result);
 }
 
 // --- selectInternal tests ---
 
 test "select: valid 1-based index" {
-    var reader_buf = std.Io.fixedBufferStream("2\n");
+    var reader = std.Io.Reader.fixed("2\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
-    const result = try selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
+    const result = try selectInternal(&reader, &writer, "Pick:", options);
     try std.testing.expectEqual(@as(usize, 1), result); // 0-based index
 }
 
 test "select: out-of-range retries then accepts" {
     // "5" is out of range, then "1" is valid
-    var reader_buf = std.Io.fixedBufferStream("5\n1\n");
+    var reader = std.Io.Reader.fixed("5\n1\n");
     var writer_buf: [8192]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
-    const result = try selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
+    const result = try selectInternal(&reader, &writer, "Pick:", options);
     try std.testing.expectEqual(@as(usize, 0), result);
-    const output = writer.getWritten();
+    const output = writer.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "Please enter a number between 1 and 3.") != null);
 }
 
 test "select: non-numeric retries then accepts" {
     // "abc" is non-numeric, then "3" is valid
-    var reader_buf = std.Io.fixedBufferStream("abc\n3\n");
+    var reader = std.Io.Reader.fixed("abc\n3\n");
     var writer_buf: [8192]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
-    const result = try selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
+    const result = try selectInternal(&reader, &writer, "Pick:", options);
     try std.testing.expectEqual(@as(usize, 2), result);
 }
 
 test "select: empty options returns InvalidInput" {
-    var reader_buf = std.Io.fixedBufferStream("1\n");
+    var reader = std.Io.Reader.fixed("1\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options: []const []const u8 = &.{};
-    const result = selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
+    const result = selectInternal(&reader, &writer, "Pick:", options);
     try std.testing.expectError(PromptError.InvalidInput, result);
 }
 
 test "select: EOF returns Cancelled" {
-    var reader_buf = std.Io.fixedBufferStream("");
+    var reader = std.Io.Reader.fixed("");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta" };
-    const result = selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
+    const result = selectInternal(&reader, &writer, "Pick:", options);
     try std.testing.expectError(PromptError.Cancelled, result);
 }
 
 // --- multiSelectInternal tests ---
 
 test "multiSelect: comma-separated parsing" {
-    var reader_buf = std.Io.fixedBufferStream("1,3\n");
+    var reader = std.Io.Reader.fixed("1,3\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
-    const result = try multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
+    const result = try multiSelectInternal(&reader, &writer, "Pick:", options, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqual(@as(usize, 2), result.len);
@@ -738,12 +807,12 @@ test "multiSelect: comma-separated parsing" {
 
 test "multiSelect: out-of-range retries then accepts" {
     // "1,5" has out-of-range 5, retries; then "2" is valid
-    var reader_buf = std.Io.fixedBufferStream("1,5\n2\n");
+    var reader = std.Io.Reader.fixed("1,5\n2\n");
     var writer_buf: [8192]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
-    const result = try multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
+    const result = try multiSelectInternal(&reader, &writer, "Pick:", options, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqual(@as(usize, 1), result.len);
@@ -751,12 +820,12 @@ test "multiSelect: out-of-range retries then accepts" {
 }
 
 test "multiSelect: single selection" {
-    var reader_buf = std.Io.fixedBufferStream("2\n");
+    var reader = std.Io.Reader.fixed("2\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
-    const result = try multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
+    const result = try multiSelectInternal(&reader, &writer, "Pick:", options, std.testing.allocator);
     defer std.testing.allocator.free(result);
 
     try std.testing.expectEqual(@as(usize, 1), result.len);
@@ -764,21 +833,21 @@ test "multiSelect: single selection" {
 }
 
 test "multiSelect: empty options returns InvalidInput" {
-    var reader_buf = std.Io.fixedBufferStream("1\n");
+    var reader = std.Io.Reader.fixed("1\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options: []const []const u8 = &.{};
-    const result = multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
+    const result = multiSelectInternal(&reader, &writer, "Pick:", options, std.testing.allocator);
     try std.testing.expectError(PromptError.InvalidInput, result);
 }
 
 test "multiSelect: EOF returns Cancelled" {
-    var reader_buf = std.Io.fixedBufferStream("");
+    var reader = std.Io.Reader.fixed("");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.Io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.Writer.fixed(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta" };
-    const result = multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
+    const result = multiSelectInternal(&reader, &writer, "Pick:", options, std.testing.allocator);
     try std.testing.expectError(PromptError.Cancelled, result);
 }

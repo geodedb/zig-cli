@@ -25,10 +25,14 @@ pub const TermInfo = struct {
     unicode_supported: bool,
 };
 
+inline fn io() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 /// Get terminal information for stdout
 pub fn getInfo() TermInfo {
     const stdout = std.Io.File.stdout();
-    const is_tty = stdout.isTty();
+    const is_tty = stdout.isTty(io()) catch false;
 
     var width: u16 = 80;
     var height: u16 = 24;
@@ -149,17 +153,17 @@ fn hasNoColor() bool {
 
 /// Check if stdout is a TTY
 pub fn isStdoutTty() bool {
-    return std.Io.File.stdout().isTty();
+    return std.Io.File.stdout().isTty(io()) catch false;
 }
 
 /// Check if stderr is a TTY
 pub fn isStderrTty() bool {
-    return std.Io.File.stderr().isTty();
+    return std.Io.File.stderr().isTty(io()) catch false;
 }
 
 /// Check if stdin is a TTY
 pub fn isStdinTty() bool {
-    return std.Io.File.stdin().isTty();
+    return std.Io.File.stdin().isTty(io()) catch false;
 }
 
 // ============================================================================

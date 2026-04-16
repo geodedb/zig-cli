@@ -16,6 +16,25 @@
 const std = @import("std");
 const tty = @import("tty.zig");
 
+inline fn io() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
+/// Direct-write stderr helper: writes `data` via an ephemeral buffered writer.
+fn stderrWriteAll(data: []const u8) void {
+    var wbuf: [4096]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io(), &wbuf);
+    fw.interface.writeAll(data) catch {};
+    fw.interface.flush() catch {};
+}
+
+fn stderrPrint(comptime fmt: []const u8, args: anytype) !void {
+    var wbuf: [4096]u8 = undefined;
+    var fw = std.Io.File.stderr().writer(io(), &wbuf);
+    try fw.interface.print(fmt, args);
+    try fw.interface.flush();
+}
+
 /// Spinner characters
 pub const SpinnerStyle = enum {
     dots,
@@ -39,7 +58,6 @@ pub const Progress = struct {
     message: []const u8,
     spinner_style: SpinnerStyle,
     frame_index: usize,
-    writer: std.Io.File.DeprecatedWriter,
 
     const Self = @This();
 
@@ -52,12 +70,11 @@ pub const Progress = struct {
             .message = message,
             .spinner_style = .dots,
             .frame_index = 0,
-            .writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
         };
 
         if (self.enabled) {
             // Hide cursor
-            self.writer.print("\x1b[?25l", .{}) catch {};
+            stderrPrint("\x1b[?25l", .{}) catch {};
             self.render() catch {};
         }
 
@@ -71,11 +88,10 @@ pub const Progress = struct {
             .message = message,
             .spinner_style = .dots,
             .frame_index = 0,
-            .writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
         };
 
         if (self.enabled) {
-            self.writer.print("\x1b[?25l", .{}) catch {};
+            stderrPrint("\x1b[?25l", .{}) catch {};
             self.render() catch {};
         }
 
@@ -104,16 +120,16 @@ pub const Progress = struct {
         if (!self.enabled) return;
 
         // Clear line and show cursor
-        self.writer.print("\r\x1b[K\x1b[?25h", .{}) catch {};
+        stderrPrint("\r\x1b[K\x1b[?25h", .{}) catch {};
     }
 
     /// Stop with a completion message
     pub fn stopWithMessage(self: *Self, message: []const u8) void {
         if (self.enabled) {
             // Clear line, show message, show cursor
-            self.writer.print("\r\x1b[K{s}\n\x1b[?25h", .{message}) catch {};
+            stderrPrint("\r\x1b[K{s}\n\x1b[?25h", .{message}) catch {};
         } else {
-            self.writer.print("{s}\n", .{message}) catch {};
+            stderrPrint("{s}\n", .{message}) catch {};
         }
     }
 
@@ -122,7 +138,7 @@ pub const Progress = struct {
         const frame = frames[self.frame_index];
 
         // Clear line and write progress
-        try self.writer.print("\r\x1b[K{s} {s}", .{ frame, self.message });
+        try stderrPrint("\r\x1b[K{s} {s}", .{ frame, self.message });
     }
 };
 
@@ -138,10 +154,20 @@ pub const ProgressBar = struct {
     width: u16,
     enabled: bool,
     message: []const u8,
-    writer: std.Io.File.DeprecatedWriter,
-    render_mutex: std.Thread.Mutex,
+    render_mutex: RenderMutex,
 
     const Self = @This();
+
+    const RenderMutex = struct {
+        inner: std.Io.Mutex = .init,
+
+        fn lock(self: *RenderMutex) void {
+            self.inner.lockUncancelable(io());
+        }
+        fn unlock(self: *RenderMutex) void {
+            self.inner.unlock(io());
+        }
+    };
 
     /// Create a new progress bar
     pub fn init(total: usize, message: []const u8) Self {
@@ -153,7 +179,6 @@ pub const ProgressBar = struct {
             .width = @min(term_info.width - 20, 50),
             .enabled = term_info.is_tty,
             .message = message,
-            .writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
             .render_mutex = .{},
         };
     }
@@ -188,7 +213,7 @@ pub const ProgressBar = struct {
             self.render_mutex.lock();
             defer self.render_mutex.unlock();
             self.render() catch {};
-            self.writer.print("\n", .{}) catch {};
+            stderrPrint("\n", .{}) catch {};
         }
     }
 
@@ -212,12 +237,17 @@ pub const ProgressBar = struct {
 
         const empty = self.width - filled;
 
-        try self.writer.print("\r{s} [", .{self.message});
+        var wbuf: [4096]u8 = undefined;
+        var fw = std.Io.File.stderr().writer(io(), &wbuf);
+        const w = &fw.interface;
 
-        try self.writer.writeByteNTimes('=', filled);
-        try self.writer.writeByteNTimes(' ', empty);
+        try w.print("\r{s} [", .{self.message});
 
-        try self.writer.print("] {d}%", .{percent});
+        try w.splatByteAll('=', filled);
+        try w.splatByteAll(' ', empty);
+
+        try w.print("] {d}%", .{percent});
+        try w.flush();
     }
 };
 

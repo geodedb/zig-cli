@@ -25,7 +25,7 @@
     .fingerprint = 0x48f6513cf428abd1, // Changing this has security and trust implications.
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
     // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
@@ -36,8 +36,8 @@
             .path = "../config",
         },
         .thread_pool = .{
-            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#7275ae20b51c86278fdb7b4df526715fdf24eeb6",
-            .hash = "thread_pool-0.2.0-11B1Bjc9OQCpsTlU23uENRGidyB6DoKgKTODN2-LpFGU",
+            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#e9b6b2a7a98c2724e8bf11a5c22f3c47bb7879c5",
+            .hash = "thread_pool-0.2.0-11B1BuVVOwDZ8LWKIdFwgn9drtSSFh6yI21KYA64PqIJ",
         },
     },
     // Specifies the set of files and directories that are included in this package.

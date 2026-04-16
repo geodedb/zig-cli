@@ -32,6 +32,26 @@ const build_options = @import("build_options");
 const WARMUP = 50;
 const RUNS = 5;
 
+/// Minimal monotonic-clock timer shim (Zig 0.16 removed `std.time.Timer`).
+const Timer = struct {
+    start_ns: u128,
+
+    fn start() !Timer {
+        return .{ .start_ns = nowNs() };
+    }
+
+    fn read(t: Timer) u64 {
+        const elapsed = nowNs() - t.start_ns;
+        return @intCast(elapsed);
+    }
+
+    fn nowNs() u128 {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const ts = std.Io.Clock.now(.awake, io);
+        return @intCast(ts.nanoseconds);
+    }
+};
+
 // ============================================================================
 // Tier definitions
 // ============================================================================
@@ -58,20 +78,22 @@ const tiers = [_]Tier{
 // ============================================================================
 
 const JsonWriter = struct {
-    file: std.Io.File,
+    writer: std.Io.File.Writer,
 
-    fn init() JsonWriter {
-        return .{ .file = std.Io.File.stdout() };
+    fn init(io: std.Io, buf: []u8) JsonWriter {
+        return .{ .writer = std.Io.File.stdout().writer(io, buf) };
     }
 
     fn write(self: *JsonWriter, bytes: []const u8) void {
-        self.file.writeAll(bytes) catch {};
+        self.writer.interface.writeAll(bytes) catch {};
     }
 
     fn print(self: *JsonWriter, comptime fmt: []const u8, args: anytype) void {
-        var buf: [4096]u8 = undefined;
-        const slice = std.fmt.bufPrint(&buf, fmt, args) catch return;
-        self.write(slice);
+        self.writer.interface.print(fmt, args) catch {};
+    }
+
+    fn flush(self: *JsonWriter) void {
+        self.writer.interface.flush() catch {};
     }
 };
 
@@ -176,7 +198,7 @@ fn benchParse(cmd: *const cli.Command, iterations: usize) u64 {
         _ = arena.reset(.retain_capacity);
     }
 
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     for (0..iterations) |_| {
         var p = cli.Parser.init(alloc, cmd, "1.0.0", "");
         var result = p.parse(&.{ "bench-app", "subcmd-0", "--flag-0", "value" }) catch continue;
@@ -194,15 +216,16 @@ fn benchHelpGen(cmd: *const cli.Command, iterations: usize) u64 {
     var ctx = cli.Context.init(alloc);
     defer ctx.deinit();
 
-    const devnull = std.Io.Dir.openFileAbsolute("/dev/null", .{ .mode = .write_only }) catch return 0;
-    defer devnull.close();
-    ctx.stdout = devnull.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &buf);
+    const io_inst = std.Io.Threaded.global_single_threaded.io();
+    const devnull = std.Io.Dir.cwd().openFile(io_inst, "/dev/null", .{ .mode = .write_only }) catch return 0;
+    defer devnull.close(io_inst);
+    ctx.stdout = .{ .file = devnull };
 
     for (0..WARMUP) |_| {
         cli.printHelp(cmd, &ctx);
     }
 
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     for (0..iterations) |_| {
         cli.printHelp(cmd, &ctx);
     }
@@ -220,7 +243,7 @@ fn benchCompletion(comptime gen: anytype, cmd: *const cli.Command, iterations: u
         _ = arena.reset(.retain_capacity);
     }
 
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     for (0..iterations) |_| {
         const script = gen.generate(cmd, alloc) catch continue;
         alloc.free(script);
@@ -241,7 +264,7 @@ fn benchLevenshtein(iterations: usize) u64 {
         _ = util.suggestClosest("craete", &candidates, 3);
     }
 
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     for (0..iterations) |_| {
         _ = util.suggestClosest("craete", &candidates, 3);
         _ = util.suggestClosest("delet", &candidates, 3);
@@ -273,7 +296,7 @@ fn benchParallelForEach(iterations: usize) u64 {
         parallel.forEach(u32, u64, &items, &results, compute);
     }
 
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     for (0..iterations) |_| {
         parallel.forEach(u32, u64, &items, &results, compute);
     }
@@ -314,13 +337,21 @@ fn formatNs(ns: u64) [12]u8 {
 // Main
 // ============================================================================
 
-pub fn main() void {
-    const stderr = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &buf);
-    var json = JsonWriter.init();
+pub fn main(init: std.process.Init) void {
+    const io = init.io;
+    const stderr_file = std.Io.File.stderr();
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_writer = stderr_file.writer(io, &stderr_buf);
+    const stderr = &stderr_writer.interface;
+    defer stderr.flush() catch {};
+
+    var json_buf: [4096]u8 = undefined;
+    var json = JsonWriter.init(io, &json_buf);
+    defer json.flush();
 
     // Parse optional max-tier argument
     var max_tier_idx: usize = tiers.len;
-    const args = std.process.argsAlloc(std.heap.page_allocator) catch return;
+    const args = init.minimal.args.toSlice(init.arena.allocator()) catch return;
     if (args.len > 1) {
         for (tiers, 0..) |t, i| {
             if (std.mem.eql(u8, args[1], t.name)) {
@@ -335,7 +366,8 @@ pub fn main() void {
     json.print("  \"version\": 1,\n", .{});
 
     // Timestamp
-    const ts = std.time.timestamp();
+    const now = std.Io.Clock.now(.real, io);
+    const ts: i64 = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_s));
     const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(ts) };
     const day_seconds = epoch_seconds.getDaySeconds();
     const year_day = epoch_seconds.getEpochDay().calculateYearDay();
