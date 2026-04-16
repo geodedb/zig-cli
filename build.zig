@@ -89,11 +89,13 @@ pub fn build(b: *std.Build) void {
     }
 
     // Root Module: Public API
-    _ = b.addModule("zig_cli", .{
+    const zig_cli_mod = b.addModule("zig_cli", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
+    if (ext_config_mod) |m| zig_cli_mod.addImport("config", m);
+    if (tp_mod) |tm| zig_cli_mod.addImport("thread_pool", tm);
 
     // ========================================================================
     // Unit Tests
@@ -162,6 +164,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     if (ext_config_mod) |m| root_tests_mod.addImport("config", m);
+    if (tp_mod) |tm| root_tests_mod.addImport("thread_pool", tm);
     const root_tests = b.addTest(.{
         .root_module = root_tests_mod,
     });

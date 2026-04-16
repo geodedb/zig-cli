@@ -57,6 +57,7 @@ const std = @import("std");
 
 pub const cli = @import("cli.zig");
 pub const config = @import("config.zig");
+pub const parallel = @import("parallel.zig");
 pub const term = @import("term.zig");
 pub const util = @import("util.zig");
 pub const signal = @import("signal.zig");
@@ -118,8 +119,44 @@ pub const promptMultiSelect = prompt.multiSelect;
 test {
     _ = cli;
     _ = config;
+    _ = parallel;
     _ = term;
     _ = util;
     _ = signal;
     _ = prompt;
+}
+
+test "parallel: forEach is exposed via root and works end-to-end" {
+    parallel.initPool(.{ .worker_count = 2 });
+    defer parallel.deinitPool();
+
+    const inputs = [_]u32{ 1, 2, 3, 4 };
+    var outputs: [4]u64 = undefined;
+
+    const Double = struct {
+        fn apply(x: u32) u64 {
+            return @as(u64, x) * 2;
+        }
+    };
+    parallel.forEach(u32, u64, &inputs, &outputs, Double.apply);
+
+    try std.testing.expectEqual(@as(u64, 2), outputs[0]);
+    try std.testing.expectEqual(@as(u64, 4), outputs[1]);
+    try std.testing.expectEqual(@as(u64, 6), outputs[2]);
+    try std.testing.expectEqual(@as(u64, 8), outputs[3]);
+}
+
+test "parallel: map is exposed via root and works end-to-end" {
+    const inputs = [_]u32{ 10, 20, 30, 40 };
+    const results = try parallel.map(u32, u64, std.testing.allocator, &inputs, struct {
+        fn triple(x: u32) u64 {
+            return @as(u64, x) * 3;
+        }
+    }.triple);
+    defer std.testing.allocator.free(results);
+
+    try std.testing.expectEqual(@as(u64, 30), results[0]);
+    try std.testing.expectEqual(@as(u64, 60), results[1]);
+    try std.testing.expectEqual(@as(u64, 90), results[2]);
+    try std.testing.expectEqual(@as(u64, 120), results[3]);
 }
