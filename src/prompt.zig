@@ -74,8 +74,8 @@ pub const InputConfig = struct {
 
 /// Read a line of text input from the user
 pub fn input(message: []const u8, config: InputConfig, allocator: std.mem.Allocator) PromptError![]const u8 {
-    const stdin = std.io.getStdIn();
-    const stdout = std.io.getStdOut();
+    const stdin = std.Io.getStdIn();
+    const stdout = std.Io.getStdOut();
 
     // Check if interactive
     if (!stdin.isTty()) {
@@ -153,8 +153,8 @@ fn inputInternal(reader: anytype, writer: anytype, message: []const u8, config: 
 ///         allocator.free(pw);
 ///     }
 pub fn password(message: []const u8, allocator: std.mem.Allocator) PromptError![]const u8 {
-    const stdin = std.io.getStdIn();
-    const stdout = std.io.getStdOut();
+    const stdin = std.Io.getStdIn();
+    const stdout = std.Io.getStdOut();
 
     // Check if interactive
     if (!stdin.isTty()) {
@@ -231,7 +231,7 @@ fn inputSimple(stdin: std.Io.File, allocator: std.mem.Allocator) PromptError![]c
         return PromptError.Cancelled;
     }
 
-    const stdout = std.io.getStdOut();
+    const stdout = std.Io.getStdOut();
     stdout.writer().print("\n", .{}) catch {};
 
     return allocator.dupe(u8, std.mem.trim(u8, line.?, " \t\r")) catch return PromptError.OutOfMemory;
@@ -239,8 +239,8 @@ fn inputSimple(stdin: std.Io.File, allocator: std.mem.Allocator) PromptError![]c
 
 /// Ask for yes/no confirmation
 pub fn confirm(message: []const u8, default: bool) PromptError!bool {
-    const stdin = std.io.getStdIn();
-    const stdout = std.io.getStdOut();
+    const stdin = std.Io.getStdIn();
+    const stdout = std.Io.getStdOut();
 
     // Check if interactive
     if (!stdin.isTty()) {
@@ -295,8 +295,8 @@ fn confirmInternal(reader: anytype, writer: anytype, message: []const u8, defaul
 
 /// Select one option from a list
 pub fn select(message: []const u8, options: []const []const u8) PromptError!usize {
-    const stdin = std.io.getStdIn();
-    const stdout = std.io.getStdOut();
+    const stdin = std.Io.getStdIn();
+    const stdout = std.Io.getStdOut();
 
     // Check if interactive
     if (!stdin.isTty()) {
@@ -348,8 +348,8 @@ fn selectInternal(reader: anytype, writer: anytype, message: []const u8, options
 
 /// Select multiple options from a list
 pub fn multiSelect(message: []const u8, options: []const []const u8, allocator: std.mem.Allocator) PromptError![]usize {
-    const stdin = std.io.getStdIn();
-    const stdout = std.io.getStdOut();
+    const stdin = std.Io.getStdIn();
+    const stdout = std.Io.getStdOut();
 
     // Check if interactive
     if (!stdin.isTty()) {
@@ -439,9 +439,9 @@ test "PromptError is error type" {
 // --- inputInternal tests ---
 
 test "input: valid input returned" {
-    var reader_buf = std.io.fixedBufferStream("hello world\n");
+    var reader_buf = std.Io.fixedBufferStream("hello world\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{}, std.testing.allocator);
     defer std.testing.allocator.free(result);
@@ -450,9 +450,9 @@ test "input: valid input returned" {
 }
 
 test "input: empty with default returns default" {
-    var reader_buf = std.io.fixedBufferStream("\n");
+    var reader_buf = std.Io.fixedBufferStream("\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{ .default = "Alice" }, std.testing.allocator);
     defer std.testing.allocator.free(result);
@@ -462,9 +462,9 @@ test "input: empty with default returns default" {
 
 test "input: empty with allow_empty=false retries then accepts" {
     // First line is empty (triggers retry), second line has valid input
-    var reader_buf = std.io.fixedBufferStream("\ngood\n");
+    var reader_buf = std.Io.fixedBufferStream("\ngood\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{ .allow_empty = false }, std.testing.allocator);
     defer std.testing.allocator.free(result);
@@ -477,9 +477,9 @@ test "input: empty with allow_empty=false retries then accepts" {
 
 test "input: max_length exceeded retries then accepts" {
     // First line is too long, second is within limit
-    var reader_buf = std.io.fixedBufferStream("toolong\nok\n");
+    var reader_buf = std.Io.fixedBufferStream("toolong\nok\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try inputInternal(reader_buf.reader(), writer.writer(), "Val", .{ .max_length = 3 }, std.testing.allocator);
     defer std.testing.allocator.free(result);
@@ -500,9 +500,9 @@ test "input: validator rejection retries then accepts" {
     };
 
     // "abc123" fails validation, "abc" passes
-    var reader_buf = std.io.fixedBufferStream("abc123\nabc\n");
+    var reader_buf = std.Io.fixedBufferStream("abc123\nabc\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{
         .validator = &S.noDigits,
@@ -517,18 +517,18 @@ test "input: validator rejection retries then accepts" {
 
 test "input: EOF returns Cancelled" {
     // Empty stream (no newline) = EOF
-    var reader_buf = std.io.fixedBufferStream("");
+    var reader_buf = std.Io.fixedBufferStream("");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = inputInternal(reader_buf.reader(), writer.writer(), "Name", .{}, std.testing.allocator);
     try std.testing.expectError(PromptError.Cancelled, result);
 }
 
 test "input: empty with allow_empty=true returns empty string" {
-    var reader_buf = std.io.fixedBufferStream("\n");
+    var reader_buf = std.Io.fixedBufferStream("\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try inputInternal(reader_buf.reader(), writer.writer(), "Name", .{ .allow_empty = true }, std.testing.allocator);
     defer std.testing.allocator.free(result);
@@ -539,7 +539,7 @@ test "input: empty with allow_empty=true returns empty string" {
 // --- passwordInternal tests ---
 
 test "password: valid input returned" {
-    var reader_buf = std.io.fixedBufferStream("s3cret\n");
+    var reader_buf = std.Io.fixedBufferStream("s3cret\n");
 
     const result = try passwordInternal(reader_buf.reader(), std.testing.allocator);
     defer {
@@ -551,14 +551,14 @@ test "password: valid input returned" {
 }
 
 test "password: EOF returns Cancelled" {
-    var reader_buf = std.io.fixedBufferStream("");
+    var reader_buf = std.Io.fixedBufferStream("");
 
     const result = passwordInternal(reader_buf.reader(), std.testing.allocator);
     try std.testing.expectError(PromptError.Cancelled, result);
 }
 
 test "password: input is trimmed" {
-    var reader_buf = std.io.fixedBufferStream("  mypass  \n");
+    var reader_buf = std.Io.fixedBufferStream("  mypass  \n");
 
     const result = try passwordInternal(reader_buf.reader(), std.testing.allocator);
     defer {
@@ -572,72 +572,72 @@ test "password: input is trimmed" {
 // --- confirmInternal tests ---
 
 test "confirm: y returns true" {
-    var reader_buf = std.io.fixedBufferStream("y\n");
+    var reader_buf = std.Io.fixedBufferStream("y\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
     try std.testing.expect(result == true);
 }
 
 test "confirm: Y returns true" {
-    var reader_buf = std.io.fixedBufferStream("Y\n");
+    var reader_buf = std.Io.fixedBufferStream("Y\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
     try std.testing.expect(result == true);
 }
 
 test "confirm: yes returns true" {
-    var reader_buf = std.io.fixedBufferStream("yes\n");
+    var reader_buf = std.Io.fixedBufferStream("yes\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
     try std.testing.expect(result == true);
 }
 
 test "confirm: n returns false" {
-    var reader_buf = std.io.fixedBufferStream("n\n");
+    var reader_buf = std.Io.fixedBufferStream("n\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", true);
     try std.testing.expect(result == false);
 }
 
 test "confirm: N returns false" {
-    var reader_buf = std.io.fixedBufferStream("N\n");
+    var reader_buf = std.Io.fixedBufferStream("N\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", true);
     try std.testing.expect(result == false);
 }
 
 test "confirm: no returns false" {
-    var reader_buf = std.io.fixedBufferStream("no\n");
+    var reader_buf = std.Io.fixedBufferStream("no\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", true);
     try std.testing.expect(result == false);
 }
 
 test "confirm: empty returns default true" {
-    var reader_buf = std.io.fixedBufferStream("\n");
+    var reader_buf = std.Io.fixedBufferStream("\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", true);
     try std.testing.expect(result == true);
 }
 
 test "confirm: empty returns default false" {
-    var reader_buf = std.io.fixedBufferStream("\n");
+    var reader_buf = std.Io.fixedBufferStream("\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
     try std.testing.expect(result == false);
@@ -645,9 +645,9 @@ test "confirm: empty returns default false" {
 
 test "confirm: invalid input retries then accepts" {
     // "maybe" is invalid, then "y" is valid
-    var reader_buf = std.io.fixedBufferStream("maybe\ny\n");
+    var reader_buf = std.Io.fixedBufferStream("maybe\ny\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = try confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
     try std.testing.expect(result == true);
@@ -656,9 +656,9 @@ test "confirm: invalid input retries then accepts" {
 }
 
 test "confirm: EOF returns Cancelled" {
-    var reader_buf = std.io.fixedBufferStream("");
+    var reader_buf = std.Io.fixedBufferStream("");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const result = confirmInternal(reader_buf.reader(), writer.writer(), "Continue?", false);
     try std.testing.expectError(PromptError.Cancelled, result);
@@ -667,9 +667,9 @@ test "confirm: EOF returns Cancelled" {
 // --- selectInternal tests ---
 
 test "select: valid 1-based index" {
-    var reader_buf = std.io.fixedBufferStream("2\n");
+    var reader_buf = std.Io.fixedBufferStream("2\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
     const result = try selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
@@ -678,9 +678,9 @@ test "select: valid 1-based index" {
 
 test "select: out-of-range retries then accepts" {
     // "5" is out of range, then "1" is valid
-    var reader_buf = std.io.fixedBufferStream("5\n1\n");
+    var reader_buf = std.Io.fixedBufferStream("5\n1\n");
     var writer_buf: [8192]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
     const result = try selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
@@ -691,9 +691,9 @@ test "select: out-of-range retries then accepts" {
 
 test "select: non-numeric retries then accepts" {
     // "abc" is non-numeric, then "3" is valid
-    var reader_buf = std.io.fixedBufferStream("abc\n3\n");
+    var reader_buf = std.Io.fixedBufferStream("abc\n3\n");
     var writer_buf: [8192]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
     const result = try selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
@@ -701,9 +701,9 @@ test "select: non-numeric retries then accepts" {
 }
 
 test "select: empty options returns InvalidInput" {
-    var reader_buf = std.io.fixedBufferStream("1\n");
+    var reader_buf = std.Io.fixedBufferStream("1\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options: []const []const u8 = &.{};
     const result = selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
@@ -711,9 +711,9 @@ test "select: empty options returns InvalidInput" {
 }
 
 test "select: EOF returns Cancelled" {
-    var reader_buf = std.io.fixedBufferStream("");
+    var reader_buf = std.Io.fixedBufferStream("");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta" };
     const result = selectInternal(reader_buf.reader(), writer.writer(), "Pick:", options);
@@ -723,9 +723,9 @@ test "select: EOF returns Cancelled" {
 // --- multiSelectInternal tests ---
 
 test "multiSelect: comma-separated parsing" {
-    var reader_buf = std.io.fixedBufferStream("1,3\n");
+    var reader_buf = std.Io.fixedBufferStream("1,3\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
     const result = try multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
@@ -738,9 +738,9 @@ test "multiSelect: comma-separated parsing" {
 
 test "multiSelect: out-of-range retries then accepts" {
     // "1,5" has out-of-range 5, retries; then "2" is valid
-    var reader_buf = std.io.fixedBufferStream("1,5\n2\n");
+    var reader_buf = std.Io.fixedBufferStream("1,5\n2\n");
     var writer_buf: [8192]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
     const result = try multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
@@ -751,9 +751,9 @@ test "multiSelect: out-of-range retries then accepts" {
 }
 
 test "multiSelect: single selection" {
-    var reader_buf = std.io.fixedBufferStream("2\n");
+    var reader_buf = std.Io.fixedBufferStream("2\n");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta", "Gamma" };
     const result = try multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
@@ -764,9 +764,9 @@ test "multiSelect: single selection" {
 }
 
 test "multiSelect: empty options returns InvalidInput" {
-    var reader_buf = std.io.fixedBufferStream("1\n");
+    var reader_buf = std.Io.fixedBufferStream("1\n");
     var writer_buf: [1024]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options: []const []const u8 = &.{};
     const result = multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);
@@ -774,9 +774,9 @@ test "multiSelect: empty options returns InvalidInput" {
 }
 
 test "multiSelect: EOF returns Cancelled" {
-    var reader_buf = std.io.fixedBufferStream("");
+    var reader_buf = std.Io.fixedBufferStream("");
     var writer_buf: [4096]u8 = undefined;
-    var writer = std.io.fixedBufferStream(&writer_buf);
+    var writer = std.Io.fixedBufferStream(&writer_buf);
 
     const options = &[_][]const u8{ "Alpha", "Beta" };
     const result = multiSelectInternal(reader_buf.reader(), writer.writer(), "Pick:", options, std.testing.allocator);

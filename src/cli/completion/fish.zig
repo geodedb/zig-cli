@@ -188,7 +188,7 @@ fn buildCondition(buf: []u8, path: []const []const u8, cmd: *const Command, esc_
     }
 
     // Condition: must have seen all commands in path, and not yet any of the subcommands
-    var stream = std.io.fixedBufferStream(buf);
+    var stream = std.Io.fixedBufferStream(buf);
     const w = stream.writer();
 
     // Must have seen all parent commands
@@ -222,7 +222,7 @@ fn buildSubcommandCondition(buf: []u8, path: []const []const u8, cmd: *const Com
     }
 
     // Nested level: must have seen parent commands, not yet any subcommands
-    var stream = std.io.fixedBufferStream(buf);
+    var stream = std.Io.fixedBufferStream(buf);
     const w = stream.writer();
 
     // Must have seen all parent commands

@@ -150,7 +150,7 @@ test "errors: Severity colorCode returns ANSI codes" {
 
 test "errors: FormattedError print without color" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     const err = FormattedError{
@@ -169,7 +169,7 @@ test "errors: FormattedError print without color" {
 
 test "errors: FormattedError print with color" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     const err = FormattedError{
@@ -188,7 +188,7 @@ test "errors: FormattedError print with color" {
 
 test "errors: FormattedError with context" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     const err = FormattedError{
@@ -207,7 +207,7 @@ test "errors: FormattedError with context" {
 
 test "errors: FormattedError with all fields" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     const err = FormattedError{
@@ -228,7 +228,7 @@ test "errors: FormattedError with all fields" {
 
 test "errors: FormattedError info severity" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     const err = FormattedError{
@@ -245,7 +245,7 @@ test "errors: FormattedError info severity" {
 
 test "errors: printError helper" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     try printError(writer, "test error message", false);
@@ -257,7 +257,7 @@ test "errors: printError helper" {
 
 test "errors: printWarning helper" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     try printWarning(writer, "test warning message", false);
@@ -269,7 +269,7 @@ test "errors: printWarning helper" {
 
 test "errors: printErrorWithSuggestion helper" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     try printErrorWithSuggestion(writer, "invalid option", "use --help", false);
@@ -283,7 +283,7 @@ test "errors: printErrorWithSuggestion helper" {
 
 test "errors: printErrorWithSuggestion without suggestion" {
     var buffer: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
+    var stream = std.Io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
     try printErrorWithSuggestion(writer, "error message", null, false);
