@@ -220,7 +220,7 @@ fn passwordInternal(reader: anytype, allocator: std.mem.Allocator) PromptError![
 /// Simple line input fallback (used for password on Windows).
 /// The returned slice is heap-allocated; callers should zero it before
 /// freeing if it may contain sensitive data.
-fn inputSimple(stdin: std.fs.File, allocator: std.mem.Allocator) PromptError![]const u8 {
+fn inputSimple(stdin: std.Io.File, allocator: std.mem.Allocator) PromptError![]const u8 {
     var buffer: [1024]u8 = undefined;
     defer @memset(&buffer, 0);
     const line = stdin.reader().readUntilDelimiterOrEof(&buffer, '\n') catch {

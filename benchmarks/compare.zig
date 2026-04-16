@@ -94,7 +94,7 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 3) {
-        const stderr = std.fs.File.stderr().deprecatedWriter();
+        const stderr = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
         try stderr.print("Usage: compare-bench <baseline.json> <current.json> [threshold]\n", .{});
         try stderr.print("  Default threshold: 20 percent\n", .{});
         std.process.exit(2);
@@ -108,29 +108,29 @@ pub fn main() !void {
 
     // Read files
     const baseline_bytes = std.fs.cwd().readFileAlloc(allocator, baseline_path, 10 * 1024 * 1024) catch |err| {
-        std.fs.File.stderr().deprecatedWriter().print("Error reading baseline: {s}: {}\n", .{ baseline_path, err }) catch {};
+        std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0).print("Error reading baseline: {s}: {}\n", .{ baseline_path, err }) catch {};
         std.process.exit(2);
     };
     defer allocator.free(baseline_bytes);
 
     const current_bytes = std.fs.cwd().readFileAlloc(allocator, current_path, 10 * 1024 * 1024) catch |err| {
-        std.fs.File.stderr().deprecatedWriter().print("Error reading current: {s}: {}\n", .{ current_path, err }) catch {};
+        std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0).print("Error reading current: {s}: {}\n", .{ current_path, err }) catch {};
         std.process.exit(2);
     };
     defer allocator.free(current_bytes);
 
     // Parse
     const baseline_tiers = parseTiers(allocator, baseline_bytes) catch |err| {
-        std.fs.File.stderr().deprecatedWriter().print("Error parsing baseline JSON: {}\n", .{err}) catch {};
+        std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0).print("Error parsing baseline JSON: {}\n", .{err}) catch {};
         std.process.exit(2);
     };
     const current_tiers = parseTiers(allocator, current_bytes) catch |err| {
-        std.fs.File.stderr().deprecatedWriter().print("Error parsing current JSON: {}\n", .{err}) catch {};
+        std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0).print("Error parsing current JSON: {}\n", .{err}) catch {};
         std.process.exit(2);
     };
 
     // Compare
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    const stdout = std.Io.File.stdout().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
     try stdout.print("\n  Benchmark Comparison (threshold: {d:.0})\n", .{threshold});
     try stdout.print("  =======================================\n\n", .{});
     try stdout.print("  {s:<8} {s:<24} {s:>14} {s:>14} {s:>8} {s:>6}\n", .{

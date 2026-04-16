@@ -58,10 +58,10 @@ const tiers = [_]Tier{
 // ============================================================================
 
 const JsonWriter = struct {
-    file: std.fs.File,
+    file: std.Io.File,
 
     fn init() JsonWriter {
-        return .{ .file = std.fs.File.stdout() };
+        return .{ .file = std.Io.File.stdout() };
     }
 
     fn write(self: *JsonWriter, bytes: []const u8) void {
@@ -194,9 +194,9 @@ fn benchHelpGen(cmd: *const cli.Command, iterations: usize) u64 {
     var ctx = cli.Context.init(alloc);
     defer ctx.deinit();
 
-    const devnull = std.fs.openFileAbsolute("/dev/null", .{ .mode = .write_only }) catch return 0;
+    const devnull = std.Io.Dir.openFileAbsolute("/dev/null", .{ .mode = .write_only }) catch return 0;
     defer devnull.close();
-    ctx.stdout = devnull.deprecatedWriter();
+    ctx.stdout = devnull.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &buf);
 
     for (0..WARMUP) |_| {
         cli.printHelp(cmd, &ctx);
@@ -315,7 +315,7 @@ fn formatNs(ns: u64) [12]u8 {
 // ============================================================================
 
 pub fn main() void {
-    const stderr = std.fs.File.stderr().deprecatedWriter();
+    const stderr = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &buf);
     var json = JsonWriter.init();
 
     // Parse optional max-tier argument

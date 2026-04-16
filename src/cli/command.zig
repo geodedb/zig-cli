@@ -104,9 +104,9 @@ pub const Context = struct {
     /// Memory allocator
     allocator: Allocator,
     /// Standard output writer
-    stdout: std.fs.File.DeprecatedWriter,
+    stdout: std.Io.File.DeprecatedWriter,
     /// Standard error writer
-    stderr: std.fs.File.DeprecatedWriter,
+    stderr: std.Io.File.DeprecatedWriter,
     /// Whether stdout is a TTY
     is_tty_out: bool,
     /// Whether stderr is a TTY
@@ -134,8 +134,8 @@ pub const Context = struct {
 
     /// Initialize a new context
     pub fn init(allocator: Allocator) Context {
-        const stdout_file = std.fs.File.stdout();
-        const stderr_file = std.fs.File.stderr();
+        const stdout_file = std.Io.File.stdout();
+        const stderr_file = std.Io.File.stderr();
         var flags = std.StringHashMap(FlagValue).init(allocator);
         // Pre-allocate for typical flag count (16 entries) to reduce
         // incremental rehashing during parsing.
@@ -146,8 +146,8 @@ pub const Context = struct {
         command_path.ensureTotalCapacity(allocator, 4) catch {};
         return .{
             .allocator = allocator,
-            .stdout = stdout_file.deprecatedWriter(),
-            .stderr = stderr_file.deprecatedWriter(),
+            .stdout = stdout_file.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
+            .stderr = stderr_file.writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
             .is_tty_out = stdout_file.isTty(),
             .is_tty_err = stderr_file.isTty(),
             .flags = flags,

@@ -39,7 +39,7 @@ pub const Progress = struct {
     message: []const u8,
     spinner_style: SpinnerStyle,
     frame_index: usize,
-    writer: std.fs.File.DeprecatedWriter,
+    writer: std.Io.File.DeprecatedWriter,
 
     const Self = @This();
 
@@ -52,7 +52,7 @@ pub const Progress = struct {
             .message = message,
             .spinner_style = .dots,
             .frame_index = 0,
-            .writer = std.fs.File.stderr().deprecatedWriter(),
+            .writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
         };
 
         if (self.enabled) {
@@ -71,7 +71,7 @@ pub const Progress = struct {
             .message = message,
             .spinner_style = .dots,
             .frame_index = 0,
-            .writer = std.fs.File.stderr().deprecatedWriter(),
+            .writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
         };
 
         if (self.enabled) {
@@ -138,7 +138,7 @@ pub const ProgressBar = struct {
     width: u16,
     enabled: bool,
     message: []const u8,
-    writer: std.fs.File.DeprecatedWriter,
+    writer: std.Io.File.DeprecatedWriter,
     render_mutex: std.Thread.Mutex,
 
     const Self = @This();
@@ -153,7 +153,7 @@ pub const ProgressBar = struct {
             .width = @min(term_info.width - 20, 50),
             .enabled = term_info.is_tty,
             .message = message,
-            .writer = std.fs.File.stderr().deprecatedWriter(),
+            .writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0),
             .render_mutex = .{},
         };
     }

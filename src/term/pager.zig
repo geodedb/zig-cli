@@ -23,7 +23,7 @@ pub const PagerConfig = struct {
 
 /// Write content through a pager if appropriate
 pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
-    const stdout = std.fs.File.stdout();
+    const stdout = std.Io.File.stdout();
 
     // Check if we should use pager
     if (!config.force and !stdout.isTty()) {

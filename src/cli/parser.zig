@@ -799,7 +799,7 @@ pub fn run(root: *const Command, argv: []const []const u8, allocator: Allocator)
     var parser = Parser.init(allocator, root, version, "");
 
     var result = parser.parse(argv) catch |err| {
-        const stderr = std.fs.File.stderr().deprecatedWriter();
+        const stderr = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &[_]u8{} ** 0);
         try formatParseError(&parser, err, stderr);
 
         // Show help for the current command on error

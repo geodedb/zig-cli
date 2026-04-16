@@ -27,7 +27,7 @@ pub const TermInfo = struct {
 
 /// Get terminal information for stdout
 pub fn getInfo() TermInfo {
-    const stdout = std.fs.File.stdout();
+    const stdout = std.Io.File.stdout();
     const is_tty = stdout.isTty();
 
     var width: u16 = 80;
@@ -70,7 +70,7 @@ pub fn getTermSize() ?TermSize {
 
 fn getTermSizePosix() ?TermSize {
     var ws: std.posix.winsize = undefined;
-    if (std.posix.system.ioctl(std.fs.File.stdout().handle, std.posix.T.IOCGWINSZ, @intFromPtr(&ws)) == 0) {
+    if (std.posix.system.ioctl(std.Io.File.stdout().handle, std.posix.T.IOCGWINSZ, @intFromPtr(&ws)) == 0) {
         return .{
             .cols = ws.col,
             .rows = ws.row,
@@ -149,17 +149,17 @@ fn hasNoColor() bool {
 
 /// Check if stdout is a TTY
 pub fn isStdoutTty() bool {
-    return std.fs.File.stdout().isTty();
+    return std.Io.File.stdout().isTty();
 }
 
 /// Check if stderr is a TTY
 pub fn isStderrTty() bool {
-    return std.fs.File.stderr().isTty();
+    return std.Io.File.stderr().isTty();
 }
 
 /// Check if stdin is a TTY
 pub fn isStdinTty() bool {
-    return std.fs.File.stdin().isTty();
+    return std.Io.File.stdin().isTty();
 }
 
 // ============================================================================
