@@ -83,6 +83,26 @@ fn getTermSizePosix() ?TermSize {
     return null;
 }
 
+// Minimal extern bindings for kernel32 that Zig 0.16 no longer re-exports
+// (SMALL_RECT, GetModuleHandleW, and the console info struct). Declared
+// locally so the Windows path keeps compiling without relying on stdlib
+// shims that come and go.
+const WIN_SMALL_RECT = extern struct {
+    Left: i16,
+    Top: i16,
+    Right: i16,
+    Bottom: i16,
+};
+
+extern "kernel32" fn GetConsoleScreenBufferInfo(
+    hConsoleOutput: std.os.windows.HANDLE,
+    lpConsoleScreenBufferInfo: *anyopaque,
+) callconv(.winapi) std.os.windows.BOOL;
+
+extern "kernel32" fn GetStdHandle(
+    nStdHandle: std.os.windows.DWORD,
+) callconv(.winapi) std.os.windows.HANDLE;
+
 fn getTermSizeWindows() ?TermSize {
     if (builtin.os.tag != .windows) {
         return null;
@@ -91,35 +111,25 @@ fn getTermSizeWindows() ?TermSize {
     const windows = std.os.windows;
     const kernel32 = windows.kernel32;
 
-    // CONSOLE_SCREEN_BUFFER_INFO structure
     const CONSOLE_SCREEN_BUFFER_INFO = extern struct {
         dwSize: windows.COORD,
         dwCursorPosition: windows.COORD,
         wAttributes: windows.WORD,
-        srWindow: windows.SMALL_RECT,
+        srWindow: WIN_SMALL_RECT,
         dwMaximumWindowSize: windows.COORD,
     };
 
     var csbi: CONSOLE_SCREEN_BUFFER_INFO = undefined;
-    const stdout_handle = kernel32.GetStdHandle(windows.STD_OUTPUT_HANDLE) orelse return null;
+    _ = kernel32;
+    // STD_OUTPUT_HANDLE = (DWORD)-11 (Win32 header constant).
+    const STD_OUTPUT_HANDLE: windows.DWORD = @bitCast(@as(i32, -11));
+    const stdout_handle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     if (stdout_handle == windows.INVALID_HANDLE_VALUE) {
         return null;
     }
 
-    // GetConsoleScreenBufferInfo
-    const kernel32_handle = kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")) orelse return null;
-    const GetConsoleScreenBufferInfo = @as(*const fn (
-        windows.HANDLE,
-        *CONSOLE_SCREEN_BUFFER_INFO,
-    ) callconv(.winapi) windows.BOOL, @ptrCast(@alignCast(
-        kernel32.GetProcAddress(
-            kernel32_handle,
-            "GetConsoleScreenBufferInfo",
-        ) orelse return null,
-    )));
-
-    if (GetConsoleScreenBufferInfo(stdout_handle, &csbi) == 0) {
+    if (GetConsoleScreenBufferInfo(stdout_handle, &csbi) == .FALSE) {
         return null;
     }
 

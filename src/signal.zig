@@ -252,6 +252,13 @@ fn posixSignalHandler(sig: SigType) callconv(.c) void {
 // Windows Implementation
 // ============================================================================
 
+// Zig 0.16 removed GetModuleHandleW from std.os.windows.kernel32; declare
+// SetConsoleCtrlHandler as a direct extern instead of resolving it at runtime.
+extern "kernel32" fn SetConsoleCtrlHandler(
+    HandlerRoutine: ?*const fn (std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL,
+    Add: std.os.windows.BOOL,
+) callconv(.winapi) std.os.windows.BOOL;
+
 fn installWindows(config: Config) !void {
     if (builtin.os.tag != .windows) {
         return;
@@ -266,22 +273,7 @@ fn installWindows(config: Config) !void {
     win_handle_interrupt.store(config.handle_interrupt, .release);
     win_handle_terminate.store(config.handle_terminate, .release);
 
-    const windows = std.os.windows;
-    const kernel32 = windows.kernel32;
-
-    // SetConsoleCtrlHandler
-    const k32_handle = kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")) orelse return error.FunctionNotFound;
-    const SetConsoleCtrlHandler = @as(*const fn (
-        ?*const fn (windows.DWORD) callconv(.winapi) windows.BOOL,
-        windows.BOOL,
-    ) callconv(.winapi) windows.BOOL, @ptrCast(@alignCast(
-        kernel32.GetProcAddress(
-            k32_handle,
-            "SetConsoleCtrlHandler",
-        ) orelse return error.FunctionNotFound,
-    )));
-
-    if (SetConsoleCtrlHandler(windowsCtrlHandler, 1) == 0) {
+    if (SetConsoleCtrlHandler(windowsCtrlHandler, .TRUE) == .FALSE) {
         return error.SetHandlerFailed;
     }
 }
@@ -291,21 +283,7 @@ fn uninstallWindows() void {
         return;
     }
 
-    const windows = std.os.windows;
-    const kernel32 = windows.kernel32;
-
-    const k32_handle = kernel32.GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("kernel32.dll")) orelse return;
-    const SetConsoleCtrlHandler = @as(*const fn (
-        ?*const fn (windows.DWORD) callconv(.winapi) windows.BOOL,
-        windows.BOOL,
-    ) callconv(.winapi) windows.BOOL, @ptrCast(@alignCast(
-        kernel32.GetProcAddress(
-            k32_handle,
-            "SetConsoleCtrlHandler",
-        ) orelse return,
-    )));
-
-    _ = SetConsoleCtrlHandler(windowsCtrlHandler, 0);
+    _ = SetConsoleCtrlHandler(windowsCtrlHandler, .FALSE);
 }
 
 fn windowsCtrlHandler(ctrl_type: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL {
@@ -315,18 +293,18 @@ fn windowsCtrlHandler(ctrl_type: std.os.windows.DWORD) callconv(.winapi) std.os.
 
     switch (ctrl_type) {
         CTRL_C_EVENT, CTRL_BREAK_EVENT => {
-            if (!win_handle_interrupt.load(.acquire)) return 0;
+            if (!win_handle_interrupt.load(.acquire)) return .FALSE;
             interrupted.store(true, .release);
             signal_pending.store(true, .release);
-            return 1; // TRUE - handled
+            return .TRUE; // TRUE - handled
         },
         CTRL_CLOSE_EVENT => {
-            if (!win_handle_terminate.load(.acquire)) return 0;
+            if (!win_handle_terminate.load(.acquire)) return .FALSE;
             terminated.store(true, .release);
             signal_pending.store(true, .release);
-            return 1; // TRUE - handled
+            return .TRUE; // TRUE - handled
         },
-        else => return 0, // FALSE - not handled
+        else => return .FALSE, // FALSE - not handled
     }
 }
 
