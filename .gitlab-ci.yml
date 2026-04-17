@@ -23,7 +23,7 @@ include:
   - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.7.1
 
 variables:
-  ZIG_VERSION: "0.15.2"
+  ZIG_VERSION: "0.16.0"
 
 # Cache the Zig toolchain and build cache across jobs to avoid redundant
 # downloads (~45 MB per job). The install-zig template already has a
@@ -334,4 +334,3 @@ bench-regression:
       allow_failure: true
   needs:
     - build
-
