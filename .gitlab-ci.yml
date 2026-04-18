@@ -38,6 +38,8 @@ default:
       paths:
         - ".zig-cache/"
       policy: pull-push
+  tags:
+    - company
 
 stages:
   - lint
