@@ -33,8 +33,8 @@
     // internet connectivity.
     .dependencies = .{
         .config = .{
-            .url = "git+https://gitlab.com/devnw/zig/config.git#7eda77bda98f5bf48570f43ec292ec9219f71480",
-            .hash = "config-0.1.0-TiLumu9gCgAHypciAx8sv9vlgG6b-BjAAjdtL47r3raM",
+            .url = "git+https://gitlab.com/devnw/zig/config.git#402bc274f293fd64191b3c9ab5f5d26c6cf416c6",
+            .hash = "config-0.1.0-TiLumvdgCgAk1UDzQfr5x2lB_jvLmqyT4vtV2445Qr-z",
         },
         .thread_pool = .{
             .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#1674ebbeb0eed7107e6e488cc9fd7b97a8036966",
