@@ -265,7 +265,10 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
             if (!subcmd.hidden) {
                 if (!first) try w.writeAll(" ");
                 first = false;
-                try w.print("{s}", .{subcmd.name});
+                // Escape for the double-quoted candidate list so a hostile
+                // name cannot terminate the string and inject script (CWE-78).
+                const esc_sub = try escapeBashDoubleQuote(esc_alloc, subcmd.name);
+                try w.print("{s}", .{esc_sub});
             }
         }
         try w.writeAll("\"\n\n");

@@ -210,3 +210,23 @@ test "bash: non-printable short flag byte is not emitted (R2-02)" {
     try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x1b) == null);
     try std.testing.expect(std.mem.indexOf(u8, script, "--evil") != null);
 }
+
+test "bash: hostile subcommand name cannot break out of the commands list" {
+    const sub = Command{
+        .name = "a\"; echo PWNED #",
+        .summary = "Hostile",
+    };
+    const cmd = Command{
+        .name = "app",
+        .summary = "App",
+        .subcommands = &.{&sub},
+    };
+
+    const out = try bash.generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(out);
+
+    // The raw breakout form must not appear: the double quote must be escaped
+    // so the candidate list cannot terminate early and execute the payload.
+    try std.testing.expect(std.mem.indexOf(u8, out, "local commands=\"a\"; echo PWNED") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "local commands=\"a\\\";") != null);
+}
