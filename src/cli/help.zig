@@ -887,8 +887,9 @@ fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
 }
 
 /// Write a string to `w` escaped for Markdown headings / inline text.
-/// HTML-escapes angle brackets, escapes backticks, and collapses newlines/CR
-/// to spaces (headings must be single-line).
+/// HTML-escapes angle brackets, escapes backticks, collapses `\n` to a
+/// single space, and discards `\r` (so CRLF produces exactly one space).
+/// Headings must be single-line.
 fn writeMarkdownHeading(w: anytype, s: []const u8) !void {
     var start: usize = 0;
     for (s, 0..) |c, idx| {
@@ -896,7 +897,8 @@ fn writeMarkdownHeading(w: anytype, s: []const u8) !void {
             '<' => "&lt;",
             '>' => "&gt;",
             '`' => "\\`",
-            '\n', '\r' => " ",
+            '\n' => " ",
+            '\r' => "",
             else => null,
         };
         if (esc) |escape_seq| {
@@ -910,7 +912,8 @@ fn writeMarkdownHeading(w: anytype, s: []const u8) !void {
 
 /// Write a string to `w` escaped for Markdown prose blocks.
 /// HTML-escapes angle brackets and neutralises line-leading `#` so injected
-/// text cannot create headings.
+/// text cannot create headings.  `\r` is discarded (does not affect
+/// `at_line_start`) so CRLF line endings are handled correctly.
 fn writeMarkdownProse(w: anytype, s: []const u8) !void {
     var at_line_start = true;
     for (s) |c| {
@@ -927,6 +930,7 @@ fn writeMarkdownProse(w: anytype, s: []const u8) !void {
                 at_line_start = true;
                 continue;
             },
+            '\r' => continue,
             else => try w.writeByte(c),
         }
         at_line_start = false;
@@ -935,12 +939,18 @@ fn writeMarkdownProse(w: anytype, s: []const u8) !void {
 
 /// Write content inside a code fence, prefixing any line that starts with
 /// ``` (after optional indentation) with a space so it cannot close the fence.
+/// Trailing `\r` on each line (from CRLF input) is stripped before writing.
 fn writeFenceSafe(w: anytype, s: []const u8) !void {
     var lines = std.mem.splitScalar(u8, s, '\n');
     var first = true;
-    while (lines.next()) |line| {
+    while (lines.next()) |raw_line| {
         if (!first) try w.writeAll("\n");
         first = false;
+        // Strip trailing CR so CRLF input does not embed \r in fence content.
+        const line = if (raw_line.len > 0 and raw_line[raw_line.len - 1] == '\r')
+            raw_line[0 .. raw_line.len - 1]
+        else
+            raw_line;
         if (std.mem.startsWith(u8, std.mem.trimStart(u8, line, " \t"), "```")) {
             try w.writeAll(" ");
         }
@@ -1693,7 +1703,7 @@ test "help: writeMarkdownHeading collapses newlines to spaces" {
     const w = &buf.writer;
 
     try writeMarkdownHeading(w, "foo\nbar\r\nbaz");
-    try std.testing.expectEqualStrings("foo bar  baz", buf.written());
+    try std.testing.expectEqualStrings("foo bar baz", buf.written());
 }
 
 test "help: writeMarkdownProse escapes angle brackets" {
@@ -1715,6 +1725,15 @@ test "help: writeMarkdownProse neutralises line-leading hash" {
     // Line-leading # must be escaped so it doesn't become a heading
     try std.testing.expect(mem.indexOf(u8, result, "\n# fake") == null);
     try std.testing.expect(mem.indexOf(u8, result, "\\# fake heading") != null);
+}
+
+test "help: writeMarkdownProse discards lone CR" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownProse(w, "foo\rbar");
+    try std.testing.expectEqualStrings("foobar", buf.written());
 }
 
 test "help: writeFenceSafe blocks fence breakout" {
