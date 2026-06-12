@@ -17,6 +17,16 @@ Audit hardening batch (2026-06 codepros audit iteration 1).
 - Markdown generator escapes headings, prose, and fences contextually; table cells render embedded newlines as `<br>`
 - Library version is single-sourced from `build.zig.zon` via build options; `root.version` can no longer drift from the package manifest (#106)
 
+### Fixed
+- Completion-script injection hardening: PowerShell `-CommandName` escaping, zsh identifier sanitization and quoted case labels, fish 16-level depth cap instead of out-of-bounds write (#132)
+- JSON help escapes the short-flag character (#140)
+- Truncation and table cell clipping never split multibyte UTF-8 sequences (#133)
+- Table `min_width` is honored even when all cells are shorter; `max_width` is an absolute ceiling (#127)
+- `ProgressBar.init` no longer underflows on terminals narrower than 20 columns (#129)
+- `parallel.forEach` drains partially submitted batches before the sequential fallback, eliminating a data race; chunk count now scales with worker count (#125)
+- Pager spawn migrated to the Zig 0.16 `std.process.spawn` API (the old path was a latent compile error hidden by lazy analysis) (#137)
+- Parser resets diagnostic state between `parse()` calls and counts env parse errors beyond the 8-entry buffer (#39, #140)
+
 ### Added
 - `prompt.freeSecret` helper that zeroes secret buffers before freeing
 - `Context.getBoolOpt` — returns `?bool` so callers can distinguish an absent bool flag from an explicit `false` (#138)
