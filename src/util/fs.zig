@@ -160,8 +160,9 @@ pub fn redactPath(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
 /// paths, NOT a security boundary. It performs no canonicalization and
 /// does not resolve symlinks: `/etc//shadow`, traversal via cwd, or a
 /// symlink to a sensitive file all PASS this check. Callers needing a
-/// real guarantee must canonicalize (`realpathAlloc`) and validate
-/// against an allowlisted root directory.
+/// real guarantee must canonicalize (e.g. this module's `absolutePath`,
+/// which wraps `Dir.realPathFileAlloc`) and validate the result against
+/// an allowlisted root directory.
 ///
 /// Check if a path is safe to read (not in sensitive locations)
 pub fn isSafePath(path: []const u8) bool {
