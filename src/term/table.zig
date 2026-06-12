@@ -103,8 +103,11 @@ pub const Table = struct {
     /// Add a column definition
     pub fn addColumn(self: *Self, column: Column) !void {
         try self.columns.append(self.allocator, column);
-        // Initialize width with header length
-        try self.column_widths.append(self.allocator, column.header.len);
+        // Initialize width with the larger of header length and min_width.
+        // max_width wins if it conflicts: a column cannot be wider than its cap.
+        var initial = @max(column.header.len, column.min_width);
+        if (column.max_width > 0 and initial > column.max_width) initial = column.max_width;
+        try self.column_widths.append(self.allocator, initial);
     }
 
     /// Add columns from a slice of headers (convenience method)
@@ -132,19 +135,17 @@ pub const Table = struct {
 
             var cell_width = cell.len;
 
-            // Apply max width constraint
+            // Apply max width constraint (hard cap; wins over min_width).
             if (col.max_width > 0 and cell_width > col.max_width) {
                 cell_width = col.max_width;
             }
-
-            // Update to larger of current or new
+            // Apply min width constraint unconditionally so a column whose
+            // cells are all shorter than min_width still reaches min_width.
+            if (col.min_width > 0 and cell_width < col.min_width) {
+                cell_width = col.min_width;
+            }
             if (cell_width > current_width) {
-                // Apply min width constraint
-                if (col.min_width > 0 and cell_width < col.min_width) {
-                    self.column_widths.items[i] = col.min_width;
-                } else {
-                    self.column_widths.items[i] = cell_width;
-                }
+                self.column_widths.items[i] = cell_width;
             }
         }
     }
@@ -277,8 +278,12 @@ pub const Table = struct {
         try writer.writeAll(left);
         for (self.column_widths.items, 0..) |width, i| {
             const total_width = width + (pad * 2);
-            for (0..total_width) |_| {
-                try writer.writeAll(horiz);
+            if (horiz.len == 1) {
+                // Single-byte glyph (e.g. ASCII "-"): one syscall per column.
+                try writer.splatByteAll(horiz[0], total_width);
+            } else {
+                // Multibyte border glyph (e.g. Unicode "─"): batch with splatBytesAll.
+                try writer.splatBytesAll(horiz, total_width);
             }
             if (i < self.column_widths.items.len - 1) {
                 try writer.writeAll(mid);
@@ -585,4 +590,51 @@ test "table: multiple rows" {
     try std.testing.expect(std.mem.indexOf(u8, output, "Alice") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "Bob") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "Charlie") != null);
+}
+
+test "table: min_width is honored even when all cells are short" {
+    var t = Table.init(std.testing.allocator);
+    defer t.deinit();
+    try t.addColumn(.{ .header = "h", .min_width = 10 });
+    try t.addRow(&.{"ab"});
+    try std.testing.expectEqual(@as(usize, 10), t.column_widths.items[0]);
+}
+
+test "table: min_width honored with no rows (addColumn seed)" {
+    var t = Table.init(std.testing.allocator);
+    defer t.deinit();
+    try t.addColumn(.{ .header = "h", .min_width = 10 });
+    try std.testing.expectEqual(@as(usize, 10), t.column_widths.items[0]);
+}
+
+test "table: ascii border line is exactly correct width" {
+    var t = Table.initWithConfig(std.testing.allocator, .{
+        .border = .ascii,
+        .padding = 1,
+    });
+    defer t.deinit();
+    try t.addColumn(.{ .header = "AB" }); // width=2, pad=1 each side → 4 dashes between + chars
+    try t.addRow(&.{"xy"});
+
+    const output = try t.render();
+    defer std.testing.allocator.free(output);
+
+    // Top border must be "+----+" (2 content + 2 padding = 4 dashes)
+    try std.testing.expect(std.mem.indexOf(u8, output, "+----+") != null);
+}
+
+test "table: unicode border line is exactly correct width" {
+    var t = Table.initWithConfig(std.testing.allocator, .{
+        .border = .unicode,
+        .padding = 1,
+    });
+    defer t.deinit();
+    try t.addColumn(.{ .header = "AB" }); // width=2, pad=1 → 4 × "─" (3-byte each)
+    try t.addRow(&.{"xy"});
+
+    const output = try t.render();
+    defer std.testing.allocator.free(output);
+
+    // Top-left corner followed by exactly 4 horizontal glyphs then top-right
+    try std.testing.expect(std.mem.indexOf(u8, output, "┌────┐") != null);
 }
