@@ -144,6 +144,8 @@ pub const Progress = struct {
 
     /// Render the spinner line; `prefix` is emitted in the same single write
     /// (used to batch the hide-cursor sequence with the first render).
+    /// `prefix` bypasses sanitization: callers must pass only trusted,
+    /// compile-time-constant ANSI sequences.
     fn renderWithPrefix(self: *Self, prefix: []const u8) !void {
         const frames = self.spinner_style.frames();
         const frame = frames[self.frame_index];
@@ -436,9 +438,9 @@ test "progress: Progress stopWithMessage when disabled" {
     progress.stopWithMessage("Done!");
 }
 
-test "ProgressBar width computation does not underflow on narrow terminals" {
-    try std.testing.expect(barWidthForTerminal(10) >= 1);
-    try std.testing.expect(barWidthForTerminal(0) >= 1);
+test "progress: ProgressBar width computation does not underflow on narrow terminals" {
+    try std.testing.expectEqual(@as(u16, 1), barWidthForTerminal(10));
+    try std.testing.expectEqual(@as(u16, 1), barWidthForTerminal(0));
     try std.testing.expectEqual(@as(u16, 50), barWidthForTerminal(200));
     try std.testing.expectEqual(@as(u16, 20), barWidthForTerminal(40));
 }
