@@ -208,8 +208,13 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
         for (cmd.flags) |*flag| {
             try w.print("| ", .{});
             if (flag.short) |s| {
-                // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
-                if (std.ascii.isPrint(s)) try w.print("`-{c}`, ", .{s});
+                // A short flag is conventionally a single alphanumeric
+                // character. Restricting to alphanumeric prevents a backtick
+                // short from opening a stray code span and keeps the last raw
+                // `{c}` metadata emission consistent with the shell generators
+                // (F7-01); if skipped, the entry shows only the long form
+                // (`--name`), which is correct.
+                if (std.ascii.isAlphanumeric(s)) try w.print("`-{c}`, ", .{s});
             }
             try w.writeAll("`--");
             try writeMarkdownEscaped(w, flag.name);

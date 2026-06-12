@@ -264,9 +264,11 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     try w.splatByteAll(' ', template.indent);
 
     // Short flag
-    // flag.short is programmer-defined, but guard control bytes for CWE-150 consistency
+    // Short flags must be alphanumeric (see FlagSpec.short); other bytes are
+    // never a valid short option, so omit them — consistent with the parser
+    // and the completion generators.
     if (flag.short) |s| {
-        if (std.ascii.isPrint(s)) {
+        if (std.ascii.isAlphanumeric(s)) {
             if (use_color) {
                 try w.print(ansi_yellow ++ "-{c}" ++ ansi_reset ++ ", ", .{s});
             } else {
@@ -702,4 +704,33 @@ test "help: short flag with control byte is not emitted (CWE-150)" {
 
     const output = buf.written();
     try std.testing.expect(mem.indexOfScalar(u8, output, 0x1b) == null);
+}
+
+test "help: printable metacharacter short flag is not emitted" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "test",
+        .flags = &.{
+            FlagSpec{
+                .name = "evil",
+                .short = '`', // printable, but a shell metacharacter
+                .help = "should not emit a backtick short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const template = HelpTemplate.default;
+    for (template.sections) |section| {
+        try renderTextSection(w, false, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    // The backtick short must be omitted; the long form still renders.
+    try std.testing.expect(mem.indexOfScalar(u8, output, '`') == null);
+    try std.testing.expect(mem.indexOf(u8, output, "--evil") != null);
 }

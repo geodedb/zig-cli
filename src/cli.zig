@@ -93,5 +93,6 @@ test {
     _ = completion.zsh;
     _ = @import("cli/completion/zsh_test.zig");
     _ = completion.fish;
+    _ = @import("cli/completion/fish_test.zig");
     _ = completion.powershell;
 }

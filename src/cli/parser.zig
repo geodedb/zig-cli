@@ -321,7 +321,16 @@ pub const Parser = struct {
             if (c == 'h') return .help;
             if (c == 'V') return .version;
 
-            if (self.findFlagByShortInFullChain(cmd, chain, c)) |flag| {
+            // Short flags must be alphanumeric (see FlagSpec.short). A
+            // non-alphanumeric byte is never a valid short option, so it is
+            // not matched here — consistent with help/completion output,
+            // which omit it. This keeps the contract coherent across the
+            // parser, help, and generators.
+            const matched = if (std.ascii.isAlphanumeric(c))
+                self.findFlagByShortInFullChain(cmd, chain, c)
+            else
+                null;
+            if (matched) |flag| {
                 if (flag.ftype == .bool) {
                     // Route through the same guarded path as long flags so
                     // secret-policy and validator checks apply.

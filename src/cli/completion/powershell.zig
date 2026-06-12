@@ -63,8 +63,13 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
             esc_gname, esc_gname, esc_help,
         });
         if (gflag.short) |s| {
-            // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
-            if (std.ascii.isPrint(s)) {
+            // A short flag is conventionally a single alphanumeric character.
+            // Restricting to alphanumeric drops printable shell metacharacters
+            // (`, ', ;, $, ...) that would otherwise be emitted raw into this
+            // single-quoted CompletionResult (F7-01 / CWE-78/94). The long-flag
+            // CompletionResult above is emitted unconditionally, so dropping the
+            // short one leaves a valid completer.
+            if (std.ascii.isAlphanumeric(s)) {
                 try w.print("        [CompletionResult]::new('-{c}', '-{c}', [CompletionResultType]::ParameterName, '{s}')\n", .{
                     s, s, esc_help,
                 });
@@ -162,9 +167,11 @@ fn writePowerShellFlag(w: anytype, flag: *const FlagSpec, indent: []const u8, es
     });
 
     // Short flag if available.
-    // Only printable ASCII may be emitted raw (R2-02 / CWE-150).
+    // Alphanumeric-only short flag (F7-01 / CWE-78/94): drops printable shell
+    // metacharacters; the long-flag CompletionResult above is emitted
+    // unconditionally, so dropping the short one leaves a valid completer.
     if (flag.short) |s| {
-        if (std.ascii.isPrint(s)) {
+        if (std.ascii.isAlphanumeric(s)) {
             try w.print("{s}    [CompletionResult]::new('-{c}', '-{c}', [CompletionResultType]::ParameterName, '{s}')\n", .{
                 indent, s, s, escaped_help,
             });
@@ -475,6 +482,80 @@ test "powershell: header comment strips newline from command name (N-04)" {
         try std.testing.expect(!std.mem.startsWith(u8, line, "echo injected"));
     }
     try std.testing.expect(std.mem.indexOf(u8, script, "# PowerShell completion for aecho injected") != null);
+}
+
+// ============================================================================
+// Short-flag byte guard (F7-01 / CWE-78): only alphanumeric shorts emitted
+// ============================================================================
+
+test "powershell: printable-but-non-alphanumeric short flag CompletionResult is dropped (F7-01)" {
+    // A backtick short flag is printable, so the old isPrint guard emitted a
+    // `[CompletionResult]::new('-`', ...)` entry — a backtick is the
+    // PowerShell escape char and breaks the single-quoted argument. The
+    // long-flag CompletionResult is emitted separately and must remain.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "name",
+                .short = '`',
+                .help = "hostile short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // No short-flag CompletionResult and no stray backtick.
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, '`') == null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "'-`'") == null);
+    // The long-flag CompletionResult is still emitted.
+    try std.testing.expect(std.mem.indexOf(u8, script, "'--name'") != null);
+}
+
+test "powershell: single-quote short flag CompletionResult is dropped (F7-01)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "name",
+                .short = '\'',
+                .help = "hostile short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // The raw `'-'` short CompletionResult breakout must not appear.
+    try std.testing.expect(std.mem.indexOf(u8, script, "[CompletionResult]::new('-'") == null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "'--name'") != null);
+}
+
+test "powershell: alphanumeric short flag still renders (F7-01 positive)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "name",
+                .short = 'v',
+                .help = "ok short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    try std.testing.expect(std.mem.indexOf(u8, script, "[CompletionResult]::new('-v', '-v'") != null);
 }
 
 // ============================================================================
