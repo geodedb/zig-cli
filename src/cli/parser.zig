@@ -87,11 +87,19 @@ pub const Parser = struct {
     /// Args validation error details
     args_error: ?ArgsErrorDetails = null,
     /// Env parse errors collected during applyEnvDefaults.
-    /// **Limit:** At most 8 errors are tracked. Additional failures beyond
-    /// this limit are silently dropped (the flag simply won't be set).
+    /// **Limit:** At most 8 errors are tracked in detail. Failures beyond
+    /// this limit are counted in `env_parse_errors_dropped` (the flag still
+    /// won't be set, and the count is surfaced in error rendering).
     env_parse_errors: [8]EnvParseErrorEntry = .{EnvParseErrorEntry{}} ** 8,
     /// Number of env parse errors recorded (capped at env_parse_errors.len)
     env_parse_error_count: usize = 0,
+    /// Number of env parse errors that could not be recorded because
+    /// `env_parse_errors` was already full (NQ-NEW-013)
+    env_parse_errors_dropped: usize = 0,
+    /// Name of the flag whose `default_str` failed to parse (for error
+    /// reporting). An unparseable default is a programmer error in the
+    /// command definition (GAP-0097).
+    invalid_default_flag: ?[]const u8 = null,
 
     const Self = @This();
 
@@ -118,8 +126,26 @@ pub const Parser = struct {
         };
     }
 
+    /// Reset all per-parse diagnostic state so a Parser instance can be
+    /// reused across multiple parse() calls without leaking stale error
+    /// context from a previous invocation (NQ-NEW-011).
+    fn resetErrorState(self: *Self) void {
+        self.missing_required_flag = null;
+        self.current_command = null;
+        self.conflicting_flags = null;
+        self.missing_together_flags = null;
+        self.one_required_group = null;
+        self.secret_flag_name = null;
+        self.args_error = null;
+        self.env_parse_error_count = 0;
+        self.env_parse_errors_dropped = 0;
+        self.invalid_default_flag = null;
+    }
+
     /// Parse command-line arguments
     pub fn parse(self: *Self, argv: []const []const u8) ParseError!ParseResult {
+        self.resetErrorState();
+
         var ctx = Context.init(self.allocator);
         errdefer ctx.deinit();
         ctx.env_prefix = self.env_prefix;
@@ -259,7 +285,7 @@ pub const Parser = struct {
 
         // Apply env defaults for resolved subcommand (if different from root)
         if (current_cmd != self.root) {
-            self.applyEnvDefaultsForCommand(&ctx, current_cmd);
+            try self.applyEnvDefaultsForCommand(&ctx, current_cmd);
         }
 
         // Check for required flags
@@ -471,13 +497,13 @@ pub const Parser = struct {
         }
 
         // Apply environment variable flags for root command
-        self.applyEnvDefaultsForCommand(ctx, self.root);
+        try self.applyEnvDefaultsForCommand(ctx, self.root);
     }
 
     /// Apply environment variable defaults for a specific command's flags.
     /// Called for the root command during initial parsing, and again for
     /// the resolved subcommand after subcommand resolution.
-    fn applyEnvDefaultsForCommand(self: *Self, ctx: *Context, cmd: *const Command) void {
+    fn applyEnvDefaultsForCommand(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
         for (cmd.flags) |flag| {
             if (flag.env) |env_name| {
                 // Check if secret - skip env for secrets
@@ -497,10 +523,16 @@ pub const Parser = struct {
                                 .expected_type = flag.ftype.format(),
                             };
                             self.env_parse_error_count += 1;
+                        } else {
+                            // Detail buffer is full: count the drop so the
+                            // total failure count is not lost (NQ-NEW-013).
+                            self.env_parse_errors_dropped += 1;
                         }
                         continue;
                     };
-                    self.setFlagValue(ctx, flag.name, fval) catch continue;
+                    // Propagate allocation failure instead of silently
+                    // dropping the env value (GAP-0097).
+                    try self.setFlagValue(ctx, flag.name, fval);
                 }
             }
         }
@@ -544,7 +576,13 @@ pub const Parser = struct {
             if (flag.secret == .from_file_or_stdin) continue;
             if (flag.default_str) |def| {
                 if (ctx.getFlag(flag.name) != null) continue;
-                const fval = self.parseValue(flag.ftype, def) catch continue;
+                const fval = self.parseValue(flag.ftype, def) catch {
+                    // An unparseable default is a programmer error in the
+                    // command definition: fail loudly instead of silently
+                    // skipping (GAP-0097).
+                    self.invalid_default_flag = flag.name;
+                    return ParseError.InvalidValue;
+                };
                 try self.setFlagValue(ctx, flag.name, fval);
             }
         }
@@ -653,11 +691,17 @@ fn formatParseError(parser: *const Parser, err: ParseError, stderr: anytype) !vo
         ParseError.UnknownCommand => try stderr.print("Error: Unknown command\n\n", .{}),
         ParseError.MissingValue => try stderr.print("Error: Missing value for flag\n\n", .{}),
         ParseError.InvalidValue => {
-            if (parser.env_parse_error_count > 0) {
+            if (parser.invalid_default_flag) |flag_name| {
+                try stderr.print("Error: invalid default value for --{s}\n\n", .{flag_name});
+            } else if (parser.env_parse_error_count > 0) {
                 const env_err = parser.env_parse_errors[0];
-                try stderr.print("Error: Invalid value for --{s}: environment variable ${s} has value that cannot be parsed as {s}\n\n", .{
+                try stderr.print("Error: Invalid value for --{s}: environment variable ${s} has value that cannot be parsed as {s}", .{
                     env_err.flag_name, env_err.env_name, env_err.expected_type,
                 });
+                if (parser.env_parse_errors_dropped > 0) {
+                    try stderr.print(" (+{d} more)", .{parser.env_parse_errors_dropped});
+                }
+                try stderr.print("\n\n", .{});
             } else {
                 try stderr.print("Error: Invalid value\n\n", .{});
             }
@@ -2093,4 +2137,92 @@ test "parser: subcommand env flag does not override CLI flag" {
     const val = result.context.getString("sub-flag");
     try std.testing.expect(val != null);
     try std.testing.expectEqualStrings("explicit_value", val.?);
+}
+
+test "parser: invalid default_str surfaces InvalidValue with flag name" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{
+                .name = "n",
+                .help = "A numeric flag",
+                .ftype = .int,
+                .default_str = "not-a-number",
+            },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    try std.testing.expectError(ParseError.InvalidValue, parser.parse(&.{"test"}));
+    try std.testing.expect(parser.invalid_default_flag != null);
+    try std.testing.expectEqualStrings("n", parser.invalid_default_flag.?);
+}
+
+test "parser: error state is reset between parse calls" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{
+                .name = "name",
+                .help = "Required name",
+                .ftype = .string,
+                .required = true,
+            },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+
+    // First parse fails and records diagnostic state.
+    try std.testing.expectError(ParseError.MissingRequired, parser.parse(&.{"test"}));
+    try std.testing.expectEqualStrings("name", parser.missing_required_flag.?);
+
+    // Second parse with valid input must succeed and clear stale state.
+    var result = try parser.parse(&.{ "test", "--name", "ok" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), parser.env_parse_error_count);
+    try std.testing.expectEqual(@as(usize, 0), parser.env_parse_errors_dropped);
+    try std.testing.expect(parser.missing_required_flag == null);
+    try std.testing.expect(parser.invalid_default_flag == null);
+    try std.testing.expectEqualStrings("ok", result.context.getString("name").?);
+}
+
+test "parser: env parse errors beyond cap are counted not lost" {
+    if (comptime builtin.os.tag == .windows) return;
+
+    // PATH is set on all POSIX test systems and never parses as an integer.
+    const path_val = std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix("PATH") orelse return;
+    if (std.fmt.parseInt(i64, path_val, 10)) |_| {
+        // Environment is too unusual to test against; skip.
+        return;
+    } else |_| {}
+
+    // 10 int flags all bound to PATH: each one fails to parse, exceeding
+    // the 8-entry env_parse_errors capacity by 2.
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{ .name = "i0", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i1", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i2", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i3", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i4", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i5", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i6", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i7", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i8", .help = "h", .ftype = .int, .env = "PATH" },
+            FlagSpec{ .name = "i9", .help = "h", .ftype = .int, .env = "PATH" },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{"test"});
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 8), parser.env_parse_error_count);
+    try std.testing.expectEqual(@as(usize, 2), parser.env_parse_errors_dropped);
 }
