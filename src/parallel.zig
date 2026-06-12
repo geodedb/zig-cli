@@ -79,7 +79,7 @@ pub fn initPool(config: PoolConfig) void {
 
     if (pool_started.load(.acquire)) return;
 
-    const max: usize = if (config.worker_count) |n| n else 0;
+    const max: usize = config.worker_count orelse 0;
     pool = tp.ThreadPool.init(std.heap.page_allocator, .{
         .max_threads = max,
     }) catch @panic("thread-pool: init failed");
@@ -93,8 +93,8 @@ pub fn deinitPool() void {
     if (!tp_enabled) return;
 
     if (!pool_started.load(.acquire)) return;
-    pool_started.store(false, .release);
     pool.deinit();
+    pool_started.store(false, .release);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ fn sequentialForEach(
 /// never more than the item count or MAX_CHUNKS, never zero (NP-030).
 fn computeNumChunks(item_count: usize, workers: usize) usize {
     const by_workers = @max(workers, 1) * 2;
-    return @max(@min(@min(item_count, MAX_CHUNKS), by_workers), 1);
+    return @max(@min(item_count, MAX_CHUNKS, by_workers), 1);
 }
 
 fn tpForEach(
@@ -197,7 +197,13 @@ fn tpForEach(
     }
 
     _ = pool.submitBatch(tasks[0..n_chunks], .{ .wait_group = &wg }) catch {
-        // Fallback: process sequentially
+        // submitBatch with .return_error backpressure can partially enqueue
+        // tasks before returning an error (enqueuePush calls wait_group.add(1)
+        // before tryPush, and only calls wait_group.done() on QueueFull, not
+        // on successfully-queued tasks).  Those accepted tasks are already
+        // writing into results[].  Wait for them to drain before falling back
+        // sequentially, otherwise both paths race on overlapping indices.
+        wg.wait();
         sequentialForEach(T, R, items, results, func);
         return;
     };
@@ -304,7 +310,7 @@ test "parallel: map allocates and computes" {
     try std.testing.expectEqual(@as(u64, 30), results[2]);
 }
 
-test "chunk count is bounded by worker count, not item count" {
+test "chunk count bounded by workers, items, and MAX_CHUNKS" {
     try std.testing.expectEqual(@as(usize, 2), computeNumChunks(8, 1)); // 1 worker * 2
     try std.testing.expectEqual(@as(usize, 8), computeNumChunks(64, 4)); // 4 workers * 2
     try std.testing.expectEqual(@as(usize, 16), computeNumChunks(16, 32)); // never more chunks than items
