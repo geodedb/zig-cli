@@ -2,6 +2,31 @@
 
 This document provides a comprehensive reference for the zig-cli library.
 
+All symbols are reached through the root module (import name `zig_cli` in the
+examples below; use whatever name you registered in your `build.zig`):
+
+```zig
+const zig_cli = @import("zig_cli");
+
+const cli = zig_cli.cli;        // command parsing and execution
+const config = zig_cli.config;  // configuration (re-exports zig-config)
+const term = zig_cli.term;      // terminal utilities (color, progress, table, pager, tty)
+const util = zig_cli.util;      // general utilities (errors, suggest, text, fs)
+const signal = zig_cli.signal;  // signal handling
+const prompt = zig_cli.prompt;  // interactive prompts
+const parallel = zig_cli.parallel; // optional spice-based parallelism
+```
+
+The root module also re-exports the most common symbols directly:
+`Command`, `Context`, `FlagSpec`, `FlagType`, `SecretPolicy`, `ParseError`,
+`run`, `generateCompletions`, `generateMan`, `Loader`, `LoadOptions`,
+`Source`, `load`, `Color`, `Progress`, `ProgressBar`, `suggestClosest`,
+`ExitCode`, `Signal`, `installSignalHandlers`, `wasInterrupted`,
+`shouldShutdown`, `onCleanup`, `PromptError`, `InputConfig`, `promptInput`,
+`promptPassword`, `promptFreeSecret`, `promptConfirm`, `promptSelect`,
+`promptMultiSelect`, and `version` (the library version, single-sourced from
+`build.zig.zon`).
+
 ## Modules
 
 - [cli](#cli-module) - Command parsing and execution
@@ -9,8 +34,8 @@ This document provides a comprehensive reference for the zig-cli library.
 - [completion](#completion-module) - Shell completion generation
 - [config](#config-module) - Configuration management
 - [term](#term-module) - Terminal utilities
-- [progress](#progress-module) - Progress indicators
-- [table](#table-module) - Table formatting
+- [progress](#progress-module) - Progress indicators (`term.Progress` / `term.ProgressBar`)
+- [table](#table-module) - Table formatting (`term.Table`)
 - [prompt](#prompt-module) - Interactive prompts
 - [signal](#signal-module) - Signal handling
 - [util](#util-module) - General utilities
@@ -24,7 +49,7 @@ This document provides a comprehensive reference for the zig-cli library.
 Defines a CLI command with flags, subcommands, and execution logic.
 
 ```zig
-const cli = @import("cli");
+const cli = @import("zig_cli").cli;
 
 const Command = struct {
     // Required
@@ -35,6 +60,7 @@ const Command = struct {
     long_help: []const u8 = "",      // Extended help text
     examples: []const []const u8 = &.{},
     version: []const u8 = "",        // Version string
+    author: []const u8 = "",         // Author for man page generation
 
     // Flags and subcommands
     flags: []const FlagSpec = &.{},
@@ -63,16 +89,24 @@ const Command = struct {
 };
 ```
 
+Hook and run function types:
+
+```zig
+const RunFn = *const fn (*Context) anyerror!void;
+const HookFn = *const fn (*Context) anyerror!void;
+```
+
 ### FlagSpec
 
-Defines a command-line flag.
+Defines a command-line flag. `help` and `ftype` are required fields (no
+defaults).
 
 ```zig
 const FlagSpec = struct {
     name: []const u8,               // Long flag name (--name)
     short: ?u8 = null,              // Short flag (-n)
-    help: []const u8 = "",          // Help text
-    ftype: FlagType = .string,      // Value type
+    help: []const u8,               // Help text (required)
+    ftype: FlagType,                // Value type (required)
     required: bool = false,
     default_str: ?[]const u8 = null,
     env: ?[]const u8 = null,        // Environment variable name
@@ -81,6 +115,7 @@ const FlagSpec = struct {
     secret: SecretPolicy = .none,   // Secret handling policy
     validator: ?*const fn ([]const u8) bool = null, // Custom validator
     completions: []const []const u8 = &.{}, // Static completion values
+    complete_fn: ?*const fn ([]const u8) []const []const u8 = null, // Dynamic completions
 };
 ```
 
@@ -115,15 +150,11 @@ const ArgsValidator = union(enum) {
     range: struct { min: usize, max: usize }, // Between min and max
     only_valid: []const []const u8,  // Only values from this list
 };
-
-// Built-in validators
-const args = struct {
-    fn exact(n: usize) ArgsValidator { ... }
-    fn minimum(n: usize) ArgsValidator { ... }
-    fn maximum(n: usize) ArgsValidator { ... }
-    fn range(min: usize, max: usize) ArgsValidator { ... }
-};
 ```
+
+Note: `.only_valid` accepts empty positional args (it only rejects
+individual values not in the list); combine with `.minimum` if at least
+one argument is required.
 
 ### FlagType
 
@@ -140,13 +171,14 @@ const FlagType = enum {
 
 ### Context
 
-Execution context passed to command handlers.
+Execution context passed to command handlers. Defined in
+`src/cli/context.zig` and re-exported as `cli.Context`.
 
 ```zig
 const Context = struct {
     allocator: Allocator,
-    stdout: Writer,
-    stderr: Writer,
+    stdout: StdioWriter,   // print/writeAll/writeByte wrapper over stdout
+    stderr: StdioWriter,
     is_tty_out: bool,
     is_tty_err: bool,
     quiet: bool,      // -q/--quiet
@@ -155,11 +187,20 @@ const Context = struct {
     no_color: bool,   // --no-color
     dry_run: bool,    // -n/--dry-run
     no_input: bool,   // --no-input
+    env_prefix: []const u8,                    // Env var prefix for flag defaults
+    flags: std.StringHashMap(FlagValue),       // Parsed flag values
+    positionals: std.ArrayList([]const u8),    // Positional arguments
+    command_path: std.ArrayList([]const u8),   // e.g. ["kv", "get"]
+
+    // Lifecycle
+    fn init(allocator: Allocator) Context
+    fn deinit(self: *Context) void
 
     // Methods
     fn getFlag(self, name) ?FlagValue
     fn getString(self, name) ?[]const u8
-    fn getBool(self, name) bool
+    fn getBool(self, name) bool          // absent collapses to false
+    fn getBoolOpt(self, name) ?bool      // distinguishes absent from false
     fn getInt(self, name) ?i64
     fn getFloat(self, name) ?f64
     fn getStringArray(self, name) ?[]const []const u8
@@ -175,22 +216,28 @@ Parses command-line arguments.
 
 ```zig
 var parser = cli.Parser.init(allocator, &root_cmd, "1.0.0", "PREFIX_");
-const result = try parser.parse(argv);
-defer result.context.deinit();
+var result = try parser.parse(argv); // argv: []const []const u8
+// The allocator argument is accepted for backward compatibility but
+// ignored; ParseResult stores its own allocator.
+defer result.deinit(allocator);
 
 if (result.help_requested) {
     cli.printHelp(result.command, &result.context);
 }
 ```
 
+`ParseResult` fields: `command: *const Command`, `context: Context`,
+`help_requested: bool`, `version_requested: bool`, and the command chain
+used for persistent hooks.
+
 ### Helper Functions
 
 ```zig
-// Run a command with arguments
-fn run(root: *const Command, argv: [][]const u8, allocator: Allocator) !u8
+// Run a command with arguments (parse, env/defaults, validation, hooks, dispatch)
+fn run(root: *const Command, argv: []const []const u8, allocator: Allocator) !u8
 
-// Generate shell completions
-fn generateCompletions(shell: enum { bash, zsh, fish, powershell }, cmd: *const Command, allocator: Allocator) ![]const u8
+// Generate shell completions (Shell = enum { bash, zsh, fish, powershell })
+fn generateCompletions(shell: Shell, cmd: *const Command, allocator: Allocator) ![]const u8
 
 // Generate man page
 fn generateMan(cmd: *const Command, allocator: Allocator) ![]const u8
@@ -198,7 +245,7 @@ fn generateMan(cmd: *const Command, allocator: Allocator) ![]const u8
 // Generate Markdown documentation
 fn generateMarkdown(cmd: *const Command, allocator: Allocator) ![]const u8
 
-// Print help
+// Print help (write errors are swallowed for CLI robustness)
 fn printHelp(cmd: *const Command, ctx: *Context) void
 
 // Print help with custom template
@@ -209,12 +256,12 @@ fn printHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *const He
 
 ## Help Module
 
-Help text generation with customizable templates.
+Help text generation with customizable templates (`cli.help`).
 
 ### HelpTemplate
 
 ```zig
-const help = @import("cli").help;
+const help = @import("zig_cli").cli.help;
 
 const HelpTemplate = struct {
     // Section order
@@ -226,9 +273,12 @@ const HelpTemplate = struct {
     description_header: []const u8 = "",
     commands_header: []const u8 = "Commands",
     flags_header: []const u8 = "Flags",
+    env_header: []const u8 = "Environment Variables",
 
     // Display options
     show_global_flags: bool = true,
+    show_env_section: bool = false,
+    show_standard_env_vars: bool = true,
     show_footer: bool = true,
     footer_text: ?[]const u8 = null,
 
@@ -236,8 +286,8 @@ const HelpTemplate = struct {
     indent: u8 = 2,
     name_column_width: u8 = 20,
 
-    // Custom renderer (optional)
-    custom_renderer: ?CustomRendererFn = null,
+    // Custom section renderer (optional); return true if the section was handled
+    custom_renderer: ?*const fn (*const Command, *Context, HelpSection, *const HelpTemplate) bool = null,
 
     // Presets
     pub const default = HelpTemplate{};
@@ -253,6 +303,7 @@ const HelpSection = enum {
     description, // Long description
     commands,    // Subcommands list
     flags,       // Flags list
+    env_vars,    // Environment variables
     footer,      // Footer hints
 };
 ```
@@ -260,11 +311,15 @@ const HelpSection = enum {
 ### Functions
 
 ```zig
-// Print help with default template
+// Print help with default template (write errors silently ignored)
 fn printHelp(cmd: *const Command, ctx: *Context) void
 
 // Print help with custom template
 fn printHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *const HelpTemplate) void
+
+// Error-propagating variants for callers that want to handle write errors
+fn printHelpReturningError(cmd: *const Command, ctx: *Context) !void
+fn printHelpWithTemplateReturningError(cmd: *const Command, ctx: *Context, template: *const HelpTemplate) !void
 
 // Generate man page in roff format
 fn generateMan(cmd: *const Command, allocator: Allocator) ![]const u8
@@ -272,43 +327,31 @@ fn generateMan(cmd: *const Command, allocator: Allocator) ![]const u8
 // Generate Markdown documentation
 fn generateMarkdown(cmd: *const Command, allocator: Allocator) ![]const u8
 
-// Print version information
+// Print version information (and error-propagating variant)
 fn printVersion(cmd: *const Command, ctx: *Context) void
+fn printVersionReturningError(cmd: *const Command, ctx: *Context) !void
 ```
 
 ---
 
 ## Completion Module
 
-Shell completion script generation.
-
-### Shell Types
+Shell completion script generation. The convenience entry point lives on
+the `cli` namespace:
 
 ```zig
-const completion = @import("cli").completion;
+const cli = @import("zig_cli").cli;
 
-const Shell = enum {
-    bash,
-    zsh,
-    fish,
-    powershell,
-};
+// Shell = enum { bash, zsh, fish, powershell }
+const script = try cli.generateCompletions(.zsh, &root_cmd, allocator);
+defer allocator.free(script);
 ```
 
-### Generation
+The per-shell generators are also available directly as
+`cli.completion.{bash,zsh,fish,powershell}`, each exposing:
 
 ```zig
-// Generate completion script
-fn generate(
-    shell: Shell,
-    cmd: *const Command,
-    allocator: Allocator,
-    options: GenerateOptions,
-) ![]const u8
-
-const GenerateOptions = struct {
-    active_help: bool = true,  // Include active help support
-};
+fn generate(cmd: *const Command, allocator: Allocator) ![]const u8
 ```
 
 ### Active Help
@@ -318,20 +361,24 @@ Active help provides dynamic hints during shell completion:
 ```zig
 const cmd = Command{
     .name = "deploy",
+    .summary = "Deploy the app",
     // Static hints
     .active_help = &.{
         "Tip: Use --dry-run to preview changes",
     },
     // Dynamic hints based on context
     .active_help_fn = struct {
-        fn getHints(cmd: *const Command, args: []const []const u8) []const []const u8 {
-            // Return context-aware hints
+        fn getHints(c: *const Command, args: []const []const u8) []const []const u8 {
+            _ = c;
+            _ = args;
+            return &.{}; // Return context-aware hints
         }
     }.getHints,
 };
 ```
 
-Users can disable active help with environment variable:
+Users can disable active help with an environment variable derived from the
+command name:
 
 ```bash
 export MYAPP_ACTIVE_HELP=0
@@ -341,15 +388,18 @@ export MYAPP_ACTIVE_HELP=0
 
 ## Config Module
 
-Re-exports the external `zig-config` library.
+Re-exports the external `zig-config` library (`zig_cli.config`). The
+authoritative reference for these symbols is the zig-config documentation;
+the shim re-exports the following.
 
-### Format Detection
+Sub-modules: `yaml`, `toml`, `json`, `loader`, `provenance`, `xdg`,
+`dotenv`, `secret`, `validate`.
 
-```zig
-const Format = enum { yaml, toml, json };
-
-const format = config.Format.fromExtension("config.yaml");  // .yaml
-```
+Common types and functions: `Loader`, `LoadError`, `LoadOptions`, `Format`,
+`load`, `Source`, `TrackedValue`, `ProvenanceTracker`, `XdgPaths`,
+`getPaths`, `getConfigDir`, `getDataDir`, `getCacheDir`, `SecretError`,
+`readFromFile`, `readFromStdin`, `ValidationError`, `Value`, `ValueType`,
+`MapEntry`, `parseContent`, `parseFile`.
 
 ### Parsing
 
@@ -367,20 +417,6 @@ const host = value.getString("server.host") orelse "localhost";
 const port = value.getInt("server.port") orelse 8080;
 ```
 
-### Provenance Tracking
-
-```zig
-var tracker = config.ProvenanceTracker.init(allocator);
-defer tracker.deinit();
-
-try tracker.set("port", "8080", .system, "/etc/app/config.toml");
-try tracker.set("port", "9000", .user, "~/.config/app/config.toml");
-
-const val = tracker.get("port").?;
-// val.value == "9000" (user overrides system)
-// val.source == .user
-```
-
 ### Source Precedence
 
 ```text
@@ -390,43 +426,31 @@ flag > env > project > user > system > default
 ### XDG Directories
 
 ```zig
-const config_dir = try config.xdg.getConfigDir("myapp", allocator);
-const data_dir = try config.xdg.getDataDir("myapp", allocator);
-const cache_dir = try config.xdg.getCacheDir("myapp", allocator);
-const system_dir = try config.xdg.getSystemConfigDir("myapp", allocator);
-```
-
-### Validation
-
-```zig
-try config.validate.required(value);
-try config.validate.url("https://example.com");
-try config.validate.email("user@example.com");
-try config.validate.port(8080);
+const config_dir = try config.getConfigDir("myapp", allocator);
+const data_dir = try config.getDataDir("myapp", allocator);
+const cache_dir = try config.getCacheDir("myapp", allocator);
 ```
 
 ### Secret Handling
 
-```zig
-const redacted = config.secret.redact("password123");
-// "***REDACTED***"
-
-var buffer = "secret".*;
-config.secret.secureZero(&buffer);
-// buffer is now all zeros
-```
+Secrets are read from file or stdin only (never flags/env); see
+`config.secret` (`readFromFile`, `readFromStdin`) and the `SecretPolicy`
+flag policy in the CLI module.
 
 ---
 
 ## Term Module
 
-Terminal utilities with TTY detection and NO_COLOR compliance.
+Terminal utilities with TTY detection and NO_COLOR compliance
+(`zig_cli.term`).
 
 ### Terminal Info
 
 ```zig
 const info = term.getInfo();
-// info.is_tty, info.width, info.height, info.color_supported
+// info.is_tty, info.width, info.height, info.term_type,
+// info.color_supported, info.unicode_supported
+// Always succeeds; falls back to 80x24 when stdout is not a TTY.
 ```
 
 ### Terminal Size
@@ -448,10 +472,15 @@ term.isStdinTty()
 ### Color Context
 
 ```zig
-const color_ctx = term.ColorContext.init(force_color, no_color);
+// force_color: ?bool (null = auto-detect), no_color: bool
+const color_ctx = term.ColorContext.init(null, false);
 if (color_ctx.enabled) {
     // Use colors
 }
+
+// Writer-based helpers (output is control-byte sanitized):
+try color_ctx.writeColored(writer, "text", .green);
+try color_ctx.writeStyled(writer, "text", .bold);
 ```
 
 ### ANSI Stripping
@@ -465,103 +494,95 @@ const plain = try term.stripAnsi("\x1b[31mred\x1b[0m text", allocator);
 
 ## Progress Module
 
-Progress indicators for long-running operations.
+Progress indicators for long-running operations, in `zig_cli.term`
+(`term.Progress`, `term.ProgressBar`; also re-exported from the root as
+`Progress`/`ProgressBar`). Both are TTY-aware: when stdout is not a TTY
+they produce no output.
 
-### Spinner
+### Spinner (`term.Progress`)
 
 For operations with unknown duration:
 
 ```zig
-const progress = @import("cli").progress;
+const term = @import("zig_cli").term;
 
-var spinner = progress.Spinner.init(ctx.stdout, .{
-    .message = "Loading...",
-    .style = .dots,  // .dots, .line, .arrow, .pulse, .bounce
-});
-
-spinner.start();
+var spinner = term.Progress.start("Loading...");
 defer spinner.stop();
 
-// Update message during operation
-spinner.setMessage("Processing...");
+// Or only when attached to a TTY:
+var spinner2 = term.Progress.startIfTty(ctx.is_tty_out, "Loading...");
 
-// Completion states
-spinner.succeed("Done!");    // Green checkmark
-spinner.fail("Failed");      // Red X
-spinner.warn("Warning");     // Yellow warning
-spinner.info("Info");        // Blue info
+spinner.update("Processing...");  // Update message
+spinner.tick();                   // Advance the spinner frame
+spinner.stopWithMessage("Done!"); // Stop with a final message
 ```
 
-### Progress Bar
-
-For operations with known total:
+Spinner styles (`spinner_style` field):
 
 ```zig
-var bar = progress.ProgressBar.init(ctx.stdout, .{
-    .total = 100,
-    .width = 40,
-    .format = "[{bar}] {percent}% ({current}/{total})",
-    .filled_char = '=',
-    .empty_char = ' ',
-    .show_eta = true,
-});
-
-bar.start();
-defer bar.finish();
-
-// Update progress
-bar.update(50);     // Set to 50
-bar.increment(1);   // Add 1 to current
+const SpinnerStyle = enum { dots, line, arrow, pulse };
 ```
 
-### Format Placeholders
+### Progress Bar (`term.ProgressBar`)
 
-```text
-{bar}     - Progress bar visualization
-{percent} - Percentage complete
-{current} - Current value
-{total}   - Total value
-{eta}     - Estimated time remaining
-{message} - Custom message
+For operations with known total. The bar width is derived from the
+terminal width automatically; rendering is thread-safe.
+
+```zig
+var bar = term.ProgressBar.init(100, "Downloading");
+
+bar.update(50);          // Set absolute progress (clamped to total)
+bar.increment();         // Add 1 to current
+const n = bar.getCurrent();
+bar.finish();            // Complete and end the line
 ```
 
 ---
 
 ## Table Module
 
-Structured table output.
+Structured table output, in `zig_cli.term` (`term.Table`).
 
 ### Creating Tables
 
 ```zig
-const table = @import("cli").table;
+const term = @import("zig_cli").term;
 
-var t = table.Table.init(ctx.allocator, .{
-    .style = .ascii,  // .ascii, .unicode, .unicode_double, .minimal, .none
-    .striped = false,
+var t = term.Table.initWithConfig(ctx.allocator, .{
+    .border = .unicode,  // .none, .ascii, .unicode, .markdown
     .padding = 1,
-    .columns = &.{
-        .{ .header = "ID", .alignment = .right, .min_width = 4 },
-        .{ .header = "Name", .alignment = .left, .max_width = 20 },
-        .{ .header = "Status", .alignment = .center },
-    },
+    .show_header = true,
+    .header_separator = true,
+    .use_color = false,
 });
 defer t.deinit();
+
+try t.addColumn(.{ .header = "ID", .alignment = .right, .min_width = 4 });
+try t.addColumn(.{ .header = "Name", .alignment = .left, .max_width = 20 });
+try t.addColumn(.{ .header = "Status", .alignment = .center });
+// Or: try t.addColumns(&.{ "ID", "Name", "Status" });
 
 try t.addRow(&.{ "1", "Alice", "Active" });
 try t.addRow(&.{ "2", "Bob", "Inactive" });
 
-try t.render(ctx.stdout);
+// Render to an allocated string...
+const out = try t.render();
+defer ctx.allocator.free(out);
+
+// ...or directly to a writer
+try t.renderTo(writer);
 ```
+
+`Table.init(allocator)` creates a table with the default configuration.
 
 ### Column Options
 
 ```zig
-const ColumnSpec = struct {
-    header: []const u8 = "",
+const Column = struct {
+    header: []const u8,
+    min_width: usize = 0,        // 0 = auto
+    max_width: usize = 0,        // 0 = unlimited; cells are truncated UTF-8-safely
     alignment: Alignment = .left,
-    min_width: ?usize = null,
-    max_width: ?usize = null,
 };
 
 const Alignment = enum { left, center, right };
@@ -578,26 +599,17 @@ const Alignment = enum { left, center, right };
                 │ ID │ Name    │
                 ├────┼─────────┤
 
-.unicode_double ╔════╦═════════╗
-                ║ ID ║ Name    ║
-                ╠════╬═════════╣
-
-.minimal        ID  Name
-                --  ----
+.markdown       | ID | Name    |
+                | -- | ------- |
 
 .none           ID  Name
-```
-
-### Sorting
-
-```zig
-t.sortByColumn(0, .ascending);
-t.sortByColumn(1, .descending);
 ```
 
 ---
 
 ## Util Module
+
+General utilities (`zig_cli.util`).
 
 ### Exit Codes
 
@@ -606,7 +618,11 @@ const ExitCode = enum(u8) {
     success = 0,
     general_error = 1,
     usage_error = 2,
-    // ...
+    io_error = 74,
+    permission_denied = 77,
+    config_error = 78,
+
+    fn toInt(self: ExitCode) u8
 };
 ```
 
@@ -615,17 +631,26 @@ const ExitCode = enum(u8) {
 ```zig
 const candidates = &[_][]const u8{ "start", "stop", "status" };
 const suggestion = util.suggestClosest("strat", candidates, 2);
-// suggestion == "start"
+// suggestion == "start" (?[]const u8; null when nothing is close enough)
+
+const d = util.levenshteinDistance("kitten", "sitting"); // 3
 ```
+
+For building "did you mean" errors there is also
+`util.errors.formatUnknownCommand(input, suggestion, allocator)`, which
+returns a `FormattedError` with the echoed input sanitized of terminal
+control bytes.
 
 ### Text Utilities
 
 ```zig
 const truncated = try util.truncate("hello world", 8, allocator);
-// "hello..."
+// "hello..." (UTF-8 codepoint-safe)
 
 const padded = try util.padRight("hi", 10, allocator);
 // "hi        "
+
+// Also: util.padLeft, util.wordWrap, util.indent
 ```
 
 ### Filesystem
@@ -633,24 +658,33 @@ const padded = try util.padRight("hi", 10, allocator);
 ```zig
 util.exists("/path/to/file")
 util.isDirectory("/path")
+util.isFile("/path/to/file")
 util.fs.isSafePath("/home/user/file.txt")  // true
 util.fs.isSafePath("/etc/shadow")          // false
 ```
+
+Note: `isSafePath` is a best-effort denylist of obviously sensitive paths
+(plus `..` traversal rejection), NOT a security boundary -- it does not
+canonicalize or resolve symlinks. Callers needing a real guarantee must
+canonicalize (e.g. `util.fs.absolutePath`) and validate against an
+allowlisted root.
 
 ---
 
 ## Signal Module
 
-Cross-platform signal handling for graceful shutdown.
+Cross-platform signal handling for graceful shutdown (`zig_cli.signal`).
+Handlers only set atomic flags; cleanup callbacks run in normal execution
+context via `pollSignals()` (flag-and-poll pattern).
 
 ### Installation
 
 ```zig
-const signal = @import("cli").signal;
+const signal = @import("zig_cli").signal;
 
 try signal.install(.{
-    .handle_interrupt = true,   // SIGINT
-    .handle_terminate = true,   // SIGTERM
+    .handle_interrupt = true,   // SIGINT (default: true)
+    .handle_terminate = true,   // SIGTERM (default: true)
     .handle_hangup = false,     // SIGHUP
     .handle_quit = false,       // SIGQUIT
 });
@@ -671,31 +705,41 @@ if (signal.wasTerminated()) {
 if (signal.shouldShutdown()) {
     // Either SIGINT or SIGTERM
 }
+
+// Run registered cleanup callbacks if a signal was received.
+// Call periodically from your main loop.
+_ = signal.pollSignals();
 ```
 
 ### Cleanup Callbacks
 
 ```zig
-try signal.onCleanup(fn() void {
-    // Cleanup resources
-});
+fn cleanup() void {
+    // Cleanup resources (runs in normal context via pollSignals(),
+    // so it may allocate, lock, and perform I/O)
+}
+
+try signal.onCleanup(&cleanup);
 ```
 
 ---
 
 ## Prompt Module
 
-Interactive prompts for CLI input.
+Interactive prompts for CLI input (`zig_cli.prompt`). All prompt functions
+return `PromptError.NotInteractive` when stdin is not a TTY.
 
 ### Text Input
 
 ```zig
-const prompt = @import("cli").prompt;
+const prompt = @import("zig_cli").prompt;
 
 const name = try prompt.input("Enter name", .{
     .default = "anonymous",
-    .allow_empty = false,
-    .max_length = 100,
+    .allow_empty = true,        // default: true
+    .max_length = 100,          // default: 1024
+    .validator = null,          // ?*const fn ([]const u8) bool
+    .validation_error = "Invalid input",
 }, allocator);
 defer allocator.free(name);
 ```
@@ -704,8 +748,8 @@ defer allocator.free(name);
 
 ```zig
 const password = try prompt.password("Password: ", allocator);
-defer allocator.free(password);
-// Input is not echoed
+defer prompt.freeSecret(allocator, password);
+// Input is not echoed; freeSecret zeroes the buffer before freeing
 ```
 
 ### Confirmation
@@ -724,7 +768,7 @@ const choice = try prompt.select("Choose option:", &.{
     "Option B",
     "Option C",
 });
-// choice is 0, 1, or 2
+// choice: usize (0, 1, or 2)
 ```
 
 ### Multi-Select
@@ -736,7 +780,7 @@ const choices = try prompt.multiSelect("Select features:", &.{
     "Feature C",
 }, allocator);
 defer allocator.free(choices);
-// choices is slice of indices
+// choices: []usize (selected indices)
 ```
 
 ---
@@ -756,6 +800,10 @@ const ParseError = error{
     HelpRequested,
     VersionRequested,
     OutOfMemory,
+    MutuallyExclusiveFlags,
+    RequiredTogetherFlags,
+    OneRequiredFlags,
+    InvalidArgs,
 };
 ```
 
@@ -771,98 +819,56 @@ const PromptError = error{
 };
 ```
 
-### ValidationError
+### ArgsValidationError
+
+Returned by `ArgsValidator.validate`; surfaced through `run()` as
+`ParseError.InvalidArgs` with a descriptive message.
 
 ```zig
-const ValidationError = error{
-    Required,
-    TooShort,
-    TooLong,
-    OutOfRange,
-    PatternMismatch,
+const ArgsValidationError = error{
+    NoArgsExpected,
+    ExactArgsMismatch,
+    TooFewArgs,
+    TooManyArgs,
+    RangeArgsMismatch,
+    InvalidArg,
 };
 ```
+
+`config.ValidationError` (from the external zig-config library) is separate
+and applies to configuration validation.
 
 ---
 
-## Built-in Validators
+## Flag Validators
 
-The library provides common validators for flag values.
-
-### Network Validators
-
-```zig
-const validate = @import("cli").validate;
-
-validate.hostname  // Valid hostname format
-validate.port      // Valid port (1-65535)
-validate.ip        // IPv4 or IPv6 address
-validate.ipv4      // IPv4 address only
-validate.ipv6      // IPv6 address only
-validate.url       // Valid URL format
-```
-
-### Format Validators
+Flag values are validated with a custom function on the `FlagSpec`. The
+validator receives the raw string value and returns `true` when valid:
 
 ```zig
-validate.email     // Email address format
-validate.uuid      // UUID format
-```
-
-### Path Validators
-
-```zig
-validate.file_exists  // File must exist
-validate.dir_exists   // Directory must exist
-validate.path_exists  // File or directory must exist
-```
-
-### Numeric Validators
-
-```zig
-validate.positive       // > 0
-validate.non_negative   // >= 0
-validate.range(1, 100)  // Within range (inclusive)
-```
-
-### Usage
-
-```zig
-const cmd = Command{
-    .flags = &.{
-        FlagSpec{
-            .name = "port",
-            .ftype = .int,
-            .validator = validate.port,
-        },
-        FlagSpec{
-            .name = "email",
-            .ftype = .string,
-            .validator = validate.email,
-        },
-    },
-};
-```
-
-### Custom Validators
-
-```zig
-fn validateProjectName(value: []const u8) ?[]const u8 {
-    if (value.len < 3) {
-        return "Project name must be at least 3 characters";
-    }
-    if (!std.ascii.isAlphabetic(value[0])) {
-        return "Project name must start with a letter";
-    }
-    return null;  // Valid
+fn validateProjectName(value: []const u8) bool {
+    if (value.len < 3) return false;
+    if (!std.ascii.isAlphabetic(value[0])) return false;
+    return true;
 }
 
 const cmd = Command{
+    .name = "new",
+    .summary = "Create a project",
     .flags = &.{
-        FlagSpec{
+        .{
             .name = "name",
-            .validator = validateProjectName,
+            .help = "Project name",
+            .ftype = .string,
+            .validator = &validateProjectName,
         },
     },
 };
 ```
+
+When a validator returns `false`, parsing fails with
+`ParseError.InvalidValue`.
+
+For configuration-value validation (URLs, emails, ports, ...), see the
+external zig-config library's validation module, re-exported as
+`config.validate`.

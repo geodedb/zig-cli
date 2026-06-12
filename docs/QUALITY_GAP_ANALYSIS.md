@@ -15,7 +15,7 @@ Last updated: 2026-06-12
 | Low | 0 | 36 | 7 |
 | **Total** | **0** | **91** | **11** |
 
-**0 open findings** as of 2026-06-12 (iteration 2). The 21 Phase 4 findings (NQ-NEW-001..021) are fully dispositioned: **20 Closed**, **1 Won't Do** (NQ-NEW-014, generator duplication — rationale below; [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) closed). The iteration-2 re-review items (NQ-I2-001..008) are dispositioned in their own section below; the sole in-flight item, NQ-I2-008 (pre-existing API.md drift), is being fixed by a dedicated `docs(api)` sync pass in the immediately following commit.
+**0 open findings** as of 2026-06-12 (iteration 2). The 21 Phase 4 findings (NQ-NEW-001..021) are fully dispositioned: **20 Closed**, **1 Won't Do** (NQ-NEW-014, generator duplication — rationale below; [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) closed). The iteration-2 re-review items (NQ-I2-001..008) are all dispositioned in their own section below (fixed, adjudicated-keep, not-an-issue, or closed by the dedicated `docs(api)` sync commit).
 
 **Cross-domain (owned by the security tracker, NOT counted here):** NQ-NEW-007/008-injection-scope (markdown injection = security F-03/NS-060, issue #131 — now Closed), NQ-NEW-010 (deinit secret-zeroing doc = security F-02/NS-016 — now Closed), NQ-NEW-015 (Windows password echo on GetConsoleMode failure = security NS-059, issue #130 — now Closed).
 
@@ -86,7 +86,7 @@ pre-commit incl. the 800-line file-size hook). Dispositions:
 | NQ-I2-005 | Low | docs | ARCHITECTURE.md module map omitted the `help/`, `parser/`, `prompt/select.zig`, `context.zig`, `sanitize.zig` split | **Closed** (this commit) -- module map rewritten to the current tree, incl. the sanitize named-module pattern and the 800-line pre-commit gate |
 | NQ-I2-006 | Low | docs | `### Completions (src/completions.zig)` cited a file that never existed | **Closed** (this commit) -- corrected to `src/cli/completion/{bash,zsh,fish,powershell}.zig`, exposed via `cli.generateCompletions` |
 | NQ-I2-007 | Low | docs | CHANGELOG sanitize/file-split bullet citing #140 suspected mis-attribution | **Not an issue** -- #140 was the duplication/dedup tracker and is closed; the sanitizer-mirror consolidation into `src/sanitize.zig` is dedup work legitimately referenced under it |
-| NQ-I2-008 | Low | api-contract | `docs/API.md` content drift from the actual public surface (PRE-EXISTING; predates the refactor -- FlagSpec defaults, Context/run/ParseError signatures, fabricated `progress.Spinner`, import paths, `util.fs.isSafePath`) | **Open (fix in flight)** -- being corrected by a dedicated `docs(api)` sync pass in the immediately following commit |
+| NQ-I2-008 | Low | api-contract | `docs/API.md` content drift from the actual public surface (PRE-EXISTING; predates the refactor -- FlagSpec defaults, Context/run/ParseError signatures, fabricated `progress.Spinner`, Table API, import paths, fabricated `cli.validate` module) | **Closed** (`docs(api)` sync commit, 2026-06-12) -- every documented symbol/signature/default re-verified against `root.zig`/`cli.zig`/`term.zig` source. Review-detail correction: `util.fs.isSafePath` DOES exist (`fs.zig:168`); the doc reference was kept with the advisory-denylist caveat |
 
 The iteration-2 appsec re-review findings (N-01..N-04, R2-01/R2-02) are owned by the
 security tracker (`docs/SECURITY_GAP_ANALYSIS.md`, `docs/APPSEC_REVIEW_2026-06-12.md`);
