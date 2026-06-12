@@ -3,15 +3,29 @@
 ## Overview
 
 zig-cli is organized into several modules, each handling a specific aspect of CLI development.
+Source files are kept under an 800-line cap enforced by a pre-commit hook
+(`scripts/check_file_size.sh`); larger concerns are split into subdirectory modules
+re-exported from their parent file.
 
 ```text
-zig-cli
-├── cli        # Command parsing and execution
-├── config     # Configuration management (re-exports zig-config)
-├── term       # Terminal utilities
-├── util       # General utilities
-├── completions# Shell completion generation
-└── help       # Help text generation
+src/
+├── root.zig               # Public surface (re-exports everything below)
+├── cli.zig                # CLI namespace (command/parser/help/completion)
+│   └── cli/
+│       ├── command.zig    # Command tree, hooks, flag groups, args validators
+│       ├── context.zig    # Context, FlagSpec, FlagValue, StdioWriter, SecretPolicy
+│       ├── parser.zig     # Argument parsing + run() lifecycle
+│       │   └── parser/    # env.zig (env defaults), format.zig (error rendering)
+│       ├── help.zig       # Help coordinator + templates
+│       │   └── help/      # common.zig, text.zig, json.zig, man.zig, markdown.zig
+│       └── completion/    # bash.zig, zsh.zig, fish.zig, powershell.zig
+├── config.zig             # Configuration management (re-exports zig-config)
+├── term.zig               # Terminal utilities (term/: tty, color, pager, progress, table, env)
+├── util.zig               # General utilities (util/: errors, suggest, text, fs)
+├── prompt.zig             # Interactive prompts (prompt/select.zig: select/multiSelect)
+├── sanitize.zig           # Shared terminal-output sanitizer (named build module)
+├── signal.zig             # Signal handling (flag-and-poll)
+└── parallel.zig           # Optional spice-based parallelism
 ```
 
 ## Module Dependencies
@@ -70,7 +84,7 @@ pub const Command = struct {
 };
 ```
 
-### Parser (`src/cli/parser.zig`)
+### Parser (`src/cli/parser.zig`, `src/cli/parser/`)
 
 Handles argument parsing with support for:
 
@@ -80,6 +94,12 @@ Handles argument parsing with support for:
 - Positional arguments
 - Subcommand dispatch
 - `--` separator for raw arguments
+
+`parse()` is decomposed into a phase pipeline (token handlers → finalize).
+Two submodules carry the supporting concerns and are re-exported through
+`parser.zig`: `parser/env.zig` (environment-variable flag defaults and env
+parse-error tracking) and `parser/format.zig` (rendering `run()` parse
+errors to stderr).
 
 ### Context (`src/cli/context.zig`)
 
@@ -93,6 +113,19 @@ ctx.getFloat("threshold")  // ?f64
 ```
 
 Positional arguments are accessed via `ctx.positionals.items`.
+
+`context.zig` is the canonical home of `Context`, `FlagSpec`, `FlagValue`,
+`FlagType`, `SecretPolicy`, and `StdioWriter`; `command.zig` re-exports them
+at their historical paths so the public API is unchanged.
+
+### Help (`src/cli/help.zig`, `src/cli/help/`)
+
+`help.zig` keeps the public entry points (`printHelp*`, `printVersion*`,
+`HelpTemplate`, `HelpSection`) and delegates rendering to per-format
+submodules: `help/text.zig` (plain/ANSI text), `help/json.zig`,
+`help/man.zig` (roff), `help/markdown.zig`, with shared helpers in
+`help/common.zig`. Each renderer owns its format-specific escaper by
+design (the escapers are intentionally not unified -- see NS-060).
 
 ### Config (`src/config.zig`)
 
@@ -113,14 +146,32 @@ Terminal utilities:
 - Cursor manipulation
 - ANSI sequence stripping
 
-### Completions (`src/completions.zig`)
+### Completions (`src/cli/completion/{bash,zsh,fish,powershell}.zig`)
 
-Generates shell completions for:
+Generates shell completions, exposed via `cli.generateCompletions`
+(`src/cli.zig`), for:
 
 - Bash
 - Zsh
 - Fish
 - PowerShell
+
+Each generator emits a different shell language and therefore keeps its own
+tree walk and escaper; the shared sanitizer policy lives in `src/sanitize.zig`.
+
+### Sanitize (`src/sanitize.zig`)
+
+Single source of truth for terminal-output sanitization
+(`writeControlFiltered`, `stripControlChars`, `utf8FloorIndex`). It is wired
+in `build.zig` as a named module (`@import("sanitize")`) so `cli`, `term`,
+`util`, and the test modules all share one implementation instead of the
+three mirrored copies that predated it.
+
+### Prompts (`src/prompt.zig`, `src/prompt/select.zig`)
+
+Interactive prompts (input, password, confirm). The `select`/`multiSelect`
+implementations live in `prompt/select.zig` and are re-exported from
+`prompt.zig`, so the public API is unchanged.
 
 ## Configuration Precedence
 
@@ -151,8 +202,12 @@ pub const ParseError = error{
 Errors include context for helpful messages:
 
 - Which flag/command caused the error
-- Suggestions for typos (Levenshtein distance)
 - Expected types/values
+
+Typo-suggestion helpers (`util.suggestClosest`, Levenshtein distance, and the
+sanitized `util.errors.formatUnknownCommand`) are provided for consumers to
+build "did you mean" messages in their own error handling; the parser does
+not auto-suggest.
 
 ## Thread Safety
 

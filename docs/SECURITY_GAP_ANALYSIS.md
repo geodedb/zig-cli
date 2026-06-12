@@ -1,6 +1,6 @@
 # Security Gap Analysis
 
-> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 follow-up findings (NS-047 through NS-055). Updated 2026-06-11 with codepros:audit iteration-1 findings (NS-056, NS-058 through NS-062), status corrections (NS-016, NS-020), and the NS-057 refutation. Updated 2026-06-12: all 6 iteration-1 open findings (NS-056, NS-058, NS-059, NS-060, NS-061, NS-062) **Closed** by the audit-iteration-1 fix merge (188bf5a); NS-016 remediated (doc corrected + `freeSecret` helper). **0 open findings.**
+> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 follow-up findings (NS-047 through NS-055). Updated 2026-06-11 with codepros:audit iteration-1 findings (NS-056, NS-058 through NS-062), status corrections (NS-016, NS-020), and the NS-057 refutation. Updated 2026-06-12: all 6 iteration-1 open findings (NS-056, NS-058, NS-059, NS-060, NS-061, NS-062) **Closed** by the audit-iteration-1 fix merge (188bf5a); NS-016 remediated (doc corrected + `freeSecret` helper). Updated 2026-06-12 (iteration 2): appsec re-review verified NS-056..NS-062 intact post-refactor; new findings N-01/N-03/N-04 fixed, N-02 doc correction applied. **0 open findings.**
 
 Last updated: 2026-06-12
 
@@ -27,6 +27,35 @@ branch merged to `main` as `188bf5a`. **0 open findings remain.** Fix commits:
 **NS-016** (False-Resolved) remediated by `928f603` (doc comment corrected to state argv/environ-backed
 values cannot be scrubbed in `deinit`) plus `022e4cf` (`freeSecret` zeroing helper for heap-owned secrets).
 929/929 tests pass on `188bf5a`.
+
+## 2026-06-12 UPDATE -- codepros:audit iteration 2 (post-refactor re-review)
+
+A second appsec re-review (`docs/APPSEC_REVIEW_2026-06-12.md`) was run against the
+refactor merge `3e2d804` (file splits: help/, parser/, context.zig, prompt/select.zig,
+sanitize module). It **verified all prior fixes NS-056 through NS-062 intact after the
+refactor** -- sanitization-site counts were compared against the pre-split monolith and
+no site was lost. New findings and dispositions:
+
+| Finding | Severity | Status | Fix commit(s) | Description |
+|---------|----------|--------|---------------|-------------|
+| N-01 | Low-Medium | **Fixed** | `58c9598` | `.only_valid` args validator echoed a raw attacker positional to stderr with no control-byte filter (`command.zig` / `parser/format.zig`); now routed through `sanitize` |
+| N-02 | Info (doc) | **Fixed** | this commit | NS-056 "live by default via the unknown-command path" doc claim did not match wired code; corrected below |
+| N-03 | Low | **Fixed** | `58c9598` | bash `complete -F _name {raw cmd.name}` registration target unescaped (asymmetric vs. the other 3 generators) |
+| N-04 | Low | **Fixed** | `58c9598`, `b9b8514` | Header `#`-comment lines in bash/fish/powershell interpolated names/paths raw without newline stripping; zsh compdef/header newline stripping added |
+| R2-01/R2-02 | Info | **Fixed** | `58c9598` | Informational nits from the iteration-2 review |
+
+**N-02 correction (NS-056 path claim).** The doc previously claimed NS-056's fix is
+"live by default via the unknown-command path", citing `formatUnknownCommand`'s
+`stripControlChars` call (`errors.zig:110`). Verified reality: `ParseError.UnknownCommand`
+is never raised by the parser (bare tokens become positionals by design);
+`formatUnknownCommand` is a consumer-side sanitized helper with no production caller;
+and the default `run()` error renderer prints a static string that never echoes argv.
+The actual live-by-default NS-056 coverage is the **help/table/progress/color/errors
+output paths** (via `sanitize.writeControlFiltered`/`stripControlChars`) **plus the
+args-validation echo** (N-01, fixed in `58c9598`) -- the one default-`run()` path that
+echoed runtime argv. The NS-056 entry below has been corrected accordingly.
+
+**0 open findings remain** after iteration 2.
 
 ## 2026-06-11 UPDATE -- codepros:audit iteration 1
 
@@ -92,7 +121,7 @@ Stale evidence line numbers from the 2026-03-25 doc were re-anchored against HEA
 
 | Rank | Severity | Risk Score | Finding | Component | CWE/OWASP | Evidence (file:line) | Issue URL | Status |
 |------|----------|------------|---------|-----------|-----------|---------------------|-----------|--------|
-| -- | **Medium** | **36** | **NS-056: Terminal escape injection -- no ESC stripping on TTY (live-by-default via unknown-command path)** | **term/help/errors** | **CWE-150 / A05:2021** | **`src/util/text.zig:199` stripControlChars; `errors.zig:110`** | **[#128](https://gitlab.com/devnw/zig/cli/-/issues/128)** | **Closed** (`19bb03b`,`b9f7f47`) |
+| -- | **Medium** | **36** | **NS-056: Terminal escape injection -- no ESC stripping on TTY (live-by-default via help/table/progress/color/errors paths + args-validation echo)** | **term/help/errors** | **CWE-150 / A05:2021** | **`src/sanitize.zig` writeControlFiltered/stripControlChars applied on color/progress/table/help paths; args echo `58c9598`** | **[#128](https://gitlab.com/devnw/zig/cli/-/issues/128)** | **Closed** (`19bb03b`,`b9f7f47`) |
 | -- | **Medium** | **32** | **NS-059: Windows password() echoes input when GetConsoleMode fails** | **prompt** | **CWE-549 / A07:2021** | **`src/prompt.zig:230,241`** | **[#130](https://gitlab.com/devnw/zig/cli/-/issues/130)** | **Closed** (`022e4cf`) |
 | -- | **Low–Med** | **24** | **NS-058: ProgressBar.init u16 underflow panic (DoS) when width < 20** | **term/progress** | **CWE-191 / A05:2021** | **`src/term/progress.zig:169` barWidthForTerminal** | **[#129](https://gitlab.com/devnw/zig/cli/-/issues/129)** | **Closed** (`5d0bc6c`) |
 | -- | **Low** | **16** | **NS-060: Markdown headings/prose/code-fences emitted raw (NS-020 partial false-resolution)** | **help** | **CWE-79/116 / A05:2021** | **`src/cli/help.zig:895,919,945`** | **[#131](https://gitlab.com/devnw/zig/cli/-/issues/131)** | **Closed** (`efaf9a7`) |
@@ -163,12 +192,12 @@ verified in code in the audit-iteration-1 merge `188bf5a`. Risk Score = Impact x
 
 ### NS-056: Terminal escape-sequence injection -- no ESC stripping on TTY output [Medium] -- CLOSED
 
-- **Status:** **Closed** (2026-06-12) -- fix commits `19bb03b`, `277a98e`, `b9f7f47`, `e3deefd`, `e296403`; resolution: `stripControlChars` added at `src/util/text.zig:199` and applied to TTY emissions (`errors.zig:110`, color/progress/table); regression tests for `\x1b[2J` and OSC at `text.zig:266-293`.
+- **Status:** **Closed** (2026-06-12) -- fix commits `19bb03b`, `277a98e`, `b9f7f47`, `e3deefd`, `e296403`; resolution: `stripControlChars` added (now single-sourced in `src/sanitize.zig`) and applied to TTY emissions (color/progress/table/plain-text help); regression tests for `\x1b[2J` and OSC. *Iteration-2 correction (N-02):* the args-validation echo -- the one default-`run()` path that echoed runtime argv -- was brought under the same policy in `58c9598`; `formatUnknownCommand` (`errors.zig`) is a sanitized consumer-side helper with no production caller (see "live by default" correction below).
 - **Risk Level:** Medium
 - **Risk Score:** 36 (Impact: 3, Likelihood: 3)
 - **CWE:** CWE-150 (Improper Neutralization of Escape Sequences)
 - **OWASP:** A05:2021 Injection
-- **Exploit Surface:** Local (argv/TTY) -- **live by default** via the unknown-command path; broader for consumers surfacing untrusted command metadata.
+- **Exploit Surface:** Local (argv/TTY) -- **live by default** via the help/table/progress/color/errors output paths and the args-validation echo (N-01); broader for consumers surfacing untrusted command metadata.
 - **Confidence:** `confidence::confirmed` -- code trace verified at HEAD.
 - **Affected files:** `src/util/errors.zig:50,107`; `src/term/color.zig:90-95`; `src/term/progress.zig:130,141`; `src/term/table.zig:189,226,245`; `src/prompt.zig:139,376,441`
 - **Evidence:**
@@ -181,7 +210,7 @@ verified in code in the audit-iteration-1 merge `188bf5a`. Risk Score = Impact x
   ```
 
   `stripAnsi` (`color.zig:146`) exists but is never applied on any output path, and strips only CSI `...m` (not OSC / bare ESC / `\x1b[2J`).
-- **Broadening (vs. original scan candidate NS-056 / appsec F-01):** the unknown-command path makes this **live by default** -- the default `run` flow echoes attacker-chosen argv (including ESC) to the TTY without any consumer needing to build a command tree from untrusted metadata. Scan candidate NS-056 (table/progress only) and appsec F-01 are merged here.
+- **Broadening (vs. original scan candidate NS-056 / appsec F-01):** ~~the unknown-command path makes this **live by default**~~ *Corrected 2026-06-12 (iteration-2 N-02):* `ParseError.UnknownCommand` is never raised by the parser (bare tokens become positionals by design) and the default `run()` renderer prints a static string, so the unknown-command path never echoed argv; `formatUnknownCommand` is a sanitized consumer-side helper with no production caller. The **live-by-default** surface is the help/table/progress/color/errors output paths plus the args-validation echo (the `.only_valid` `invalid_arg` message -- iteration-2 N-01, fixed `58c9598`). Scan candidate NS-056 (table/progress only) and appsec F-01 are merged here.
 - **Fix guidance:** Apply a `stripControl` filter (drop `0x00-0x08, 0x0B-0x1F, 0x7F`; keep `\n`,`\t`) to all user-string `{s}` TTY emissions gated on `is_tty`, or export a documented `sanitizeForTerminal()` plus a SECURITY.md trust-contract statement.
 - **Acceptance criteria:** No C0 control byte (except `\n`/`\t`) appears in rendered help/table/progress/prompt/unknown-command output when the input contained ESC. Regression test with `\x1b[2J` and `\x1b]0;...\x07`.
 - **Issue:** [#128](https://gitlab.com/devnw/zig/cli/-/issues/128)
@@ -1380,9 +1409,9 @@ The following Phase 3 findings overlap with existing entries and do not require 
 ### Terminal / TTY / Output Encoding
 
 - **NS-054 (Closed):** @intCast on potentially negative terminal dimension on Windows ([#122](https://gitlab.com/devnw/zig/cli/-/issues/122))
-- **NS-056 (Open):** Terminal escape-sequence injection -- no ESC stripping on TTY output (live-by-default via unknown-command path) ([#128](https://gitlab.com/devnw/zig/cli/-/issues/128))
-- **NS-058 (Open):** ProgressBar.init u16 underflow panic (DoS) when terminal width < 20 ([#129](https://gitlab.com/devnw/zig/cli/-/issues/129))
-- **NS-062 (Open):** UTF-8 codepoint splitting / byte-vs-column width math in truncate + table renderer ([#133](https://gitlab.com/devnw/zig/cli/-/issues/133))
+- **NS-056 (Closed):** Terminal escape-sequence injection -- no ESC stripping on TTY output (live-by-default via help/table/progress/color/errors paths + args-validation echo) ([#128](https://gitlab.com/devnw/zig/cli/-/issues/128))
+- **NS-058 (Closed):** ProgressBar.init u16 underflow panic (DoS) when terminal width < 20 ([#129](https://gitlab.com/devnw/zig/cli/-/issues/129))
+- **NS-062 (Closed):** UTF-8 codepoint splitting / byte-vs-column width math in truncate + table renderer ([#133](https://gitlab.com/devnw/zig/cli/-/issues/133))
 
 ### Pager
 
@@ -1507,7 +1536,7 @@ None. No leaked secrets (gitleaks clean, working tree + 70-commit history) and n
 
 ### Recommended Order
 
-1. **NS-056** (Risk 36) -- highest residual; live-by-default via unknown-command path.
+1. **NS-056** (Risk 36) -- highest residual; live-by-default via the TTY output paths (help/table/progress/color/errors).
 2. **NS-059** (Risk 32) -- credential exposure; pairs with the already-closed NS-047 primary path.
 3. **NS-058** (Risk 24) -- one-line saturating-subtraction fix; removes a geometry-triggered DoS.
 4. **NS-061** (Risk 12) -- three quick completion-generator hardening fixes; extends existing patterns.
