@@ -93,12 +93,14 @@ pub const StdioWriter = context.StdioWriter;
 - [ ] **Step 2:** Re-export moved public symbols from help.zig (e.g. `pub const generateMan = @import("help/man.zig").generateMan;` etc.) so cli.zig/root.zig/completion/tests/integration compile unchanged. The split files import what they need: `@import("../command.zig")`, `@import("sanitize")`.
 - [ ] **Step 3:** Wire test aggregation (`src/cli.zig` test block: `_ = @import("cli/help/markdown.zig");` etc.). `wc -l` every result ≤800. Full gate; test count must not drop. Commit: `refactor(cli): split help generators into help/{markdown,man,json}.zig` body `Refs: #34`.
 
-### Task 4: Split parser.zig (2233L → ≤800 each)
+### Task 4: Split parser.zig (2233L → ≤800 each) + decompose parse() (#46)
 
 **Files:**
 
 - Create: `src/cli/parser_test.zig` (public-API tests), possibly `src/cli/parser/env.zig`
 - Modify: `src/cli/parser.zig`, `src/cli.zig`
+
+**Additional acceptance criteria from issue #46:** the public `parse()` function body must be < 80 lines with nesting depth ≤ 3. Decompose its phases (currently ~160 lines at parser.zig:148-309) into named private helpers (e.g. resolve-subcommand loop, flag-token dispatch, positional collection, finalization: env defaults → defaults → required/conflicts validation) — behavior identical, every existing test still passes unchanged.
 
 - [ ] **Step 1:** Audit the 74 tests in parser.zig: classify each as (a) public-API-only (uses `Parser.init`, `parse`, pub fields like `invalid_default_flag`, `missing_required_flag`) or (b) private-access (calls file-private fns). Move ALL class-(a) tests to `src/cli/parser_test.zig` (`const parser_mod = @import("parser.zig");` — same module, public decls visible). Class-(b) tests stay with their code.
 - [ ] **Step 2:** If parser.zig impl (~886L) still exceeds 800 after test extraction, extract the env-default machinery (`applyEnvDefaults`, `applyEnvDefaultsForCommand`, `getEnvVar`, `EnvParseErrorEntry` and class-(b) tests of those) into `src/cli/parser/env.zig` as free functions taking `*Parser` (forward-declare via `@import("../parser.zig").Parser`; circular file imports within a module are legal in Zig — verify it compiles; if the cycle fights you, instead extract `formatParseError` + error-rendering, which only reads pub fields).
