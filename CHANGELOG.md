@@ -33,6 +33,10 @@ Audit hardening batches (2026-06 codepros audit iterations 1-4).
 - `parallel.forEach` runs the unsubmitted tail chunks inline when `submitBatch` partially enqueues under `.return_error` backpressure — previously the partial-success result was discarded, leaving the dropped chunks' result slots uninitialized and read as garbage (iter-8 finding 8-2)
 - The pager ignores SIGPIPE (SIG_IGN, saved/restored) for the duration of the spawn/write/wait interaction so a pager that closes its read end early (user quits `less` with `q`) yields `EPIPE` → the existing direct-output fallback, instead of the default SIGPIPE disposition killing the process before the fallback can run; POSIX-only, no-op on Windows (iter-8 finding 8-3, refs #137)
 
+### Fixed (iteration 9)
+- `ProgressBar.render` clamps `current` to `total` before computing the bar fill, so a concurrent `increment()` advancing past `total` (its `fetchAdd` runs outside the render mutex) can no longer make `width - filled` underflow — previously a panic in safe builds and a near-infinite stderr write in ReleaseFast (CWE-191/CWE-362 reachable DoS via the thread-safe API; distinct from the closed init-time NS-058)
+- Documented the mixed borrowed/owned return contract on `text.wordWrap`, `padRight`, `padLeft`, and `center` (they return a borrowed slice in the no-op case, like `truncate`): a caller using `defer free(result)` would otherwise free a non-heap pointer when the input already fits
+
 ### Changed
 - Invalid flag `default_str` values now return `ParseError.InvalidValue` instead of being silently skipped
 - Windows `password()` returns `NotInteractive` when echo suppression is unavailable (GetConsoleMode/SetConsoleMode failure) instead of reading the password with echo enabled

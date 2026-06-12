@@ -249,20 +249,34 @@ pub const ProgressBar = struct {
         return self.current.load(.acquire);
     }
 
+    /// Filled cell count for a bar of `width` showing `cur`/`total` progress.
+    /// `cur` is clamped to `total` first: increment() advances `current` with an
+    /// unsynchronized fetchAdd (outside render_mutex), so a concurrent reader can
+    /// observe cur > total. Without the clamp the result could exceed `width` and
+    /// the caller's `width - filled` would underflow (CWE-191) — a panic in safe
+    /// builds, a near-infinite stderr write in ReleaseFast (CWE-362 DoS).
+    fn barFilled(cur: usize, total: usize, width: u16) u16 {
+        if (total == 0) return 0;
+        const clamped = @min(cur, total);
+        return @intCast((clamped * width) / total);
+    }
+
+    /// Percent complete (0..100), clamped against a concurrent over-`total`
+    /// `cur` for the same reason as `barFilled`.
+    fn barPercent(cur: usize, total: usize) usize {
+        if (total == 0) return 0;
+        return (@min(cur, total) * 100) / total;
+    }
+
     fn render(self: *Self) !void {
         const cur = self.current.load(.acquire);
 
-        const percent = if (self.total > 0)
-            (cur * 100) / self.total
-        else
-            0;
+        const percent = barPercent(cur, self.total);
 
-        const filled = if (self.total > 0)
-            (cur * self.width) / self.total
-        else
-            0;
+        const filled = barFilled(cur, self.total, self.width);
 
-        const empty = self.width - filled;
+        // Saturating as defense-in-depth; barFilled already keeps filled <= width.
+        const empty = self.width -| filled;
 
         // Control-filter the message so caller data cannot inject ANSI/OSC
         // escape sequences (NS-056 / CWE-150).
@@ -403,6 +417,27 @@ test "progress: ProgressBar increment" {
 
     bar.increment();
     try std.testing.expectEqual(@as(usize, 2), bar.getCurrent());
+}
+
+test "progress: bar cell math clamps a concurrent over-total current (no underflow)" {
+    // increment() can advance current past total outside the render mutex; the
+    // bar math must clamp so width - filled cannot underflow (CWE-191/362).
+    const width: u16 = 50;
+
+    // Normal cases.
+    try std.testing.expectEqual(@as(u16, 0), ProgressBar.barFilled(0, 100, width));
+    try std.testing.expectEqual(@as(u16, 25), ProgressBar.barFilled(50, 100, width));
+    try std.testing.expectEqual(@as(u16, 50), ProgressBar.barFilled(100, 100, width));
+
+    // Over-total (the race): filled is clamped to width, so empty = width -| filled = 0.
+    const filled_over = ProgressBar.barFilled(102, 100, width);
+    try std.testing.expectEqual(@as(u16, 50), filled_over);
+    try std.testing.expectEqual(@as(u16, 0), width -| filled_over);
+    try std.testing.expectEqual(@as(usize, 100), ProgressBar.barPercent(102, 100));
+
+    // total == 0 degenerate.
+    try std.testing.expectEqual(@as(u16, 0), ProgressBar.barFilled(5, 0, width));
+    try std.testing.expectEqual(@as(usize, 0), ProgressBar.barPercent(5, 0));
 }
 
 test "progress: ProgressBar finish sets to total" {

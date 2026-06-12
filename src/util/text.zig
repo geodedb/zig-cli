@@ -17,7 +17,11 @@ pub const writeControlFiltered = sanitize.writeControlFiltered;
 pub const stripControlChars = sanitize.stripControlChars;
 pub const utf8FloorIndex = sanitize.utf8FloorIndex;
 
-/// Wrap text to a given width
+/// Wrap text to a given width.
+/// Ownership: returns a borrowed slice of `text` when `text.len <= width`;
+/// otherwise returns an owned allocation the caller must free. Do not
+/// unconditionally `free` the result — only free when wrapping occurred.
+/// (Same contract as `truncate`.)
 pub fn wordWrap(text: []const u8, width: usize, allocator: std.mem.Allocator) ![]const u8 {
     if (text.len <= width) return text;
 
@@ -74,7 +78,10 @@ pub fn indent(text: []const u8, spaces: usize, allocator: std.mem.Allocator) ![]
     return result.toOwnedSlice(allocator);
 }
 
-/// Pad string to a minimum width
+/// Pad string to a minimum width.
+/// Ownership: returns a borrowed slice of `text` when `text.len >= width`;
+/// otherwise returns an owned allocation the caller must free. Only free the
+/// result when padding occurred. (Same contract as `truncate`.)
 pub fn padRight(text: []const u8, width: usize, allocator: std.mem.Allocator) ![]const u8 {
     if (text.len >= width) return text;
 
@@ -85,7 +92,10 @@ pub fn padRight(text: []const u8, width: usize, allocator: std.mem.Allocator) ![
     return result.toOwnedSlice(allocator);
 }
 
-/// Pad string on the left
+/// Pad string on the left.
+/// Ownership: returns a borrowed slice of `text` when `text.len >= width`;
+/// otherwise returns an owned allocation the caller must free. Only free the
+/// result when padding occurred. (Same contract as `truncate`.)
 pub fn padLeft(text: []const u8, width: usize, allocator: std.mem.Allocator) ![]const u8 {
     if (text.len >= width) return text;
 
@@ -96,7 +106,10 @@ pub fn padLeft(text: []const u8, width: usize, allocator: std.mem.Allocator) ![]
     return result.toOwnedSlice(allocator);
 }
 
-/// Center text in a given width
+/// Center text in a given width.
+/// Ownership: returns a borrowed slice of `text` when `text.len >= width`;
+/// otherwise returns an owned allocation the caller must free. Only free the
+/// result when centering occurred. (Same contract as `truncate`.)
 pub fn center(text: []const u8, width: usize, allocator: std.mem.Allocator) ![]const u8 {
     if (text.len >= width) return text;
 
