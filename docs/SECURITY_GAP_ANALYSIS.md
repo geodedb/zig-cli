@@ -1,8 +1,8 @@
 # Security Gap Analysis
 
-> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 follow-up findings (NS-047 through NS-055). Updated 2026-06-11 with codepros:audit iteration-1 findings (NS-056, NS-058 through NS-062), status corrections (NS-016, NS-020), and the NS-057 refutation.
+> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 follow-up findings (NS-047 through NS-055). Updated 2026-06-11 with codepros:audit iteration-1 findings (NS-056, NS-058 through NS-062), status corrections (NS-016, NS-020), and the NS-057 refutation. Updated 2026-06-12: all 6 iteration-1 open findings (NS-056, NS-058, NS-059, NS-060, NS-061, NS-062) **Closed** by the audit-iteration-1 fix merge (188bf5a); NS-016 remediated (doc corrected + `freeSecret` helper). **0 open findings.**
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 ## REGRESSION NOTICE -- RESOLVED
 
@@ -10,19 +10,37 @@ On 2026-03-24, Phase 3 code inspection confirmed that 19 previously-closed findi
 had regressed due to a git stash/pop incident. All 19 regressions plus 3 new findings
 have been re-implemented and verified. 760/760 tests pass with 0 memory leaks.
 
+## 2026-06-12 UPDATE -- iteration-1 fixes merged (188bf5a)
+
+All 6 open iteration-1 findings were fixed and verified in code; the audit-iteration-1
+branch merged to `main` as `188bf5a`. **0 open findings remain.** Fix commits:
+
+| Finding | Status | Fix commit(s) | Verified evidence |
+|---------|--------|---------------|-------------------|
+| NS-056 (terminal escape injection) | **Closed** | `19bb03b`, `277a98e`, `b9f7f47`, `e3deefd`, `e296403` | `src/util/text.zig:199` `stripControlChars`; applied at `errors.zig:110`, color/progress/table |
+| NS-058 (ProgressBar.init underflow) | **Closed** | `5d0bc6c` | `src/term/progress.zig:169` `barWidthForTerminal` uses a saturating subtraction (`-\|`); width-floor test at :441 |
+| NS-059 (Windows password echo on console-mode failure) | **Closed** | `022e4cf`, `72cd736` | `src/prompt.zig:230,241` both failure branches `return PromptError.NotInteractive`; `freeSecret` helper added |
+| NS-060 (markdown headings/prose/fences raw) | **Closed** | `efaf9a7`, `22c374d` | `src/cli/help.zig:895` `writeMarkdownHeading`, :919 `writeMarkdownProse`, :945 `writeFenceSafe` applied at :969,973,979 |
+| NS-061 (completion hardening PS/zsh/fish) | **Closed** | `1d7d40a` | `powershell.zig:34-35` `-CommandName` escaped; fish depth cap `fish.zig:176` `if (path.len >= max_depth) break;`; zsh identifier/case sanitizers |
+| NS-062 (UTF-8 codepoint splitting) | **Closed** | `269e228`, `8e30398`, `6739ffb` | `src/term/table.zig:235,263` `sanitize.utf8FloorIndex`; `util/text.zig` truncation snaps to codepoint starts |
+
+**NS-016** (False-Resolved) remediated by `928f603` (doc comment corrected to state argv/environ-backed
+values cannot be scrubbed in `deinit`) plus `022e4cf` (`freeSecret` zeroing helper for heap-owned secrets).
+929/929 tests pass on `188bf5a`.
+
 ## 2026-06-11 UPDATE -- codepros:audit iteration 1
 
 A four-phase audit (scan + independent appsec review + adversarial security review) was
-run against HEAD `de11f86`. It surfaced **6 new open findings** and **2 status corrections**
-to previously-closed items, and **refuted** one scan candidate.
+run against HEAD `de11f86`. It surfaced **6 new findings** (now all Closed, see above) and
+**2 status corrections** to previously-closed items, and **refuted** one scan candidate.
 
-- **New open (6):** NS-056 (Medium, terminal escape injection — broadened to live-by-default),
+- **Found (6, now Closed):** NS-056 (Medium, terminal escape injection — broadened to live-by-default),
   NS-058 (Low–Medium, ProgressBar.init underflow DoS), NS-059 (Medium, Windows password echo
   on GetConsoleMode failure), NS-060 (Low, Markdown headings/prose/fences raw), NS-061 (Low,
   completion-generator hardening: PowerShell/zsh/fish), NS-062 (Low, UTF-8 byte-slicing).
-- **Status corrections (2):** **NS-016** Closed -> **False-Resolved** (slice-header reassignment
-  does not scrub OS-owned argv/environ bytes); **NS-020** Closed -> **Partially False-Resolved**
-  (only table cells escaped; headings/prose/code-fences raw — now tracked as NS-060).
+- **Status corrections (2):** **NS-016** Closed -> **False-Resolved** -> **Closed** (remediated 2026-06-12);
+  **NS-020** Closed -> **Partially False-Resolved** (only table cells escaped; headings/prose/code-fences raw —
+  tracked + fixed as NS-060).
 - **Refuted (1):** scan candidate NS-057 (signal `callback_count` read without mutex) is
   architecturally safe (acquire/release pairing) -> **Won't Do**.
 - **Stale line numbers corrected** per APPSEC §7.8 (see "Line-Number Corrections" below).
@@ -33,28 +51,29 @@ to previously-closed items, and **refuted** one scan candidate.
 |-----------|-------|------|--------|----------------|----------|
 | Critical | 1 | 0 | 1 | 0 | 0 |
 | High | 2 | 0 | 2 | 0 | 0 |
-| Medium | 24 | 2 | 20 | 0 | 1 |
-| Low | 28 | 4 | 22 | 1 | 1 |
+| Medium | 24 | 0 | 22 | 0 | 1 |
+| Low | 28 | 0 | 26 | 1 | 1 |
 | Info | 7 | 0 | 1 | 0 | 6 |
-| **Total** | **62** | **6** | **46** | **2** | **8** |
+| **Total** | **62** | **0** | **52** | **1** | **8** |
 
-> Note on the table: NS-016 and NS-020 remain counted under their original severities (both Low)
-> but their status moved from Closed to (Partially) False-Resolved; NS-020's open remediation is
-> tracked as the new finding NS-060. NS-057 is a refuted candidate recorded as Won't Do.
+> Note on the table: NS-016 was corrected from Closed to False-Resolved on 2026-06-11, then
+> remediated to **Closed** on 2026-06-12. NS-020's open remediation was tracked as NS-060, which
+> is now Closed. NS-057 is a refuted candidate recorded as Won't Do.
 
-**6 open findings** (NS-056, NS-058, NS-059, NS-060, NS-061, NS-062) as of 2026-06-11.
-All 8 Phase 3 follow-up findings (NS-047 through NS-054) remain closed.
-The 46 prior closed findings remain verified **except** NS-016 and NS-020, whose status was corrected.
+**0 open findings** as of 2026-06-12. The 6 iteration-1 findings (NS-056, NS-058, NS-059, NS-060,
+NS-061, NS-062) were fixed in the `188bf5a` merge. All 8 Phase 3 follow-up findings
+(NS-047 through NS-054) remain closed. The prior closed findings remain verified.
 
-### Top 5 Risks (open, by Risk Score)
+### Top 5 Risks (all CLOSED, by Risk Score)
 
-1. **NS-056** Terminal escape-sequence injection — live-by-default via unknown-command path (Risk 36, CWE-150) — [#128](https://gitlab.com/devnw/zig/cli/-/issues/128)
-2. **NS-059** Windows `password()` echoes input on GetConsoleMode failure (Risk 32, CWE-549) — [#130](https://gitlab.com/devnw/zig/cli/-/issues/130)
-3. **NS-058** `ProgressBar.init` u16 underflow panic / DoS (Risk 24, CWE-191) — [#129](https://gitlab.com/devnw/zig/cli/-/issues/129)
-4. **NS-060** Markdown headings/prose/fences raw (Risk 16, CWE-79/116) — [#131](https://gitlab.com/devnw/zig/cli/-/issues/131)
-5. **NS-061** Completion-generator hardening: PowerShell/zsh/fish (Risk 12, CWE-94/78/787) — [#132](https://gitlab.com/devnw/zig/cli/-/issues/132)
+1. **NS-056** Terminal escape-sequence injection (Risk 36, CWE-150) — **Closed** `19bb03b`/`b9f7f47` — [#128](https://gitlab.com/devnw/zig/cli/-/issues/128)
+2. **NS-059** Windows `password()` echo on GetConsoleMode failure (Risk 32, CWE-549) — **Closed** `022e4cf` — [#130](https://gitlab.com/devnw/zig/cli/-/issues/130)
+3. **NS-058** `ProgressBar.init` u16 underflow panic / DoS (Risk 24, CWE-191) — **Closed** `5d0bc6c` — [#129](https://gitlab.com/devnw/zig/cli/-/issues/129)
+4. **NS-060** Markdown headings/prose/fences raw (Risk 16, CWE-79/116) — **Closed** `efaf9a7` — [#131](https://gitlab.com/devnw/zig/cli/-/issues/131)
+5. **NS-061** Completion-generator hardening: PowerShell/zsh/fish (Risk 12, CWE-94/78/787) — **Closed** `1d7d40a` — [#132](https://gitlab.com/devnw/zig/cli/-/issues/132)
 
-**Immediate action required: 0.** No leaked secrets and no active RCE — gitleaks clean (working tree + 70-commit history), no third-party dependencies in the CVE-tracked closure. All 6 new findings are hardening/robustness items conditioned on untrusted command metadata, terminal geometry, or a Windows console-mode failure.
+**Immediate action required: 0.** No open findings. gitleaks clean (working tree + history), no
+third-party dependencies in the CVE-tracked closure.
 
 ### Line-Number Corrections (APPSEC §7.8)
 
@@ -73,12 +92,12 @@ Stale evidence line numbers from the 2026-03-25 doc were re-anchored against HEA
 
 | Rank | Severity | Risk Score | Finding | Component | CWE/OWASP | Evidence (file:line) | Issue URL | Status |
 |------|----------|------------|---------|-----------|-----------|---------------------|-----------|--------|
-| -- | **Medium** | **36** | **NS-056: Terminal escape injection -- no ESC stripping on TTY (live-by-default via unknown-command path)** | **term/help/errors** | **CWE-150 / A05:2021** | **`src/util/errors.zig:50,107`; `color.zig:90-95`; `progress.zig:130,141`; `table.zig:189,226,245`** | **[#128](https://gitlab.com/devnw/zig/cli/-/issues/128)** | **Open** |
-| -- | **Medium** | **32** | **NS-059: Windows password() echoes input when GetConsoleMode fails** | **prompt** | **CWE-549 / A07:2021** | **`src/prompt.zig:237-240,262`** | **[#130](https://gitlab.com/devnw/zig/cli/-/issues/130)** | **Open** |
-| -- | **Low–Med** | **24** | **NS-058: ProgressBar.init u16 underflow panic (DoS) when width < 20** | **term/progress** | **CWE-191 / A05:2021** | **`src/term/progress.zig:179`; `tty.zig:18,78`** | **[#129](https://gitlab.com/devnw/zig/cli/-/issues/129)** | **Open** |
-| -- | **Low** | **16** | **NS-060: Markdown headings/prose/code-fences emitted raw (NS-020 partial false-resolution)** | **help** | **CWE-79/116 / A05:2021** | **`src/cli/help.zig:807,810,823,830,882`** | **[#131](https://gitlab.com/devnw/zig/cli/-/issues/131)** | **Open** |
-| -- | **Low** | **12** | **NS-061: Completion generator hardening (PowerShell -CommandName, zsh case/identifier, fish [16] OOB)** | **completion** | **CWE-94/78/787 / A05:2021** | **`powershell.zig:33`; `zsh.zig:174,218,219`; `fish.zig:170-177`** | **[#132](https://gitlab.com/devnw/zig/cli/-/issues/132)** | **Open** |
-| -- | **Low** | **12** | **NS-062: UTF-8 codepoint splitting / byte-vs-column width math** | **util/text, term/table** | **CWE-697/1284 / A04:2021** | **`src/util/text.zig:107,110`; `table.zig:223-224,245,249`** | **[#133](https://gitlab.com/devnw/zig/cli/-/issues/133)** | **Open** |
+| -- | **Medium** | **36** | **NS-056: Terminal escape injection -- no ESC stripping on TTY (live-by-default via unknown-command path)** | **term/help/errors** | **CWE-150 / A05:2021** | **`src/util/text.zig:199` stripControlChars; `errors.zig:110`** | **[#128](https://gitlab.com/devnw/zig/cli/-/issues/128)** | **Closed** (`19bb03b`,`b9f7f47`) |
+| -- | **Medium** | **32** | **NS-059: Windows password() echoes input when GetConsoleMode fails** | **prompt** | **CWE-549 / A07:2021** | **`src/prompt.zig:230,241`** | **[#130](https://gitlab.com/devnw/zig/cli/-/issues/130)** | **Closed** (`022e4cf`) |
+| -- | **Low–Med** | **24** | **NS-058: ProgressBar.init u16 underflow panic (DoS) when width < 20** | **term/progress** | **CWE-191 / A05:2021** | **`src/term/progress.zig:169` barWidthForTerminal** | **[#129](https://gitlab.com/devnw/zig/cli/-/issues/129)** | **Closed** (`5d0bc6c`) |
+| -- | **Low** | **16** | **NS-060: Markdown headings/prose/code-fences emitted raw (NS-020 partial false-resolution)** | **help** | **CWE-79/116 / A05:2021** | **`src/cli/help.zig:895,919,945`** | **[#131](https://gitlab.com/devnw/zig/cli/-/issues/131)** | **Closed** (`efaf9a7`) |
+| -- | **Low** | **12** | **NS-061: Completion generator hardening (PowerShell -CommandName, zsh case/identifier, fish [16] OOB)** | **completion** | **CWE-94/78/787 / A05:2021** | **`powershell.zig:34-35`; `fish.zig:176`** | **[#132](https://gitlab.com/devnw/zig/cli/-/issues/132)** | **Closed** (`1d7d40a`) |
+| -- | **Low** | **12** | **NS-062: UTF-8 codepoint splitting / byte-vs-column width math** | **util/text, term/table** | **CWE-697/1284 / A04:2021** | **`src/term/table.zig:235,263` utf8FloorIndex** | **[#133](https://gitlab.com/devnw/zig/cli/-/issues/133)** | **Closed** (`269e228`) |
 | 1 | Critical | 95 | Shell injection via PAGER env var | pager | CWE-78 / A03:2021 | `src/term/pager.zig:57-58` | -- | **Closed** |
 | -- | **Medium** | **35** | **NS-047: Windows password echo not suppressed** | **prompt** | **CWE-549 / A07:2021** | **`src/prompt.zig:179-183`** | **[#111](https://gitlab.com/devnw/zig/cli/-/issues/111)** | **Closed** |
 | 2 | High | 85 | Shell completion injection (all 4 generators) | completion | CWE-94 / A03:2021 | `src/cli/completion/*.zig` | -- | **Closed** |
@@ -137,13 +156,14 @@ Stale evidence line numbers from the 2026-03-25 doc were re-anchored against HEA
 
 ---
 
-## Open Findings -- codepros:audit iteration 1 (2026-06-11)
+## Closed Findings -- codepros:audit iteration 1 (found 2026-06-11, fixed 2026-06-12)
 
-All six were independently re-derived and verified against HEAD `de11f86`. Risk Score = Impact x Likelihood x 4.
+All six were independently re-derived and verified against HEAD `de11f86`, then fixed and
+verified in code in the audit-iteration-1 merge `188bf5a`. Risk Score = Impact x Likelihood x 4.
 
-### NS-056: Terminal escape-sequence injection -- no ESC stripping on TTY output [Medium] -- OPEN
+### NS-056: Terminal escape-sequence injection -- no ESC stripping on TTY output [Medium] -- CLOSED
 
-- **Status:** **Open**
+- **Status:** **Closed** (2026-06-12) -- fix commits `19bb03b`, `277a98e`, `b9f7f47`, `e3deefd`, `e296403`; resolution: `stripControlChars` added at `src/util/text.zig:199` and applied to TTY emissions (`errors.zig:110`, color/progress/table); regression tests for `\x1b[2J` and OSC at `text.zig:266-293`.
 - **Risk Level:** Medium
 - **Risk Score:** 36 (Impact: 3, Likelihood: 3)
 - **CWE:** CWE-150 (Improper Neutralization of Escape Sequences)
@@ -167,9 +187,9 @@ All six were independently re-derived and verified against HEAD `de11f86`. Risk 
 - **Issue:** [#128](https://gitlab.com/devnw/zig/cli/-/issues/128)
 - **SLA:** 90 days (2026-09-09)
 
-### NS-058: ProgressBar.init u16 underflow panic (DoS) when terminal width < 20 [Low-Medium] -- OPEN
+### NS-058: ProgressBar.init u16 underflow panic (DoS) when terminal width < 20 [Low-Medium] -- CLOSED
 
-- **Status:** **Open**
+- **Status:** **Closed** (2026-06-12) -- fix commit `5d0bc6c`; resolution: `barWidthForTerminal` (`src/term/progress.zig:169`) uses saturating `@max(@min(term_width -| 20, 50), 1)`; width-floor regression test at `progress.zig:441`.
 - **Risk Level:** Low-Medium (tracked Low)
 - **Risk Score:** 24 (Impact: 2, Likelihood: 3)
 - **CWE:** CWE-191 (Integer Underflow) / CWE-190
@@ -191,9 +211,9 @@ All six were independently re-derived and verified against HEAD `de11f86`. Risk 
 - **SLA:** 180 days (2026-12-08)
 - **Origin:** Adversarial review R-01 (missed by both prior reviews).
 
-### NS-059: Windows password() echoes input when GetConsoleMode fails [Medium] -- OPEN
+### NS-059: Windows password() echoes input when GetConsoleMode fails [Medium] -- CLOSED
 
-- **Status:** **Open**
+- **Status:** **Closed** (2026-06-12) -- fix commits `022e4cf`, `72cd736`; resolution: both the GetConsoleMode-failure (`src/prompt.zig:241`) and SetConsoleMode-failure (`:230`) branches now `return PromptError.NotInteractive` instead of an echoed fallback read; `freeSecret` zeroing helper added for returned secrets.
 - **Risk Level:** Medium
 - **Risk Score:** 32 (Impact: 4, Likelihood: 2)
 - **CWE:** CWE-549 (Missing Password Field Masking) / CWE-200
@@ -218,9 +238,9 @@ All six were independently re-derived and verified against HEAD `de11f86`. Risk 
 - **Cross-ref:** Quality finding NQ-NEW-015 (same root cause).
 - **SLA:** 90 days (2026-09-09)
 
-### NS-060: Markdown headings/prose/code-fences emitted raw [Low] -- OPEN
+### NS-060: Markdown headings/prose/code-fences emitted raw [Low] -- CLOSED
 
-- **Status:** **Open**
+- **Status:** **Closed** (2026-06-12) -- fix commits `efaf9a7`, `22c374d`; resolution: context-aware escapers `writeMarkdownHeading` (`src/cli/help.zig:895`), `writeMarkdownProse` (:919), and `writeFenceSafe` (:945) now applied to headings/prose/fence content (:969,973,979,989,998); CR handling normalized across escapers. Regression tests for fence breakout and heading/prose escaping in `help.zig`.
 - **Risk Level:** Low
 - **Risk Score:** 16 (Impact: 2, Likelihood: 2)
 - **CWE:** CWE-79 (XSS) / CWE-116 (Improper Encoding or Escaping)
@@ -241,9 +261,9 @@ All six were independently re-derived and verified against HEAD `de11f86`. Risk 
 - **Issue:** [#131](https://gitlab.com/devnw/zig/cli/-/issues/131)
 - **SLA:** 180 days (2026-12-08)
 
-### NS-061: Completion generator hardening (PowerShell / zsh / fish) [Low] -- OPEN
+### NS-061: Completion generator hardening (PowerShell / zsh / fish) [Low] -- CLOSED
 
-- **Status:** **Open**
+- **Status:** **Closed** (2026-06-12) -- fix commit `1d7d40a`; resolution: F-04 PowerShell `-CommandName` wrapped with `escapePowerShellString` (`powershell.zig:34-35`); F-05 zsh identifier/case-label sanitizers added; F-06 fish depth cap `if (path.len >= max_depth) break;` (`fish.zig:176`) prevents the OOB `[16]` write.
 - **Risk Level:** Low
 - **Risk Score:** 12 (Impact: 3, Likelihood: 1)
 - **CWE:** CWE-94 / CWE-78 (Injection), CWE-787 (Out-of-bounds Write)
@@ -266,9 +286,9 @@ All six were independently re-derived and verified against HEAD `de11f86`. Risk 
 - **Issue:** [#132](https://gitlab.com/devnw/zig/cli/-/issues/132)
 - **SLA:** 180 days (2026-12-08)
 
-### NS-062: UTF-8 codepoint splitting / byte-vs-column width math [Low] -- OPEN
+### NS-062: UTF-8 codepoint splitting / byte-vs-column width math [Low] -- CLOSED
 
-- **Status:** **Open**
+- **Status:** **Closed** (2026-06-12) -- fix commits `269e228`, `8e30398`, `6739ffb`; resolution: slice boundaries snap to UTF-8 codepoint starts via `sanitize.utf8FloorIndex` in the table renderer (`src/term/table.zig:235,263`) and `util/text.zig` truncation/padding; `max_width` enforced as an absolute ceiling.
 - **Risk Level:** Low
 - **Risk Score:** 12 (Impact: 1, Likelihood: 3)
 - **CWE:** CWE-697 (Incorrect Comparison) / CWE-1284
@@ -297,10 +317,11 @@ All six were independently re-derived and verified against HEAD `de11f86`. Risk 
 
 ## Status Corrections -- codepros:audit iteration 1 (2026-06-11)
 
-### NS-016: Secret flag values "zeroed" in Context.deinit -- CORRECTED to FALSE-RESOLVED
+### NS-016: Secret flag values "zeroed" in Context.deinit -- CORRECTED to FALSE-RESOLVED, then CLOSED
 
 - **Previous status:** Closed / Implemented (2026-03-24)
 - **Corrected status:** **False-Resolved** (2026-06-11)
+- **Final status:** **Closed** (2026-06-12) -- remediated via option (a): the `command.zig` doc comment was corrected (commit `928f603`) to state that argv/environ-backed values cannot be scrubbed in `deinit`, and a `freeSecret()` zeroing helper (commit `022e4cf`) is provided for heap-owned secret material returned by `prompt.password()`. The misleading "zeroed" claim is removed.
 - **Risk Level:** Low | **Risk Score:** 16 (unchanged)
 - **CWE:** CWE-316 / A02:2021
 - **Why corrected:** The "zeroing" reassigns the 16-byte slice header (`command.zig:199`: `val.* = FlagValue{ .string = "" }`) but the pointed-to bytes are **OS-owned argv/environ** -- never duplicated (`parser.zig:386`: `.string => FlagValue{ .string = value }`, no `dupe`/`alloc`). The bytes are untouched; the original NS-016 acceptance criterion ("inspect the memory region... verify the value is overwritten") is **not met**.

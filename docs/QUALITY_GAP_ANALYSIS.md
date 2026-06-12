@@ -3,7 +3,7 @@
 > Comprehensive quality tracking for the Zig CLI framework library.
 > Combines initial codebase audit (2026-03-24) with Phase 3/4 quality-reviewer findings.
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 ## Summary
 
@@ -11,39 +11,40 @@ Last updated: 2026-06-11
 |----------|------|--------|----------|
 | Critical | 0 | 1 | 0 |
 | High | 0 | 14 | 1 |
-| Medium | 2 | 38 | 3 |
-| Low | 9 | 28 | 6 |
-| **Total** | **11** | **80** | **10** |
+| Medium | 0 | 40 | 3 |
+| Low | 1 | 36 | 6 |
+| **Total** | **1** | **91** | **10** |
 
-**11 open findings** from the Phase 4 codepros:audit iteration (2026-06-11): 21 new findings (NQ-NEW-001..021) tracked across 9 grouped GitLab issues + 2 reopened regressions. Two of the new findings family-overlap a prior regression root cause (no release-step version-sync automation).
+**1 open finding** after the audit-iteration-1 fix merge (188bf5a, 2026-06-12). The 21 Phase 4 findings (NQ-NEW-001..021) were addressed: **20 Closed**, **1 open** (NQ-NEW-014, generator duplication, deferred to a refactor — tracked under [#140](https://gitlab.com/devnw/zig/cli/-/issues/140)).
 
-**Cross-domain (owned by the security tracker, NOT counted here):** NQ-NEW-007/008-injection-scope (markdown injection = security F-03, issue #131), NQ-NEW-010 (deinit secret-zeroing doc = security F-02), NQ-NEW-015 (Windows password echo on GetConsoleMode failure = security, issue #130).
+**Cross-domain (owned by the security tracker, NOT counted here):** NQ-NEW-007/008-injection-scope (markdown injection = security F-03/NS-060, issue #131 — now Closed), NQ-NEW-010 (deinit secret-zeroing doc = security F-02/NS-016 — now Closed), NQ-NEW-015 (Windows password echo on GetConsoleMode failure = security NS-059, issue #130 — now Closed).
 
-**Top open risk:** NQ-NEW-003 (#106) — `root.zig` version `0.1.1` vs `build.zig.zon`/tag `0.1.4`; a regression of NQ-053 whose root cause (no version-sync automation) was never addressed. PriorityScore 48.
+**Sole open item:** NQ-NEW-014 ([#140](https://gitlab.com/devnw/zig/cli/-/issues/140)) — completion-generator duplication across bash/zsh/fish/powershell. Deferred to a structural refactor; no functional or security impact.
 
-21 new findings (2026-06-11). 80 closed, 10 won't do across all prior rounds. 803/803 unit + 34/34 integration tests pass; `zig fmt`/`check` clean.
+20 of 21 Phase 4 findings closed in the 188bf5a merge. 929/929 unit + integration tests pass; `pre-commit run --all-files` green; `zig fmt`/`check` clean.
 
 ---
 
 ## Stack-Ranked Findings
 
-### Phase 4 codepros:audit Iteration (Open — 2026-06-11)
+### Phase 4 codepros:audit Iteration (found 2026-06-11, mostly fixed 2026-06-12)
 
-PriorityScore = Impact(1-5) x Likelihood(1-5) x 4. Grouped issues are ranked by their top sub-finding.
+PriorityScore = Impact(1-5) x Likelihood(1-5) x 4. Grouped issues are ranked by their top sub-finding. 20 of 21 closed in the 188bf5a merge; only NQ-NEW-014 (generator duplication) remains open, deferred to a refactor under [#140](https://gitlab.com/devnw/zig/cli/-/issues/140).
 
-| Rank | ID(s) | Severity | PriorityScore | Category | Finding | Component | Evidence | Issue | Fix Summary | ETA/SLA | Status |
-|------|-------|----------|---------------|----------|---------|-----------|----------|-------|-------------|---------|--------|
-| 1 | NQ-NEW-003 | Medium | 48 | maintainability | Version drift: root.zig `0.1.1` vs build.zig.zon/tag `0.1.4`; CHANGELOG missing 3 releases (REGRESSION of NQ-053) | root.zig:67, build.zig.zon:12 | tag v0.1.4 | [#106](https://gitlab.com/devnw/zig/cli/-/issues/106) | Sync root.zig from zon at comptime; add CI check + CHANGELOG entries | 90d | **Open (reopened)** |
-| 2 | NQ-NEW-008 | Medium | 36 | api-contract | writeMarkdownEscaped misses newlines -> broken markdown options table | help.zig:781-800 | help.zig:835-862 | [#136](https://gitlab.com/devnw/zig/cli/-/issues/136) | Map `\n`/`\r` to space/`<br>`; consider `* _ [ ]` | 90d | **Open** |
-| 3 | NQ-NEW-001/002/005 | Low | 32 | docs/ci-gate | Pre-commit + markdownlint failures (16x MD040, 1x MD056, whitespace/EOF/ruff) | docs/*, README.md, templates | pre-commit exit 1 | [#134](https://gitlab.com/devnw/zig/cli/-/issues/134) | Add fence languages; fix table; run pre-commit autofix | 180d | **Open** |
-| 4 | NQ-NEW-017 | Low->Med | 24 | maintainability | pager silently loses output on invalid PAGER (re-triage NQ-064 Won't Do) | pager.zig:~98-110 | catch {} x3 | [#137](https://gitlab.com/devnw/zig/cli/-/issues/137) | Propagate failure or fall back to direct stdout | 180d | **Open** |
-| 5 | NQ-NEW-006 | Low | 24 | docs | CHANGELOG missing entries for v0.1.2/v0.1.3/v0.1.4 | CHANGELOG.md | tags vs headers | [#135](https://gitlab.com/devnw/zig/cli/-/issues/135) | Add 3 release sections | 180d | **Open** |
-| 6 | NQ-NEW-012 | Low | 24 | api-contract | getBool returns bool while sibling accessors return ?T | command.zig:227-235 | vs :216-268 | [#138](https://gitlab.com/devnw/zig/cli/-/issues/138) | Add getBoolOpt() ?bool and/or document default-false | 180d | **Open** |
-| 7 | NQ-NEW-016 | Low | 24 | architecture | parallel pool_started guard non-atomic -> initPool/deinitPool race | parallel.zig:72,80-97 | non-atomic RMW | [#139](https://gitlab.com/devnw/zig/cli/-/issues/139) | atomic.Value(bool) + CAS or document single-thread init | 180d | **Open** (suspected) |
-| 8 | NQ-NEW-014/011/009/013 | Low | 24 | maintainability | help/parser maintainability + edge-input cluster (generator dup, parser reuse, JSON short, env[8] cap) | help.zig, parser.zig, command.zig | see issue | [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) | Shared generator walk; reset parse() fields; validate short; doc cap | 180d | **Open** |
-| 9 | NQ-NEW-021 | Low | 24 | tests | Missing adversarial/edge tests (parser reuse, escaping, getBool) | cli test blocks | happy-path only | [#142](https://gitlab.com/devnw/zig/cli/-/issues/142) | Add negative/edge tests guarding 007/008/009/011/012 | 180d | **Open** |
-| 10 | NQ-NEW-004 | Low | 24 | docs | Makefile says Zig 0.15.2; minimum is 0.16.0 (REGRESSION of NQ-061, fixed to wrong target) | Makefile:185 | build.zig.zon:28 | [#94](https://gitlab.com/devnw/zig/cli/-/issues/94) | Set to 0.16.0; source from build.zig.zon | 180d | **Open (reopened)** |
-| 11 | NQ-NEW-019/020/018 | Low | 12 | docs | Public-API doc gaps (tty.zig, root.zig aliases) + misleading onCleanup doc | tty.zig, root.zig:74-113, signal.zig:153-155 | no `///` / dead ref | [#141](https://gitlab.com/devnw/zig/cli/-/issues/141) | Add doc comments; correct onCleanup doc | 180d | **Open** |
+| Rank | ID(s) | Severity | PriorityScore | Category | Finding | Component | Fix commit / Evidence | Issue | Status |
+|------|-------|----------|---------------|----------|---------|-----------|----------------------|-------|--------|
+| 1 | NQ-NEW-003 | Medium | 48 | maintainability | Version drift: root.zig vs build.zig.zon/tag; CHANGELOG missing 3 releases (REGRESSION of NQ-053) | root.zig:67, build.zig.zon | `aca86b4`: `version = @import("build_options").version` single-sourced from `manifest.version` (build.zig:42) | [#106](https://gitlab.com/devnw/zig/cli/-/issues/106) | **Closed** |
+| 2 | NQ-NEW-008 | Medium | 36 | api-contract | writeMarkdownEscaped misses newlines -> broken markdown options table | help.zig | `efaf9a7`,`22c374d`: cell newline -> `<br>`; context-aware escapers (NS-060) | [#136](https://gitlab.com/devnw/zig/cli/-/issues/136) | **Closed** |
+| 3 | NQ-NEW-001/002/005 | Low | 32 | docs/ci-gate | Pre-commit + markdownlint failures (16x MD040, 1x MD056, whitespace/EOF/ruff) | docs/*, README.md, templates | `0bdede5..6e9b078`: `pre-commit run --all-files` green | [#134](https://gitlab.com/devnw/zig/cli/-/issues/134) | **Closed** |
+| 4 | NQ-NEW-017 | Low->Med | 24 | maintainability | pager silently loses output on invalid PAGER (re-triage NQ-064 Won't Do) | pager.zig | `6dbc3e2`,`0c94c9b`: `writeDirect` fallback on spawn/exec/write failure (pager.zig:24-29,59) | [#137](https://gitlab.com/devnw/zig/cli/-/issues/137) | **Closed** |
+| 5 | NQ-NEW-006 | Low | 24 | docs | CHANGELOG missing entries for v0.1.2/v0.1.3/v0.1.4 | CHANGELOG.md | `a4ab5cd`,`a553820`: [0.1.2]/[0.1.3]/[0.1.4] sections added | [#135](https://gitlab.com/devnw/zig/cli/-/issues/135) | **Closed** |
+| 6 | NQ-NEW-012 | Low | 24 | api-contract | getBool returns bool while sibling accessors return ?T | command.zig | `aca86b4`: `getBoolOpt() ?bool` added (command.zig:246); default-false documented | [#138](https://gitlab.com/devnw/zig/cli/-/issues/138) | **Closed** |
+| 7 | NQ-NEW-016 | Low | 24 | architecture | parallel pool_started guard non-atomic -> initPool/deinitPool race | parallel.zig | `f723199`: `pool_started: std.atomic.Value(bool)` with acquire/release (parallel.zig:72,80,87,97) | [#139](https://gitlab.com/devnw/zig/cli/-/issues/139) | **Closed** |
+| 8a | NQ-NEW-011/009/013 | Low | 24 | maintainability | parser reuse reset, JSON short-flag escape, env[8] cap doc | parser.zig, help.zig | `d595798` (reset error state per parse), `26fa7c6`/`3978b13` (JSON short-flag escape), env-cap documented | [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) | **Closed** |
+| 8b | NQ-NEW-014 | Low | 24 | maintainability | completion-generator duplication across 4 files | bash/zsh/fish/powershell.zig | Deferred to structural refactor; no functional/security impact | [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) | **Open (deferred)** |
+| 9 | NQ-NEW-021 | Low | 24 | tests | Missing adversarial/edge tests (parser reuse, escaping, getBool) | cli test blocks | `3978b13` + audit batch: parser-reuse, fence-breakout, JSON short, getBoolOpt tests added (#142 closed) | [#142](https://gitlab.com/devnw/zig/cli/-/issues/142) | **Closed** |
+| 10 | NQ-NEW-004 | Low | 24 | docs | Makefile says Zig 0.15.2; minimum is 0.16.0 (REGRESSION of NQ-061) | Makefile:185 | Makefile now "Zig 0.16.0 or compatible" | [#94](https://gitlab.com/devnw/zig/cli/-/issues/94) | **Closed** |
+| 11 | NQ-NEW-019/020/018 | Low | 12 | docs | Public-API doc gaps (tty.zig, root.zig aliases) + misleading onCleanup doc | tty.zig, root.zig, signal.zig | `928f603`,`6b061c4`,`a4ab5cd`: doc comments added (tty.zig 26 `///`); onCleanup contract corrected | [#141](https://gitlab.com/devnw/zig/cli/-/issues/141) | **Closed** |
 
 **Cross-referenced (security-owned, not tracked as quality issues):**
 
@@ -63,11 +64,11 @@ PriorityScore = Impact(1-5) x Likelihood(1-5) x 4. Grouped issues are ranked by 
 - **architecture/concurrency:** NQ-NEW-016 (#139)
 - **tests:** NQ-NEW-021 (#142)
 
-#### Roadmap (2026-06-11 iteration)
+#### Roadmap (2026-06-12 -- post-merge status)
 
-- **Quick wins (< 1 day):** #134 (markdownlint/pre-commit), #135 (CHANGELOG), #94 (Makefile 0.16.0), short-term half of #106 (set root.zig to 0.1.4), #141 (doc comments).
-- **Medium (1-5 days):** #136 (markdown newline escaping), #137 (pager content-loss + fallback), #138 (getBoolOpt), #139 (atomic pool guard), #142 (adversarial tests), #140 (generator/parser cluster).
-- **Strategic (> 5 days):** long-term half of #106 (comptime version derivation + CI sync gate, closing the recurring NQ-053/NQ-061 regression class); shared format-generator walk (#140 NQ-NEW-014) to structurally prevent missed-escaping regressions.
+- **Quick wins (< 1 day) -- DONE:** #134 (markdownlint/pre-commit green), #135 (CHANGELOG backfilled), #94 (Makefile 0.16.0), #106 (root.zig version single-sourced from build.zig.zon at comptime, closing the NQ-053/NQ-061 regression class), #141 (doc comments).
+- **Medium (1-5 days) -- DONE:** #136 (markdown newline -> `<br>`), #137 (pager content-loss + direct-output fallback), #138 (getBoolOpt), #139 (atomic pool guard), #142 (adversarial tests), #140 NQ-NEW-011/009/013 (parser reuse reset, JSON short escape, env-cap doc).
+- **Deferred (remaining open):** #140 NQ-NEW-014 -- shared format-generator walk across the 4 completion generators to structurally prevent missed-escaping regressions. Deferred to a dedicated refactor.
 
 ---
 

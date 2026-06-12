@@ -2,7 +2,36 @@
 
 > Items moved from `docs/GAP_ANALYSIS.md` when resolved or marked as won't-do.
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
+
+## Closed (audit iteration 1 fix merge -- 2026-06-12)
+
+### GAP-0097: Residual silent `catch continue` in parser env/default resolution [RESOLVED]
+
+- **Issue:** [#39](https://gitlab.com/devnw/zig/cli/-/issues/39) (closed earlier; this completes the residual paths)
+- **Category:** Code Quality (reliability / error-handling)
+- **Severity:** Low
+- **Resolution:** Both residual silent-swallow paths in `parser.zig` were fixed. The env-application write now propagates OOM (`parser.zig:537` -- `try self.setFlagValue(ctx, flag.name, fval);` instead of `catch continue`), and a malformed `default_str` now fails loudly: `applyDefaultsForCommand` records `invalid_default_flag` and returns `ParseError.InvalidValue` (`parser.zig:581-587`) rather than silently continuing. Env *parse* failures continue to be recorded into `env_parse_errors[]` with an overflow drop-count (`parser.zig:518-533`).
+- **Evidence:** `src/cli/parser.zig:537` (propagating write), `:581-587` (invalid default_str surfaced); commit `d595798` ("fix(parser): propagate OOM from env defaults, error on invalid default_str, cap-count env errors, reset error state per parse"); merge `188bf5a`. 929/929 tests pass.
+- **Resolved date:** 2026-06-12
+
+### GAP-0098: Stale gap-tracking docs (Makefile/version refs, ROADMAP "Closed" markers) [RESOLVED]
+
+- **Issue:** [#123](https://gitlab.com/devnw/zig/cli/-/issues/123) (closed; folded #31, #32)
+- **Category:** Docs (tracking-doc accuracy)
+- **Severity:** Low
+- **Resolution:** Stale-doc remediation completed. `Makefile:185` now reads "Zig 0.16.0 or compatible"; the library version is single-sourced from `build.zig.zon` at comptime (`root.zig:67` -> `build.zig:42`), removing the version-drift class; CHANGELOG backfilled with [0.1.2]/[0.1.3]/[0.1.4]; `docs/ROADMAP.md` verified to contain no stale "in progress" claims about completed work; `docs/GAPS.md` reconciled. Tracking docs updated this pass to reflect the 188bf5a merge.
+- **Evidence:** `Makefile:185`; `src/root.zig:67`; `build.zig:42`; `CHANGELOG.md` release sections; `grep -niE 'in progress|wip|hang' docs/ROADMAP.md` returns nothing; #123 closed.
+- **Resolved date:** 2026-06-12
+
+### GAP-0099: prompt.password() returned secret not zeroed by library on free [RESOLVED]
+
+- **Issue:** [#40](https://gitlab.com/devnw/zig/cli/-/issues/40)
+- **Category:** Security (hardening)
+- **Severity:** Low
+- **Resolution:** A library-provided zeroizing free helper `freeSecret(allocator, secret)` (`prompt.zig:280`) memsets-then-frees the returned secret; the public `password()` doc comment now directs callers to use it (`prompt.zig:190-195`). A unit test asserts the buffer is zeroed after teardown ("freeSecret zeroes before freeing", `prompt.zig:651`). Related: the Windows echoed-fallback path was also closed (NS-059).
+- **Evidence:** `src/prompt.zig:280` (`freeSecret`), `:190-195` (doc), `:651` (zeroing test); commit `022e4cf` ("fix(prompt): refuse echoed Windows password fallback; add freeSecret zeroing helper"); merge `188bf5a`. 929/929 tests pass.
+- **Resolved date:** 2026-06-12
 
 ## Closed (codepros:audit Phase 4 -- 2026-06-11)
 
