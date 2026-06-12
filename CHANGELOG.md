@@ -40,7 +40,7 @@ Audit hardening batches (2026-06 codepros audit iterations 1-4).
 
 ### Fixed
 - Completion-script injection hardening: PowerShell `-CommandName` escaping, zsh identifier sanitization and quoted case labels, fish 16-level depth cap instead of out-of-bounds write (#132)
-- Short-flag bytes are restricted to alphanumeric across all generators (bash, fish, zsh, powershell, man, markdown): a non-alphanumeric `short` is treated as "no short flag" so a printable shell metacharacter (`"`, backtick, `;`, `$`, ...) can no longer be emitted raw into a shell or markup context — the last unvalidated `short` metadata emission, completing the generator escaping-parity work (CWE-78/CWE-94)
+- Short-flag bytes are restricted to alphanumeric everywhere — the parser no longer matches a non-alphanumeric `short` (returns `UnknownFlag`), and help, bash/fish/zsh/powershell completions, and man/markdown all omit it — so a printable shell metacharacter (`"`, backtick, `;`, `$`, ...) can never be emitted raw into a shell or markup context. The `FlagSpec.short` contract is documented; parser, help, and generators now agree (CWE-78/CWE-94)
 - JSON help escapes the short-flag character (#140)
 - Truncation and table cell clipping never split multibyte UTF-8 sequences (#133)
 - Table `min_width` is honored even when all cells are shorter; `max_width` is an absolute ceiling (#127)
