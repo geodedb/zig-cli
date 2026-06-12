@@ -76,6 +76,10 @@ test {
     _ = @import("cli/context.zig");
     _ = parser;
     _ = help;
+    _ = @import("cli/help/json.zig");
+    _ = @import("cli/help/man.zig");
+    _ = @import("cli/help/markdown.zig");
+    _ = @import("cli/help/text.zig");
     _ = completion.bash;
     _ = completion.zsh;
     _ = completion.fish;
