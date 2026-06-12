@@ -34,20 +34,20 @@ pub const EnvParseErrorEntry = struct {
 
 /// Cross-platform environment variable lookup.
 /// On POSIX, returns a borrowed pointer into the environment block (no allocation).
-/// On Windows, uses a stack-based FixedBufferAllocator to check the variable
-/// and returns null (env-based flag defaults are POSIX-focused).
-/// Note: this duplicates the pattern from term/env.zig because the cli module
-/// does not depend on the term module. Both implementations use the same
-/// cross-platform strategy.
+/// On Windows, returns null: env-based flag defaults are POSIX-focused, and
+/// getAlloc would require heap storage outliving this call to be sound (the
+/// previous stack-backed FixedBufferAllocator here returned a dangling slice —
+/// UB on Windows). Returning null disables env-bound flag defaults on Windows,
+/// which is a documented limitation.
+/// Note: this mirrors the documented behaviour of term/env.zig's getEnvValueRuntime,
+/// which also returns null on Windows for the same reason.
 pub fn getEnvVar(name: []const u8) ?[]const u8 {
-    if (comptime builtin.os.tag == .windows) {
-        // Windows does have environment variables; use FixedBufferAllocator
-        // to avoid page_allocator overhead, matching env.zig pattern.
-        var buf: [4096]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buf);
-        const val = std.Io.Threaded.global_single_threaded.environ.process_environ.getAlloc(fba.allocator(), name) catch return null;
-        return val;
-    }
+    // Env-based flag defaults are POSIX-focused: process_environ's getAlloc
+    // would require heap storage outliving this call to be sound (a
+    // stack-backed FixedBufferAllocator here previously returned a dangling
+    // slice — UB). Returning null disables env-bound flag defaults on
+    // Windows — a documented limitation.
+    if (comptime builtin.os.tag == .windows) return null;
     return std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix(name);
 }
 

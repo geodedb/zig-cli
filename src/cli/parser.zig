@@ -406,12 +406,11 @@ pub const Parser = struct {
         }
     }
 
-    /// Map a long global flag name (quiet, json, plain, etc.) to the
-    /// corresponding Context field. Returns `UnknownFlag` for unrecognised names.
     /// Apply a global flag by name to the Context. Flag names are validated
     /// against `command.global_flags` -- the single canonical list -- so that
     /// adding a new global flag only requires updating that list and the
-    /// `applyGlobalFlagToContext` mapping below.
+    /// `applyGlobalFlagToContext` mapping below. Returns `UnknownFlag` for
+    /// unrecognised names.
     fn handleGlobalFlag(self: *Self, ctx: *Context, name: []const u8) ParseError!void {
         _ = self;
         // Validate against canonical global_flags list

@@ -728,3 +728,20 @@ test "run: no-input flag is parsed" {
 
     try std.testing.expect(result.context.no_input);
 }
+
+test "parser: empty string argv token becomes a positional" {
+    // Pre-refactor code indexed arg[0] unconditionally and panicked on "".
+    // The decomposed pipeline treats "" as a plain token -> positional.
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    // argv[0] is the binary name; the second token is the empty string.
+    var result = try parser.parse(&.{ "test", "" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), result.context.positionals.items.len);
+    try std.testing.expectEqualStrings("", result.context.positionals.items[0]);
+}
