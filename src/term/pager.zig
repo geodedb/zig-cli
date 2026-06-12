@@ -81,13 +81,13 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
         return writeDirect(stdout, io, content);
     }
 
-    // Spawn pager process directly
-    var child = std.process.Child.init(argv_buf[0..argv_len], std.heap.page_allocator);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-
-    child.spawn() catch {
+    // Spawn pager process directly (no shell).
+    var child = std.process.spawn(io, .{
+        .argv = argv_buf[0..argv_len],
+        .stdin = .pipe,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    }) catch {
         // Pager could not be started: emit directly instead of losing output.
         return writeDirect(stdout, io, content);
     };
@@ -162,6 +162,13 @@ pub const PagerWriter = struct {
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "pager: writeIfTty body is semantically analyzed" {
+    // Taking the function's address forces full analysis of the spawn path,
+    // which is otherwise lazily skipped because no unit test reaches it.
+    // This caught a stale pre-0.16 std.process.Child API in the spawn block.
+    _ = &writeIfTty;
+}
 
 test "PagerWriter initialization" {
     var pw = PagerWriter.init(std.testing.allocator, .{});
