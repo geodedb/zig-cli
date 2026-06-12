@@ -78,6 +78,48 @@ pub fn escapeZshDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]cons
     return list.toOwnedSlice(allocator);
 }
 
+/// Escape a flag name for use inside zsh option-spec NAME positions.
+/// Option specs have the form `'--flagname[description]'`.  A `]` in the
+/// NAME portion would close the description bracket early; a `'` would
+/// break out of the surrounding single-quote context.  `[` is also escaped
+/// to prevent it from opening a spurious bracket.
+/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Fast path: if no special chars, returns `s` directly (no allocation).
+pub fn escapeZshOptspecName(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (s) |c| {
+        switch (c) {
+            '\'', '[', ']', 0x00, '\n', '\r' => {
+                needs_escape = true;
+                break;
+            },
+            else => {},
+        }
+    }
+    if (!needs_escape) return s;
+
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len + 4) catch {};
+    for (s) |c| {
+        switch (c) {
+            0x00, '\n', '\r' => {},
+            '\'' => {
+                // zsh '\'' pattern: end quote, escaped quote, reopen quote
+                list.appendSlice(allocator, "'\\''") catch return error.OutOfMemory;
+            },
+            '[', ']' => {
+                // Backslash-escape bracket metacharacters inside the optspec name
+                list.append(allocator, '\\') catch return error.OutOfMemory;
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+            else => {
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
 /// Sanitize a name for use as a zsh function identifier.
 /// Replaces any character that is not [a-zA-Z0-9_] with an underscore.
 /// Only function IDENTIFIERS are sanitized; completion registration
@@ -128,21 +170,22 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     try w.writeAll("_global_flags=(\n");
     for (command.global_flags) |*gflag| {
         const esc_ghelp = try escapeZshSingleQuote(esc_alloc, gflag.help);
+        const esc_gname = try escapeZshOptspecName(esc_alloc, gflag.name);
         if (gflag.short) |s| {
             if (gflag.ftype == .bool) {
                 try w.print("    '(-{c} --{s})'{{-{c},--{s}}}'[{s}]'\n", .{
-                    s, gflag.name, s, gflag.name, esc_ghelp,
+                    s, esc_gname, s, esc_gname, esc_ghelp,
                 });
             } else {
                 try w.print("    '(-{c} --{s})'{{-{c},--{s}}}'[{s}]:value:'\n", .{
-                    s, gflag.name, s, gflag.name, esc_ghelp,
+                    s, esc_gname, s, esc_gname, esc_ghelp,
                 });
             }
         } else {
             if (gflag.ftype == .bool) {
-                try w.print("    '--{s}[{s}]'\n", .{ gflag.name, esc_ghelp });
+                try w.print("    '--{s}[{s}]'\n", .{ esc_gname, esc_ghelp });
             } else {
-                try w.print("    '--{s}[{s}]:value:'\n", .{ gflag.name, esc_ghelp });
+                try w.print("    '--{s}[{s}]:value:'\n", .{ esc_gname, esc_ghelp });
             }
         }
     }
@@ -280,47 +323,48 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, 
 fn writeZshFlag(w: anytype, flag: *const FlagSpec, esc_alloc: std.mem.Allocator) !void {
     const required_suffix: []const u8 = if (flag.required) " (required)" else "";
     const esc_help = try escapeZshSingleQuote(esc_alloc, flag.help);
+    // Gap B: flag name in the NAME portion of `'--flagname[desc]'` optspecs.
+    // A `]` in the name closes the description bracket; `'` breaks single-quote
+    // context.  Use escapeZshOptspecName to neutralise both.
+    const esc_fname = try escapeZshOptspecName(esc_alloc, flag.name);
 
     // Build value completion spec
+    // Gap C: completion values were copied raw via @memcpy.  Use
+    // escapeZshSingleQuote so that a `'` in a value cannot break out of the
+    // surrounding single-quoted optspec context.
     var value_spec: []const u8 = "";
-    var value_buf: [512]u8 = undefined;
+    var value_list: std.ArrayListUnmanaged(u8) = .empty;
     if (flag.ftype == .path) {
         value_spec = "_files";
     } else if (flag.completions.len > 0) {
-        // Build completion list: (value1 value2 value3)
-        var written: usize = 0;
-        value_buf[written] = '(';
-        written += 1;
+        value_list.ensureTotalCapacity(esc_alloc, 64) catch {};
+        value_list.append(esc_alloc, '(') catch return error.OutOfMemory;
         for (flag.completions, 0..) |val, i| {
             if (i > 0) {
-                value_buf[written] = ' ';
-                written += 1;
+                value_list.append(esc_alloc, ' ') catch return error.OutOfMemory;
             }
-            // Bounds check before @memcpy
-            if (written + val.len + 2 > value_buf.len) break;
-            @memcpy(value_buf[written .. written + val.len], val);
-            written += val.len;
+            const esc_val = try escapeZshSingleQuote(esc_alloc, val);
+            value_list.appendSlice(esc_alloc, esc_val) catch return error.OutOfMemory;
         }
-        value_buf[written] = ')';
-        written += 1;
-        value_spec = value_buf[0..written];
+        value_list.append(esc_alloc, ')') catch return error.OutOfMemory;
+        value_spec = value_list.items;
     }
 
     if (flag.short) |s| {
         if (flag.ftype == .bool) {
             try w.print("        '(-{c} --{s})'{{-{c},--{s}}}'[{s}{s}]'\n", .{
-                s, flag.name, s, flag.name, esc_help, required_suffix,
+                s, esc_fname, s, esc_fname, esc_help, required_suffix,
             });
         } else {
             try w.print("        '(-{c} --{s})'{{-{c},--{s}}}'[{s}{s}]:value:{s}'\n", .{
-                s, flag.name, s, flag.name, esc_help, required_suffix, value_spec,
+                s, esc_fname, s, esc_fname, esc_help, required_suffix, value_spec,
             });
         }
     } else {
         if (flag.ftype == .bool) {
-            try w.print("        '--{s}[{s}{s}]'\n", .{ flag.name, esc_help, required_suffix });
+            try w.print("        '--{s}[{s}{s}]'\n", .{ esc_fname, esc_help, required_suffix });
         } else {
-            try w.print("        '--{s}[{s}{s}]:value:{s}'\n", .{ flag.name, esc_help, required_suffix, value_spec });
+            try w.print("        '--{s}[{s}{s}]:value:{s}'\n", .{ esc_fname, esc_help, required_suffix, value_spec });
         }
     }
 }
@@ -742,4 +786,106 @@ test "zsh: escapeZshDoubleQuote strips NUL and newlines" {
     const result = try escapeZshDoubleQuote(std.testing.allocator, "a\x00b\nc\rd");
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("abcd", result);
+}
+
+// ============================================================================
+// Gap B: flag name escaping in zsh optspec NAME position (NS-061, #38)
+// ============================================================================
+
+test "zsh: escapeZshOptspecName no special chars" {
+    const result = try escapeZshOptspecName(std.testing.allocator, "verbose");
+    try std.testing.expectEqualStrings("verbose", result);
+}
+
+test "zsh: escapeZshOptspecName with closing bracket" {
+    const result = try escapeZshOptspecName(std.testing.allocator, "f]x");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("f\\]x", result);
+}
+
+test "zsh: escapeZshOptspecName with opening bracket" {
+    const result = try escapeZshOptspecName(std.testing.allocator, "f[x");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("f\\[x", result);
+}
+
+test "zsh: escapeZshOptspecName with single quote" {
+    const result = try escapeZshOptspecName(std.testing.allocator, "f'x");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("f'\\''x", result);
+}
+
+test "zsh: hostile flag name with ] is escaped in optspec (gap B)" {
+    // A flag name containing ']' would close the description bracket early.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "f]x",
+                .help = "hostile flag",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // Escaped form must appear (backslash before ])
+    try std.testing.expect(std.mem.indexOf(u8, script, "--f\\]x") != null);
+    // Raw form with unescaped ] must NOT appear in flag name position
+    try std.testing.expect(std.mem.indexOf(u8, script, "--f]x[") == null);
+}
+
+test "zsh: hostile flag name with single-quote is escaped in optspec (gap B)" {
+    // A flag name containing '\'' would break the surrounding single-quote context.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "f'x",
+                .help = "hostile flag",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // Escaped optspec-name form: --f'\''x
+    try std.testing.expect(std.mem.indexOf(u8, script, "--f'\\''x") != null);
+    // Raw unescaped form must NOT appear
+    try std.testing.expect(std.mem.indexOf(u8, script, "--f'x[") == null);
+}
+
+// ============================================================================
+// Gap C: completion values escaping in zsh optspec (NS-061, #38)
+// ============================================================================
+
+test "zsh: hostile completion value with single-quote is escaped (gap C)" {
+    // A completion value containing '\'' would break the surrounding single-quote
+    // context in the zsh optspec `':value:(val1 val2)'`.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "format",
+                .help = "Output format",
+                .ftype = .string,
+                .completions = &.{ "v'al", "json" },
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // Escaped form must appear (zsh '\'' pattern)
+    try std.testing.expect(std.mem.indexOf(u8, script, "v'\\''al") != null);
+    // Raw unescaped breakout form must NOT appear
+    try std.testing.expect(std.mem.indexOf(u8, script, "(v'al") == null);
 }
