@@ -73,6 +73,7 @@ pub fn generateCompletions(shell: Shell, cmd: *const Command, allocator: std.mem
 
 test {
     _ = command;
+    _ = @import("cli/context.zig");
     _ = parser;
     _ = help;
     _ = completion.bash;
