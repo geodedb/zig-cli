@@ -9,7 +9,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const tty = @import("tty.zig");
 const env = @import("env.zig");
-const sanitize = @import("sanitize.zig");
+const sanitize = @import("sanitize");
 
 /// ANSI color codes
 pub const Color = enum(u8) {

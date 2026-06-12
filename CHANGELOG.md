@@ -16,6 +16,8 @@ Audit hardening batch (2026-06 codepros audit iteration 1).
 - Terminal control bytes are stripped from help, error, table, and progress output (CWE-150)
 - Markdown generator escapes headings, prose, and fences contextually; table cells render embedded newlines as `<br>`
 - Library version is single-sourced from `build.zig.zon` via build options; `root.version` can no longer drift from the package manifest (#106)
+- Env-bound flag defaults (`FlagSpec.env`) are POSIX-only: on Windows the lookup now returns null instead of dereferencing a dangling stack slice — a documented limitation (#46)
+- Large source files split to meet the 800-line guidance (help/parser/command/zsh/prompt/bench), now enforced by a pre-commit hook; `parse()` decomposed into a phase pipeline (#34, #46); the terminal sanitizer is a single first-class `sanitize` module (#140)
 
 ### Fixed
 - Completion-script injection hardening: PowerShell `-CommandName` escaping, zsh identifier sanitization and quoted case labels, fish 16-level depth cap instead of out-of-bounds write (#132)

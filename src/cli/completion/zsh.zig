@@ -7,41 +7,62 @@
 //! support for nested subcommands.
 
 const std = @import("std");
+const sanitize = @import("sanitize");
 const command = @import("../command.zig");
 const Command = command.Command;
 const FlagSpec = command.FlagSpec;
+
+/// True when `c` is in the comptime-known `set` (unrolled membership test).
+inline fn inSet(comptime set: []const u8, c: u8) bool {
+    inline for (set) |e| {
+        if (c == e) return true;
+    }
+    return false;
+}
+
+/// Shared core for the zsh single-quoted-context escapers.
+/// Handles the two-pass logic: a scan-only fast path (returns `s` directly,
+/// no allocation), the '\'' pattern to break out of single quotes and
+/// re-enter, and stripping of NUL bytes (0x00), newlines (0x0A), and
+/// carriage returns (0x0D). Characters in the comptime `backslash_extra`
+/// set are additionally backslash-escaped for context-specific
+/// metacharacters (optspec brackets, _describe colons).
+fn escapeZshQuoted(comptime backslash_extra: []const u8, allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (s) |c| {
+        if (c == '\'' or c == 0x00 or c == '\n' or c == '\r' or inSet(backslash_extra, c)) {
+            needs_escape = true;
+            break;
+        }
+    }
+    if (!needs_escape) return s;
+
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    list.ensureTotalCapacity(allocator, s.len + 4) catch {};
+    for (s) |c| {
+        switch (c) {
+            0x00, '\n', '\r' => {},
+            '\'' => {
+                // zsh '\'' pattern: end quote, escaped quote, reopen quote
+                list.appendSlice(allocator, "'\\''") catch return error.OutOfMemory;
+            },
+            else => {
+                if (inSet(backslash_extra, c)) {
+                    list.append(allocator, '\\') catch return error.OutOfMemory;
+                }
+                list.append(allocator, c) catch return error.OutOfMemory;
+            },
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
 
 /// Escape a string for use inside zsh single-quoted contexts.
 /// Uses the '\'' pattern to break out of single quotes and re-enter.
 /// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
 /// Fast path: if no single quotes or control chars, returns `s` directly (no allocation).
 pub fn escapeZshSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
-    var needs_escape = false;
-    for (s) |c| {
-        switch (c) {
-            '\'', 0x00, '\n', '\r' => {
-                needs_escape = true;
-                break;
-            },
-            else => {},
-        }
-    }
-    if (!needs_escape) return s;
-
-    var list: std.ArrayListUnmanaged(u8) = .empty;
-    list.ensureTotalCapacity(allocator, s.len) catch {};
-    for (s) |c| {
-        switch (c) {
-            0x00, '\n', '\r' => {},
-            '\'' => {
-                list.appendSlice(allocator, "'\\''") catch return error.OutOfMemory;
-            },
-            else => {
-                list.append(allocator, c) catch return error.OutOfMemory;
-            },
-        }
-    }
-    return list.toOwnedSlice(allocator);
+    return escapeZshQuoted("", allocator, s);
 }
 
 /// Escape a string for use inside zsh double-quoted contexts.
@@ -78,6 +99,28 @@ pub fn escapeZshDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]cons
     return list.toOwnedSlice(allocator);
 }
 
+/// Escape a flag name for use inside zsh option-spec NAME positions.
+/// Option specs have the form `'--flagname[description]'`.  A `]` in the
+/// NAME portion would close the description bracket early; a `'` would
+/// break out of the surrounding single-quote context.  `[` is also escaped
+/// to prevent it from opening a spurious bracket.
+/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Fast path: if no special chars, returns `s` directly (no allocation).
+pub fn escapeZshOptspecName(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    return escapeZshQuoted("[]", allocator, s);
+}
+
+/// Escape a name for use in the WORD portion of a zsh `_describe` array
+/// entry (`'word:description'`).  An unescaped `:` in the word terminates
+/// it early, so the completed word would be a prefix of the real name while
+/// the dispatch case label uses the full name — the subcommand becomes
+/// unreachable.  `_describe` supports `\:` for a literal colon in the word.
+/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Fast path: if no special chars, returns `s` directly (no allocation).
+pub fn escapeZshDescribeName(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
+    return escapeZshQuoted(":", allocator, s);
+}
+
 /// Sanitize a name for use as a zsh function identifier.
 /// Replaces any character that is not [a-zA-Z0-9_] with an underscore.
 /// Only function IDENTIFIERS are sanitized; completion registration
@@ -103,6 +146,7 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
 pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator, enable_active_help: bool) ![]const u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
+    // esc_alloc MUST be arena-backed: escaper results are never individually freed.
     const esc_alloc = arena.allocator();
 
     var buf: std.Io.Writer.Allocating = .init(allocator);
@@ -110,8 +154,14 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     buf.ensureUnusedCapacity(4096) catch {};
     const w = &buf.writer;
 
-    try w.print("#compdef {s}\n\n", .{cmd.name});
-    try w.print("# Zsh completion for {s}\n", .{cmd.name});
+    // Strip control bytes from the name (CWE-150); whitespace in a binary
+    // name is out of scope — completion cannot target such a binary anyway.
+    try w.writeAll("#compdef ");
+    try sanitize.writeControlFiltered(w, cmd.name);
+    try w.writeAll("\n\n");
+    try w.writeAll("# Zsh completion for ");
+    try sanitize.writeControlFiltered(w, cmd.name);
+    try w.writeAll("\n");
     try w.print("# Generated by zig-cli\n\n", .{});
 
     // Sanitize cmd.name for use in zsh function identifiers; #compdef and
@@ -128,21 +178,22 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     try w.writeAll("_global_flags=(\n");
     for (command.global_flags) |*gflag| {
         const esc_ghelp = try escapeZshSingleQuote(esc_alloc, gflag.help);
+        const esc_gname = try escapeZshOptspecName(esc_alloc, gflag.name);
         if (gflag.short) |s| {
             if (gflag.ftype == .bool) {
                 try w.print("    '(-{c} --{s})'{{-{c},--{s}}}'[{s}]'\n", .{
-                    s, gflag.name, s, gflag.name, esc_ghelp,
+                    s, esc_gname, s, esc_gname, esc_ghelp,
                 });
             } else {
                 try w.print("    '(-{c} --{s})'{{-{c},--{s}}}'[{s}]:value:'\n", .{
-                    s, gflag.name, s, gflag.name, esc_ghelp,
+                    s, esc_gname, s, esc_gname, esc_ghelp,
                 });
             }
         } else {
             if (gflag.ftype == .bool) {
-                try w.print("    '--{s}[{s}]'\n", .{ gflag.name, esc_ghelp });
+                try w.print("    '--{s}[{s}]'\n", .{ esc_gname, esc_ghelp });
             } else {
-                try w.print("    '--{s}[{s}]:value:'\n", .{ gflag.name, esc_ghelp });
+                try w.print("    '--{s}[{s}]:value:'\n", .{ esc_gname, esc_ghelp });
             }
         }
     }
@@ -218,8 +269,11 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, 
         try w.print("            commands=(\n", .{});
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                // Escape single quotes in name and summary
-                const esc_name = try escapeZshSingleQuote(esc_alloc, subcmd.name);
+                // Escape single quotes in name and summary; a literal `:` in
+                // the name must additionally become `\:` so _describe does
+                // not split the word early (the case label below keeps the
+                // raw `:`, matching what the user actually types).
+                const esc_name = try escapeZshDescribeName(esc_alloc, subcmd.name);
                 const esc_summary = try escapeZshSingleQuote(esc_alloc, subcmd.summary);
                 try w.print("                '{s}:{s}'\n", .{ esc_name, esc_summary });
             }
@@ -276,404 +330,67 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, prefix: []const u8, 
     }
 }
 
-/// Write a zsh flag specification
+/// Write a zsh flag specification.
+/// `esc_alloc` MUST be arena-backed: escape results and `value_list` storage
+/// are never individually freed.
 fn writeZshFlag(w: anytype, flag: *const FlagSpec, esc_alloc: std.mem.Allocator) !void {
     const required_suffix: []const u8 = if (flag.required) " (required)" else "";
     const esc_help = try escapeZshSingleQuote(esc_alloc, flag.help);
+    // Gap B: flag name in the NAME portion of `'--flagname[desc]'` optspecs.
+    // A `]` in the name closes the description bracket; `'` breaks single-quote
+    // context.  Use escapeZshOptspecName to neutralise both.
+    const esc_fname = try escapeZshOptspecName(esc_alloc, flag.name);
 
     // Build value completion spec
+    // Gap C: completion values were copied raw via @memcpy.  Use
+    // escapeZshSingleQuote so that a `'` in a value cannot break out of the
+    // surrounding single-quoted optspec context.
     var value_spec: []const u8 = "";
-    var value_buf: [512]u8 = undefined;
+    var value_list: std.ArrayListUnmanaged(u8) = .empty;
     if (flag.ftype == .path) {
         value_spec = "_files";
     } else if (flag.completions.len > 0) {
-        // Build completion list: (value1 value2 value3)
-        var written: usize = 0;
-        value_buf[written] = '(';
-        written += 1;
+        value_list.ensureTotalCapacity(esc_alloc, 64) catch {};
+        value_list.append(esc_alloc, '(') catch return error.OutOfMemory;
         for (flag.completions, 0..) |val, i| {
             if (i > 0) {
-                value_buf[written] = ' ';
-                written += 1;
+                value_list.append(esc_alloc, ' ') catch return error.OutOfMemory;
             }
-            // Bounds check before @memcpy
-            if (written + val.len + 2 > value_buf.len) break;
-            @memcpy(value_buf[written .. written + val.len], val);
-            written += val.len;
+            const esc_val = try escapeZshSingleQuote(esc_alloc, val);
+            value_list.appendSlice(esc_alloc, esc_val) catch return error.OutOfMemory;
         }
-        value_buf[written] = ')';
-        written += 1;
-        value_spec = value_buf[0..written];
+        value_list.append(esc_alloc, ')') catch return error.OutOfMemory;
+        value_spec = value_list.items;
     }
 
+    // Known limitation: a `[` in a long flag name combined with a short flag
+    // emits the name inside `{-s,--name}` brace expansion, which strips the
+    // backslash escape and degrades the optspec. Accepted as pathological.
     if (flag.short) |s| {
         if (flag.ftype == .bool) {
             try w.print("        '(-{c} --{s})'{{-{c},--{s}}}'[{s}{s}]'\n", .{
-                s, flag.name, s, flag.name, esc_help, required_suffix,
+                s, esc_fname, s, esc_fname, esc_help, required_suffix,
             });
         } else {
             try w.print("        '(-{c} --{s})'{{-{c},--{s}}}'[{s}{s}]:value:{s}'\n", .{
-                s, flag.name, s, flag.name, esc_help, required_suffix, value_spec,
+                s, esc_fname, s, esc_fname, esc_help, required_suffix, value_spec,
             });
         }
     } else {
         if (flag.ftype == .bool) {
-            try w.print("        '--{s}[{s}{s}]'\n", .{ flag.name, esc_help, required_suffix });
+            try w.print("        '--{s}[{s}{s}]'\n", .{ esc_fname, esc_help, required_suffix });
         } else {
-            try w.print("        '--{s}[{s}{s}]:value:{s}'\n", .{ flag.name, esc_help, required_suffix, value_spec });
+            try w.print("        '--{s}[{s}{s}]:value:{s}'\n", .{ esc_fname, esc_help, required_suffix, value_spec });
         }
     }
 }
 
 // ============================================================================
-// Tests
-// ============================================================================
-
-test "generate zsh completion" {
-    const cmd = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.indexOf(u8, script, "#compdef test") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "_test()") != null);
-}
-
-test "zsh: completion compdef directive" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.startsWith(u8, script, "#compdef myapp"));
-}
-
-test "zsh: completion header comment" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.indexOf(u8, script, "# Zsh completion for myapp") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "# Generated by zig-cli") != null);
-}
-
-test "zsh: completion function structure" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.indexOf(u8, script, "_myapp()") != null);
-}
-
-test "zsh: completion global flags" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.indexOf(u8, script, "_global_flags") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "'{-h,--help}'") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "'{-V,--version}'") != null);
-}
-
-test "zsh: completion with subcommands generates subcommand functions" {
-    const subcmd1 = Command{
-        .name = "start",
-        .summary = "Start the service",
-    };
-    const subcmd2 = Command{
-        .name = "stop",
-        .summary = "Stop the service",
-    };
-    const cmd = Command{
-        .name = "service",
-        .summary = "Service manager",
-        .subcommands = &.{ &subcmd1, &subcmd2 },
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    // Should have functions for each subcommand
-    try std.testing.expect(std.mem.indexOf(u8, script, "_service_start()") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "_service_stop()") != null);
-    // Should list subcommands
-    try std.testing.expect(std.mem.indexOf(u8, script, "'start:Start the service'") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "'stop:Stop the service'") != null);
-}
-
-test "zsh: completion hides hidden subcommands" {
-    const subcmd1 = Command{
-        .name = "visible",
-        .summary = "Visible command",
-    };
-    const subcmd2 = Command{
-        .name = "hidden",
-        .summary = "Hidden command",
-        .hidden = true,
-    };
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-        .subcommands = &.{ &subcmd1, &subcmd2 },
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.indexOf(u8, script, "'visible:Visible command'") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "'hidden:Hidden command'") == null);
-}
-
-test "zsh: completion with command flags" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-        .flags = &.{
-            command.FlagSpec{
-                .name = "config",
-                .short = 'c',
-                .help = "Config file",
-                .ftype = .path,
-            },
-            command.FlagSpec{
-                .name = "verbose",
-                .help = "Verbose output",
-                .ftype = .bool,
-            },
-        },
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.indexOf(u8, script, "{-c,--config}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "--verbose") != null);
-}
-
-test "zsh: completion nested subcommands" {
-    const leaf_cmd = Command{
-        .name = "get",
-        .summary = "Get a value",
-        .flags = &.{
-            command.FlagSpec{
-                .name = "key",
-                .help = "Key to get",
-                .ftype = .string,
-            },
-        },
-    };
-    const sub_cmd = Command{
-        .name = "kv",
-        .summary = "Key-value operations",
-        .subcommands = &.{&leaf_cmd},
-    };
-    const cmd = Command{
-        .name = "app",
-        .summary = "Application",
-        .subcommands = &.{&sub_cmd},
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    // Should have nested function
-    try std.testing.expect(std.mem.indexOf(u8, script, "_app_kv()") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "_app_kv_get()") != null);
-    // Leaf command should have its flags
-    try std.testing.expect(std.mem.indexOf(u8, script, "--key") != null);
-}
-
-test "zsh: completion ends with function call" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.endsWith(u8, script, "_myapp\n"));
-}
-
-test "zsh: flag value completions" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-        .flags = &.{
-            command.FlagSpec{
-                .name = "format",
-                .help = "Output format",
-                .ftype = .string,
-                .completions = &.{ "json", "yaml", "toml" },
-            },
-        },
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    // Zsh uses (value1 value2...) syntax for completions
-    try std.testing.expect(std.mem.indexOf(u8, script, "(json yaml toml)") != null);
-}
-
-test "zsh: path flag uses _files completion" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-        .flags = &.{
-            command.FlagSpec{
-                .name = "config",
-                .help = "Config file",
-                .ftype = .path,
-            },
-        },
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    // Path flags should use _files for file completion
-    try std.testing.expect(std.mem.indexOf(u8, script, "_files") != null);
-}
-
-test "zsh: required flag indicator" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-        .flags = &.{
-            command.FlagSpec{
-                .name = "token",
-                .help = "API token",
-                .ftype = .string,
-                .required = true,
-            },
-        },
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    try std.testing.expect(std.mem.indexOf(u8, script, "(required)") != null);
-}
-
-test "zsh: active help support function" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    // Should have active help function
-    try std.testing.expect(std.mem.indexOf(u8, script, "_myapp_active_help()") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "MYAPP_ACTIVE_HELP") != null);
-}
-
-test "zsh: active help messages included" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-        .active_help = &.{
-            "Enter a command to run",
-            "Use --help for more info",
-        },
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    // Should include active help messages
-    try std.testing.expect(std.mem.indexOf(u8, script, "Enter a command to run") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "Use --help for more info") != null);
-}
-
-test "zsh: active help can be disabled" {
-    const cmd = Command{
-        .name = "myapp",
-        .summary = "My application",
-        .active_help = &.{"Help message"},
-    };
-
-    const script = try generateWithActiveHelp(&cmd, std.testing.allocator, false);
-    defer std.testing.allocator.free(script);
-
-    // Should NOT have active help function when disabled
-    try std.testing.expect(std.mem.indexOf(u8, script, "_myapp_active_help()") == null);
-}
-
-test "zsh: case labels quoted and function identifiers sanitized (F-05)" {
-    const subcmd = Command{
-        .name = "x);evil",
-        .summary = "Hostile name",
-    };
-    const cmd = Command{
-        .name = "app",
-        .summary = "Application",
-        .subcommands = &.{&subcmd},
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    // Case label must be single-quoted ('literal') matches the literal in zsh).
-    try std.testing.expect(std.mem.indexOf(u8, script, "'x);evil')") != null);
-    // No unquoted case label that would terminate the pattern early (CWE-78).
-    try std.testing.expect(std.mem.indexOf(u8, script, "                x);evil)") == null);
-    // Function identifiers are sanitized, and definition + call site agree.
-    try std.testing.expect(std.mem.indexOf(u8, script, "_app_x__evil()") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "_app_x__evil\n") != null);
-    // No function identifier carries shell metacharacters.
-    try std.testing.expect(std.mem.indexOf(u8, script, "_app_x);evil") == null);
-}
-
-test "zsh: dashed root name sanitized in identifiers, compdef keeps real name (F-05)" {
-    const leaf = Command{
-        .name = "run",
-        .summary = "Run it",
-        .active_help = &.{"hint"},
-    };
-    const cmd = Command{
-        .name = "my-app",
-        .summary = "My application",
-        .subcommands = &.{&leaf},
-    };
-
-    const script = try generate(&cmd, std.testing.allocator);
-    defer std.testing.allocator.free(script);
-
-    // Completion registration must reference the real binary name.
-    try std.testing.expect(std.mem.startsWith(u8, script, "#compdef my-app"));
-    // Function identifiers use the sanitized form.
-    try std.testing.expect(std.mem.indexOf(u8, script, "_my_app()") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "_my_app_run()") != null);
-    try std.testing.expect(std.mem.indexOf(u8, script, "_my_app_active_help()") != null);
-    // Active-help call site matches the sanitized definition (no mismatch).
-    try std.testing.expect(std.mem.indexOf(u8, script, "_my_app_active_help \"hint\"") != null);
-    // Entry point invokes the sanitized function.
-    try std.testing.expect(std.mem.endsWith(u8, script, "_my_app\n"));
-}
-
-// ============================================================================
 // Shell Escape Function Tests
+//
+// Public-API tests for `generate`/`generateWithActiveHelp` live in
+// zsh_test.zig. The tests below exercise the escaper family, including
+// the private escapeZshQuoted core via its public wrappers.
 // ============================================================================
 
 test "zsh: escapeZshSingleQuote no special chars" {
@@ -742,4 +459,48 @@ test "zsh: escapeZshDoubleQuote strips NUL and newlines" {
     const result = try escapeZshDoubleQuote(std.testing.allocator, "a\x00b\nc\rd");
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("abcd", result);
+}
+
+// ============================================================================
+// Gap B: flag name escaping in zsh optspec NAME position (NS-061, #38)
+// ============================================================================
+
+test "zsh: escapeZshOptspecName no special chars" {
+    const result = try escapeZshOptspecName(std.testing.allocator, "verbose");
+    try std.testing.expectEqualStrings("verbose", result);
+}
+
+test "zsh: escapeZshOptspecName with closing bracket" {
+    const result = try escapeZshOptspecName(std.testing.allocator, "f]x");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("f\\]x", result);
+}
+
+test "zsh: escapeZshOptspecName with opening bracket" {
+    const result = try escapeZshOptspecName(std.testing.allocator, "f[x");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("f\\[x", result);
+}
+
+test "zsh: escapeZshOptspecName with single quote" {
+    const result = try escapeZshOptspecName(std.testing.allocator, "f'x");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("f'\\''x", result);
+}
+
+test "zsh: escapeZshDescribeName no special chars" {
+    const result = try escapeZshDescribeName(std.testing.allocator, "start");
+    try std.testing.expectEqualStrings("start", result);
+}
+
+test "zsh: escapeZshDescribeName with colon" {
+    const result = try escapeZshDescribeName(std.testing.allocator, "foo:bar");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("foo\\:bar", result);
+}
+
+test "zsh: escapeZshDescribeName with single quote" {
+    const result = try escapeZshDescribeName(std.testing.allocator, "f'x");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("f'\\''x", result);
 }
