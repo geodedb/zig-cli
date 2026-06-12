@@ -108,6 +108,7 @@ pub const PromptError = prompt.PromptError;
 pub const InputConfig = prompt.InputConfig;
 pub const promptInput = prompt.input;
 pub const promptPassword = prompt.password;
+pub const promptFreeSecret = prompt.freeSecret;
 pub const promptConfirm = prompt.confirm;
 pub const promptSelect = prompt.select;
 pub const promptMultiSelect = prompt.multiSelect;

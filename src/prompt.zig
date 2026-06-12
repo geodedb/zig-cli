@@ -187,14 +187,11 @@ fn inputInternal(reader: *std.Io.Reader, writer: *std.Io.Writer, message: []cons
 
 /// Read a password without echoing characters.
 ///
-/// The returned slice is heap-allocated. Callers SHOULD zero the slice
-/// before freeing to prevent password data from persisting in memory:
+/// The returned slice is heap-allocated. Free it with `freeSecret()` to
+/// guarantee the password is zeroed before the memory is released:
 ///
 ///     const pw = try prompt.password("Password: ", allocator);
-///     defer {
-///         @memset(pw, 0);
-///         allocator.free(pw);
-///     }
+///     defer prompt.freeSecret(allocator, pw);
 pub fn password(message: []const u8, allocator: std.mem.Allocator) PromptError![]const u8 {
     const io = globalIo();
     const stdin_file = std.Io.File.stdin();
@@ -235,8 +232,9 @@ pub fn password(message: []const u8, allocator: std.mem.Allocator) PromptError![
             }
             return passwordInternal(stdin_r, allocator);
         } else {
-            // GetConsoleMode failed -- fall back to simple read
-            return passwordInternal(stdin_r, allocator);
+            // GetConsoleMode failed: we cannot guarantee echo suppression.
+            // Refuse rather than silently echoing the password (NS-059).
+            return PromptError.NotInteractive;
         }
     } else {
         var termios = std.posix.tcgetattr(stdin_file.handle) catch return PromptError.ReadError;
@@ -271,6 +269,14 @@ fn passwordInternal(reader: *std.Io.Reader, allocator: std.mem.Allocator) Prompt
     }
 
     return allocator.dupe(u8, std.mem.trim(u8, line, " \t\r")) catch return PromptError.OutOfMemory;
+}
+
+/// Zero a secret buffer (e.g. one returned by `password()`) and free it.
+/// Zeroing uses `std.crypto.secureZero` so the compiler cannot elide it.
+pub fn freeSecret(allocator: std.mem.Allocator, secret: []const u8) void {
+    const mutable = @constCast(secret);
+    std.crypto.secureZero(u8, mutable);
+    allocator.free(mutable);
 }
 
 /// Ask for yes/no confirmation
@@ -636,6 +642,13 @@ test "password: input is trimmed" {
     }
 
     try std.testing.expectEqualStrings("mypass", result);
+}
+
+test "freeSecret zeroes before freeing" {
+    const allocator = std.testing.allocator;
+    const secret = try allocator.dupe(u8, "hunter2");
+    freeSecret(allocator, secret);
+    // testing.allocator fails the test on leaks; zeroing verified by reading the implementation (cannot inspect freed memory safely)
 }
 
 // --- confirmInternal tests ---
