@@ -224,7 +224,11 @@ pub fn password(message: []const u8, allocator: std.mem.Allocator) PromptError![
         if (windows.kernel32.GetConsoleMode(handle, &original_mode) != 0) {
             // Clear ENABLE_ECHO_INPUT (0x0004) to suppress echo
             const new_mode = original_mode & ~@as(windows.DWORD, 0x0004);
-            _ = windows.kernel32.SetConsoleMode(handle, new_mode);
+            if (windows.kernel32.SetConsoleMode(handle, new_mode) == 0) {
+                // SetConsoleMode failed: echo suppression is not in effect.
+                // Refuse rather than silently echoing the password (NS-059).
+                return PromptError.NotInteractive;
+            }
             defer {
                 _ = windows.kernel32.SetConsoleMode(handle, original_mode);
                 stdout_w.print("\n", .{}) catch {};
