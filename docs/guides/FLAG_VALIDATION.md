@@ -299,7 +299,7 @@ const cmd = cli.Command{
 
 The library provides clear error messages:
 
-```
+```text
 Error: Invalid value for --port: "99999"
   Port must be between 1 and 65535
 

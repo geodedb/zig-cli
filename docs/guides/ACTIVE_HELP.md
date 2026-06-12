@@ -30,7 +30,7 @@ const deploy_cmd = cli.Command{
 
 When the user types `myapp deploy<TAB>`, they'll see:
 
-```
+```text
 $ myapp deploy
 Tip: Use --dry-run to preview changes
 Note: Requires DEPLOY_TOKEN environment variable
