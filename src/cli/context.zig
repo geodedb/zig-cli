@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 CodePros
 
-//! Execution context and flag values for command handlers.
+//! Flag specifications (FlagSpec/FlagType/SecretPolicy), parsed flag
+//! values, and the execution context passed to command handlers.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
