@@ -101,13 +101,25 @@ pub fn center(text: []const u8, width: usize, allocator: std.mem.Allocator) ![]c
     return result.toOwnedSlice(allocator);
 }
 
-/// Truncate text with ellipsis
+/// Largest index <= max_len that does not split a UTF-8 sequence.
+/// Backs off over continuation bytes (0b10xxxxxx). Invalid UTF-8 input
+/// degrades gracefully (worst case backs off up to 3 bytes).
+pub fn utf8FloorIndex(text: []const u8, max_len: usize) usize {
+    if (max_len >= text.len) return text.len;
+    var idx = max_len;
+    while (idx > 0 and (text[idx] & 0xC0) == 0x80) idx -= 1;
+    return idx;
+}
+
+/// Truncate text with ellipsis. Never splits a multibyte UTF-8 codepoint.
+/// Returns a borrowed slice when text.len <= max_len or max_len <= 3;
+/// otherwise returns an owned allocation (caller must free).
 pub fn truncate(text: []const u8, max_len: usize, allocator: std.mem.Allocator) ![]const u8 {
     if (text.len <= max_len) return text;
-    if (max_len <= 3) return text[0..max_len];
+    if (max_len <= 3) return text[0..utf8FloorIndex(text, max_len)];
 
     var result: std.ArrayList(u8) = .empty;
-    try result.appendSlice(allocator, text[0 .. max_len - 3]);
+    try result.appendSlice(allocator, text[0..utf8FloorIndex(text, max_len - 3)]);
     try result.appendSlice(allocator, "...");
 
     return result.toOwnedSlice(allocator);
@@ -200,6 +212,19 @@ pub fn stripControlChars(text: []const u8, allocator: std.mem.Allocator) ![]cons
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "utf8FloorIndex backs off continuation bytes" {
+    try std.testing.expectEqual(@as(usize, 2), utf8FloorIndex("ab\xc3\xa9", 3)); // é split → back to 2
+    try std.testing.expectEqual(@as(usize, 4), utf8FloorIndex("ab\xc3\xa9", 4)); // exact boundary ok
+    try std.testing.expectEqual(@as(usize, 3), utf8FloorIndex("abc", 3));
+    try std.testing.expectEqual(@as(usize, 0), utf8FloorIndex("\xc3\xa9", 1));
+}
+
+test "truncate does not split multibyte UTF-8 sequences" {
+    const out = try truncate("héllo wörld", 5, std.testing.allocator);
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(out));
+}
 
 test "padRight" {
     const padded = try padRight("hello", 10, std.testing.allocator);

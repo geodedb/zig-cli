@@ -19,6 +19,17 @@ pub inline fn isTerminalControl(c: u8) bool {
     return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
 }
 
+/// Largest index <= max_len that does not split a UTF-8 sequence.
+/// Mirror of `src/util/text.utf8FloorIndex`.
+/// KEEP IN SYNC with `src/util/text.zig` (see the sync test below, which
+/// validates identical behaviour on a shared corpus of inputs).
+pub fn utf8FloorIndex(text: []const u8, max_len: usize) usize {
+    if (max_len >= text.len) return text.len;
+    var idx = max_len;
+    while (idx > 0 and (text[idx] & 0xC0) == 0x80) idx -= 1;
+    return idx;
+}
+
 /// Write `text` to `w`, removing control bytes (see `isTerminalControl`).
 /// Removing ESC (0x1B) neutralizes ANSI/OSC escape sequences (CWE-150).
 pub fn writeControlFiltered(w: anytype, text: []const u8) !void {
@@ -30,6 +41,14 @@ pub fn writeControlFiltered(w: anytype, text: []const u8) !void {
         }
     }
     if (start < text.len) try w.writeAll(text[start..]);
+}
+
+test "sanitize: utf8FloorIndex mirrors canonical behaviour" {
+    // Mirror of the canonical tests in src/util/text.zig — must stay in sync.
+    try std.testing.expectEqual(@as(usize, 2), utf8FloorIndex("ab\xc3\xa9", 3)); // é split → back to 2
+    try std.testing.expectEqual(@as(usize, 4), utf8FloorIndex("ab\xc3\xa9", 4)); // exact boundary ok
+    try std.testing.expectEqual(@as(usize, 3), utf8FloorIndex("abc", 3));
+    try std.testing.expectEqual(@as(usize, 0), utf8FloorIndex("\xc3\xa9", 1));
 }
 
 test "sanitize: predicate matches canonical control-byte policy" {

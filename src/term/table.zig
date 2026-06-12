@@ -8,6 +8,12 @@
 //! - Configurable borders and padding
 //! - ANSI color support
 //! - Row separators and alignment
+//!
+//! ## Width model
+//! Column widths are byte-oriented (not codepoint- or grapheme-cluster-aware).
+//! Multibyte UTF-8 content is never split mid-codepoint (NS-062 / CWE-1284).
+//! Display alignment of wide glyphs (e.g. CJK double-width characters) is not
+//! wcwidth-aware — this is a documented limitation.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -221,10 +227,12 @@ pub const Table = struct {
                 // Padding
                 try writer.splatByteAll(' ', pad);
 
-                // Cell content (possibly truncated)
+                // Cell content (possibly truncated).
+                // utf8FloorIndex ensures we never split a multibyte codepoint
+                // at the column boundary (NS-062 / CWE-1284).
                 var display_cell = cell;
                 if (col.max_width > 0 and cell.len > col.max_width) {
-                    display_cell = cell[0..col.max_width];
+                    display_cell = cell[0..sanitize.utf8FloorIndex(cell, col.max_width)];
                 }
                 try self.writeAligned(writer, display_cell, width, col.alignment);
 
@@ -244,13 +252,15 @@ pub const Table = struct {
 
     /// Write cell/header content padded to `width`. Content is
     /// control-filtered so cell data cannot inject ANSI/OSC escape
-    /// sequences (NS-056 / CWE-150). Width math intentionally stays
-    /// byte-based: precise alignment of malicious content is not a goal,
-    /// and UTF-8-aware widths are handled in a later task.
+    /// sequences (NS-056 / CWE-150). Width math is byte-oriented; multibyte
+    /// UTF-8 codepoints are never split mid-sequence (NS-062 / CWE-1284) via
+    /// `sanitize.utf8FloorIndex`. Display alignment of wide glyphs (e.g.
+    /// CJK double-width) is not wcwidth-aware — that is a documented
+    /// limitation; byte counts are used for column-width bookkeeping.
     fn writeAligned(self: *Self, writer: anytype, text: []const u8, width: usize, alignment: Alignment) !void {
         _ = self;
         if (text.len >= width) {
-            try sanitize.writeControlFiltered(writer, text[0..width]);
+            try sanitize.writeControlFiltered(writer, text[0..sanitize.utf8FloorIndex(text, width)]);
             return;
         }
 
@@ -647,4 +657,14 @@ test "table: unicode border line is exactly correct width" {
 
     // Top-left corner followed by exactly 4 horizontal glyphs then top-right
     try std.testing.expect(std.mem.indexOf(u8, output, "┌────┐") != null);
+}
+
+test "table: max_width truncation does not split multibyte UTF-8" {
+    var t = Table.init(std.testing.allocator);
+    defer t.deinit();
+    try t.addColumn(.{ .header = "h", .max_width = 3 });
+    try t.addRow(&.{"ab\xc3\xa9"});
+    const out = try t.render();
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(out));
 }
