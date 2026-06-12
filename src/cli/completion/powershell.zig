@@ -236,6 +236,11 @@ pub fn escapePowerShellString(allocator: std.mem.Allocator, s: []const u8) ![]co
 pub fn escapeRegex(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
+        // Control bytes are stripped (CWE-150); metacharacters/quotes escaped.
+        if (c == '\n' or sanitize.isTerminalControl(c)) {
+            needs_escape = true;
+            break;
+        }
         switch (c) {
             '\\', '.', '^', '$', '*', '+', '?', '(', ')', '{', '}', '[', ']', '|', '\'' => {
                 needs_escape = true;
@@ -249,6 +254,9 @@ pub fn escapeRegex(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var list: std.ArrayListUnmanaged(u8) = .empty;
     list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
+        // Strip terminal-control bytes so a hostile subcmd.name cannot smuggle
+        // an ESC/OSC sequence into the regex case label (CWE-150).
+        if (c == '\n' or sanitize.isTerminalControl(c)) continue;
         switch (c) {
             '\\', '.', '^', '$', '*', '+', '?', '(', ')', '{', '}', '[', ']', '|' => {
                 list.append(allocator, '\\') catch return error.OutOfMemory;
@@ -684,7 +692,9 @@ test "powershell: escapePowerShellString strips ESC, BEL, C0 and DEL but keeps t
 
 test "powershell: control bytes in field metadata stripped from script (CWE-150)" {
     const subcmd = Command{
-        .name = "deploy",
+        // ESC in the NAME exercises escapeRegex (the switch -Regex case label),
+        // a distinct path from escapePowerShellString.
+        .name = "dep\x1b]0;PWNED\x07loy",
         .summary = "Sum\x1b]0;PWNED\x07mary",
     };
     const cmd = Command{
@@ -715,4 +725,6 @@ test "powershell: control bytes in field metadata stripped from script (CWE-150)
     try std.testing.expect(std.mem.indexOf(u8, script, "Sum]0;PWNEDmary") != null);
     // Printable remainder of the completion value is preserved.
     try std.testing.expect(std.mem.indexOf(u8, script, "json") != null);
+    // Printable remainder of the subcommand name survives in the regex label.
+    try std.testing.expect(std.mem.indexOf(u8, script, "dep]0;PWNEDloy") != null);
 }

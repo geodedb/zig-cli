@@ -63,7 +63,8 @@ fn escapeZshQuoted(comptime backslash_extra: []const u8, allocator: std.mem.Allo
 
 /// Escape a string for use inside zsh single-quoted contexts.
 /// Uses the '\'' pattern to break out of single quotes and re-enter.
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (all C0 controls incl. ESC/BEL/CR
+/// plus DEL, keeping tab) and newline (CWE-150).
 /// Fast path: if no single quotes or control chars, returns `s` directly (no allocation).
 pub fn escapeZshSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     return escapeZshQuoted("", allocator, s);
@@ -115,7 +116,8 @@ pub fn escapeZshDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]cons
 /// NAME portion would close the description bracket early; a `'` would
 /// break out of the surrounding single-quote context.  `[` is also escaped
 /// to prevent it from opening a spurious bracket.
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (all C0 controls incl. ESC/BEL/CR
+/// plus DEL, keeping tab) and newline (CWE-150).
 /// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapeZshOptspecName(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     return escapeZshQuoted("[]", allocator, s);
@@ -126,7 +128,8 @@ pub fn escapeZshOptspecName(allocator: std.mem.Allocator, s: []const u8) ![]cons
 /// it early, so the completed word would be a prefix of the real name while
 /// the dispatch case label uses the full name — the subcommand becomes
 /// unreachable.  `_describe` supports `\:` for a literal colon in the word.
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (all C0 controls incl. ESC/BEL/CR
+/// plus DEL, keeping tab) and newline (CWE-150).
 /// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapeZshDescribeName(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     return escapeZshQuoted(":", allocator, s);
