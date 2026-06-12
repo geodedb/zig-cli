@@ -1,8 +1,8 @@
 # Security Gap Analysis
 
-> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 follow-up findings (NS-047 through NS-055).
+> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 follow-up findings (NS-047 through NS-055). Updated 2026-06-11 with codepros:audit iteration-1 findings (NS-056, NS-058 through NS-062), status corrections (NS-016, NS-020), and the NS-057 refutation.
 
-Last updated: 2026-03-25
+Last updated: 2026-06-11
 
 ## REGRESSION NOTICE -- RESOLVED
 
@@ -10,24 +10,75 @@ On 2026-03-24, Phase 3 code inspection confirmed that 19 previously-closed findi
 had regressed due to a git stash/pop incident. All 19 regressions plus 3 new findings
 have been re-implemented and verified. 760/760 tests pass with 0 memory leaks.
 
+## 2026-06-11 UPDATE -- codepros:audit iteration 1
+
+A four-phase audit (scan + independent appsec review + adversarial security review) was
+run against HEAD `de11f86`. It surfaced **6 new open findings** and **2 status corrections**
+to previously-closed items, and **refuted** one scan candidate.
+
+- **New open (6):** NS-056 (Medium, terminal escape injection — broadened to live-by-default),
+  NS-058 (Low–Medium, ProgressBar.init underflow DoS), NS-059 (Medium, Windows password echo
+  on GetConsoleMode failure), NS-060 (Low, Markdown headings/prose/fences raw), NS-061 (Low,
+  completion-generator hardening: PowerShell/zsh/fish), NS-062 (Low, UTF-8 byte-slicing).
+- **Status corrections (2):** **NS-016** Closed -> **False-Resolved** (slice-header reassignment
+  does not scrub OS-owned argv/environ bytes); **NS-020** Closed -> **Partially False-Resolved**
+  (only table cells escaped; headings/prose/code-fences raw — now tracked as NS-060).
+- **Refuted (1):** scan candidate NS-057 (signal `callback_count` read without mutex) is
+  architecturally safe (acquire/release pairing) -> **Won't Do**.
+- **Stale line numbers corrected** per APPSEC §7.8 (see "Line-Number Corrections" below).
+
 ## Summary
 
-| Risk Level | Total | Open | Closed | Won't Do |
-|-----------|-------|------|--------|----------|
-| Critical | 1 | 0 | 1 | 0 |
-| High | 2 | 0 | 2 | 0 |
-| Medium | 22 | 0 | 21 | 1 |
-| Low | 24 | 0 | 23 | 1 |
-| Info | 6 | 0 | 1 | 5 |
-| **Total** | **55** | **0** | **48** | **7** |
+| Risk Level | Total | Open | Closed | False-Resolved | Won't Do |
+|-----------|-------|------|--------|----------------|----------|
+| Critical | 1 | 0 | 1 | 0 | 0 |
+| High | 2 | 0 | 2 | 0 | 0 |
+| Medium | 24 | 2 | 20 | 0 | 1 |
+| Low | 28 | 4 | 22 | 1 | 1 |
+| Info | 7 | 0 | 1 | 0 | 6 |
+| **Total** | **62** | **6** | **46** | **2** | **8** |
 
-**0 open findings.** All 8 Phase 3 follow-up findings (NS-047 through NS-054) closed on 2026-03-25.
-Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as Won't Do.
+> Note on the table: NS-016 and NS-020 remain counted under their original severities (both Low)
+> but their status moved from Closed to (Partially) False-Resolved; NS-020's open remediation is
+> tracked as the new finding NS-060. NS-057 is a refuted candidate recorded as Won't Do.
+
+**6 open findings** (NS-056, NS-058, NS-059, NS-060, NS-061, NS-062) as of 2026-06-11.
+All 8 Phase 3 follow-up findings (NS-047 through NS-054) remain closed.
+The 46 prior closed findings remain verified **except** NS-016 and NS-020, whose status was corrected.
+
+### Top 5 Risks (open, by Risk Score)
+
+1. **NS-056** Terminal escape-sequence injection — live-by-default via unknown-command path (Risk 36, CWE-150) — [#128](https://gitlab.com/devnw/zig/cli/-/issues/128)
+2. **NS-059** Windows `password()` echoes input on GetConsoleMode failure (Risk 32, CWE-549) — [#130](https://gitlab.com/devnw/zig/cli/-/issues/130)
+3. **NS-058** `ProgressBar.init` u16 underflow panic / DoS (Risk 24, CWE-191) — [#129](https://gitlab.com/devnw/zig/cli/-/issues/129)
+4. **NS-060** Markdown headings/prose/fences raw (Risk 16, CWE-79/116) — [#131](https://gitlab.com/devnw/zig/cli/-/issues/131)
+5. **NS-061** Completion-generator hardening: PowerShell/zsh/fish (Risk 12, CWE-94/78/787) — [#132](https://gitlab.com/devnw/zig/cli/-/issues/132)
+
+**Immediate action required: 0.** No leaked secrets and no active RCE — gitleaks clean (working tree + 70-commit history), no third-party dependencies in the CVE-tracked closure. All 6 new findings are hardening/robustness items conditioned on untrusted command metadata, terminal geometry, or a Windows console-mode failure.
+
+### Line-Number Corrections (APPSEC §7.8)
+
+Stale evidence line numbers from the 2026-03-25 doc were re-anchored against HEAD `de11f86`:
+
+| Item | Old (doc) | Current (verified) |
+|------|-----------|--------------------|
+| roff escaping (`writeRoffEscaped`) | help.zig:549 | help.zig:620 |
+| JSON help escaping (`writeJsonEscapedString`) | help.zig:450 | help.zig:494 |
+| version JSON (`printVersionImpl`) | help.zig:657 | help.zig:752 |
+| Markdown escaping (`writeMarkdownEscaped`) | help.zig:757/781 | help.zig:781 |
+
+> These corrections are documentation-only; the underlying mitigations remain in place and verified.
 
 ## Stack-Ranked Findings Table
 
 | Rank | Severity | Risk Score | Finding | Component | CWE/OWASP | Evidence (file:line) | Issue URL | Status |
 |------|----------|------------|---------|-----------|-----------|---------------------|-----------|--------|
+| -- | **Medium** | **36** | **NS-056: Terminal escape injection -- no ESC stripping on TTY (live-by-default via unknown-command path)** | **term/help/errors** | **CWE-150 / A05:2021** | **`src/util/errors.zig:50,107`; `color.zig:90-95`; `progress.zig:130,141`; `table.zig:189,226,245`** | **[#128](https://gitlab.com/devnw/zig/cli/-/issues/128)** | **Open** |
+| -- | **Medium** | **32** | **NS-059: Windows password() echoes input when GetConsoleMode fails** | **prompt** | **CWE-549 / A07:2021** | **`src/prompt.zig:237-240,262`** | **[#130](https://gitlab.com/devnw/zig/cli/-/issues/130)** | **Open** |
+| -- | **Low–Med** | **24** | **NS-058: ProgressBar.init u16 underflow panic (DoS) when width < 20** | **term/progress** | **CWE-191 / A05:2021** | **`src/term/progress.zig:179`; `tty.zig:18,78`** | **[#129](https://gitlab.com/devnw/zig/cli/-/issues/129)** | **Open** |
+| -- | **Low** | **16** | **NS-060: Markdown headings/prose/code-fences emitted raw (NS-020 partial false-resolution)** | **help** | **CWE-79/116 / A05:2021** | **`src/cli/help.zig:807,810,823,830,882`** | **[#131](https://gitlab.com/devnw/zig/cli/-/issues/131)** | **Open** |
+| -- | **Low** | **12** | **NS-061: Completion generator hardening (PowerShell -CommandName, zsh case/identifier, fish [16] OOB)** | **completion** | **CWE-94/78/787 / A05:2021** | **`powershell.zig:33`; `zsh.zig:174,218,219`; `fish.zig:170-177`** | **[#132](https://gitlab.com/devnw/zig/cli/-/issues/132)** | **Open** |
+| -- | **Low** | **12** | **NS-062: UTF-8 codepoint splitting / byte-vs-column width math** | **util/text, term/table** | **CWE-697/1284 / A04:2021** | **`src/util/text.zig:107,110`; `table.zig:223-224,245,249`** | **[#133](https://gitlab.com/devnw/zig/cli/-/issues/133)** | **Open** |
 | 1 | Critical | 95 | Shell injection via PAGER env var | pager | CWE-78 / A03:2021 | `src/term/pager.zig:57-58` | -- | **Closed** |
 | -- | **Medium** | **35** | **NS-047: Windows password echo not suppressed** | **prompt** | **CWE-549 / A07:2021** | **`src/prompt.zig:179-183`** | **[#111](https://gitlab.com/devnw/zig/cli/-/issues/111)** | **Closed** |
 | 2 | High | 85 | Shell completion injection (all 4 generators) | completion | CWE-94 / A03:2021 | `src/cli/completion/*.zig` | -- | **Closed** |
@@ -58,8 +109,8 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 | 25 | Low | 25 | Fish subcmd.name unescaped in -a argument | completion/fish | CWE-78 / A03:2021 | `src/cli/completion/fish.zig` | -- | **Closed** |
 | 26 | Low | 20 | isSafePath doesn't resolve symlinks | fs | CWE-59 / A01:2021 | `src/util/fs.zig:121-157` | -- | Closed (partial doc) |
 | 27 | Low | 20 | Signal cleanup callbacks in async-signal context | signal | CWE-364 / A04:2021 | `src/signal.zig` | -- | Closed (minimal doc) |
-| 28 | Low | 16 | Secret flag values not zeroed from memory after use | parser/command | CWE-316 / A02:2021 | `src/cli/command.zig:134-146` | -- | **Closed** |
-| 29 | Low | 16 | generateMarkdown has no Markdown escaping | help | CWE-79 / A03:2021 | `src/cli/help.zig:681-776` | -- | **Closed** |
+| 28 | Low | 16 | NS-016: Secret flag values not zeroed from memory after use | parser/command | CWE-316 / A02:2021 | `src/cli/command.zig:199`; `parser.zig:386` | -- | **False-Resolved** (see correction below) |
+| 29 | Low | 16 | NS-020: generateMarkdown escaping (table cells only) | help | CWE-79 / A03:2021 | `src/cli/help.zig:807,810,823,830,882` | -- | **Partially False-Resolved** (cells only; headings/prose/fences raw -> NS-060) |
 | 30 | Low | 15 | Bash flag.name unescaped in variable assignment | completion/bash | CWE-78 / A03:2021 | `src/cli/completion/bash.zig` | -- | **Closed** |
 | 31 | Low | 15 | Zsh subcmd.name unescaped in case pattern | completion/zsh | CWE-78 / A03:2021 | `src/cli/completion/zsh.zig` | -- | **Closed** |
 | 32 | Low | 15 | Fixed-size buffers silently truncate | multiple | CWE-120 / A06:2021 | `src/cli/completion/*.zig`, `src/cli/help.zig` | -- | Won't Do |
@@ -86,6 +137,199 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 
 ---
 
+## Open Findings -- codepros:audit iteration 1 (2026-06-11)
+
+All six were independently re-derived and verified against HEAD `de11f86`. Risk Score = Impact x Likelihood x 4.
+
+### NS-056: Terminal escape-sequence injection -- no ESC stripping on TTY output [Medium] -- OPEN
+
+- **Status:** **Open**
+- **Risk Level:** Medium
+- **Risk Score:** 36 (Impact: 3, Likelihood: 3)
+- **CWE:** CWE-150 (Improper Neutralization of Escape Sequences)
+- **OWASP:** A05:2021 Injection
+- **Exploit Surface:** Local (argv/TTY) -- **live by default** via the unknown-command path; broader for consumers surfacing untrusted command metadata.
+- **Confidence:** `confidence::confirmed` -- code trace verified at HEAD.
+- **Affected files:** `src/util/errors.zig:50,107`; `src/term/color.zig:90-95`; `src/term/progress.zig:130,141`; `src/term/table.zig:189,226,245`; `src/prompt.zig:139,376,441`
+- **Evidence:**
+
+  ```zig
+  // errors.zig:107 -- raw argv embedded into message; errors.zig:50 writes it raw:
+  const message = try std.fmt.allocPrint(allocator, "'{s}' is not a command", .{input});
+  // errors.zig:50
+  try writer.print("{s}\n", .{self.message});
+  ```
+
+  `stripAnsi` (`color.zig:146`) exists but is never applied on any output path, and strips only CSI `...m` (not OSC / bare ESC / `\x1b[2J`).
+- **Broadening (vs. original scan candidate NS-056 / appsec F-01):** the unknown-command path makes this **live by default** -- the default `run` flow echoes attacker-chosen argv (including ESC) to the TTY without any consumer needing to build a command tree from untrusted metadata. Scan candidate NS-056 (table/progress only) and appsec F-01 are merged here.
+- **Fix guidance:** Apply a `stripControl` filter (drop `0x00-0x08, 0x0B-0x1F, 0x7F`; keep `\n`,`\t`) to all user-string `{s}` TTY emissions gated on `is_tty`, or export a documented `sanitizeForTerminal()` plus a SECURITY.md trust-contract statement.
+- **Acceptance criteria:** No C0 control byte (except `\n`/`\t`) appears in rendered help/table/progress/prompt/unknown-command output when the input contained ESC. Regression test with `\x1b[2J` and `\x1b]0;...\x07`.
+- **Issue:** [#128](https://gitlab.com/devnw/zig/cli/-/issues/128)
+- **SLA:** 90 days (2026-09-09)
+
+### NS-058: ProgressBar.init u16 underflow panic (DoS) when terminal width < 20 [Low-Medium] -- OPEN
+
+- **Status:** **Open**
+- **Risk Level:** Low-Medium (tracked Low)
+- **Risk Score:** 24 (Impact: 2, Likelihood: 3)
+- **CWE:** CWE-191 (Integer Underflow) / CWE-190
+- **OWASP:** A05:2021 (Mishandling of Exceptional Conditions)
+- **Exploit Surface:** Local (terminal geometry).
+- **Confidence:** `confidence::confirmed`
+- **Affected files:** `src/term/progress.zig:179`; `src/term/tty.zig:18,40-45,78`
+- **Evidence:**
+
+  ```zig
+  // progress.zig:179 -- subtraction evaluated before @min; u16 underflow for width < 20:
+  .width = @min(term_info.width - 20, 50),
+  ```
+
+  `term_info.width` is `u16` from the raw `ioctl(TIOCGWINSZ)` value (`tty.zig:78`). Debug/ReleaseSafe panic (DoS); ReleaseFast wraps to a huge value then clamps to 50 (silently wrong). Public API (`parallel.zig:42`).
+- **Fix guidance:** `.width = @min(term_info.width -| 20, 50)` (saturating) or `@min(@max(term_info.width, 21) - 20, 50)`. Regression test with stubbed `term_info.width = 5`.
+- **Acceptance criteria:** No panic for any `term_info.width` value; test with width 5 and 0.
+- **Issue:** [#129](https://gitlab.com/devnw/zig/cli/-/issues/129)
+- **SLA:** 180 days (2026-12-08)
+- **Origin:** Adversarial review R-01 (missed by both prior reviews).
+
+### NS-059: Windows password() echoes input when GetConsoleMode fails [Medium] -- OPEN
+
+- **Status:** **Open**
+- **Risk Level:** Medium
+- **Risk Score:** 32 (Impact: 4, Likelihood: 2)
+- **CWE:** CWE-549 (Missing Password Field Masking) / CWE-200
+- **OWASP:** A07:2021 Identification and Authentication Failures
+- **Exploit Surface:** Local (Windows; requires GetConsoleMode failure + screen visibility).
+- **Confidence:** `confidence::confirmed`
+- **Affected files:** `src/prompt.zig:237-240` (GetConsoleMode-failed branch), `src/prompt.zig:262` (`passwordInternal`, no echo suppression)
+- **Evidence:**
+
+  ```zig
+  // prompt.zig:237-240 -- failure branch falls back to an echoed read:
+  } else {
+      // GetConsoleMode failed -- fall back to simple read
+      return passwordInternal(stdin_r, allocator);
+  }
+  ```
+
+  `passwordInternal` (`prompt.zig:262`) does a plain `readLineAlloc` with no echo suppression. The success branch above clears `ENABLE_ECHO_INPUT`; this branch does not. Note: this is distinct from NS-047 (Closed), which addressed the *primary* Windows echo path; NS-059 is the *fallback* path on GetConsoleMode failure.
+- **Fix guidance:** On GetConsoleMode failure, do not silently fall back to an echoed read -- return an explicit error or use a no-echo read path (`_getch()`/`ReadConsole` with echo cleared).
+- **Acceptance criteria:** Interactive Windows console with GetConsoleMode failure does not echo typed password characters.
+- **Issue:** [#130](https://gitlab.com/devnw/zig/cli/-/issues/130)
+- **Cross-ref:** Quality finding NQ-NEW-015 (same root cause).
+- **SLA:** 90 days (2026-09-09)
+
+### NS-060: Markdown headings/prose/code-fences emitted raw [Low] -- OPEN
+
+- **Status:** **Open**
+- **Risk Level:** Low
+- **Risk Score:** 16 (Impact: 2, Likelihood: 2)
+- **CWE:** CWE-79 (XSS) / CWE-116 (Improper Encoding or Escaping)
+- **OWASP:** A05:2021 Injection
+- **Exploit Surface:** Indirect (downstream HTML renderer).
+- **Confidence:** `confidence::confirmed`
+- **Affected files:** `src/cli/help.zig:807,810,823,830,882`
+- **Evidence:**
+
+  ```zig
+  help.zig:807  try w.print("# {s}\n\n", .{cmd.name});        // H1 -- RAW
+  help.zig:830  try w.print("```bash\n{s}\n```\n\n", .{example}); // fence -- RAW
+  ```
+
+  `writeMarkdownEscaped` (`help.zig:781`) is applied only to table cells. This is the open remediation for the **NS-020 partial false-resolution** (NS-020 claimed "table cells and headings"). Covers quality findings NQ-NEW-007/008.
+- **Fix guidance:** HTML-escape `<`/`>` in headings/prose, neutralize leading `#`, sanitize code-fence content against embedded ```` ``` ````+newline. Update NS-020 resolution note (done below).
+- **Acceptance criteria:** `cmd.long_help = "<script>x</script>"` produces no raw `<script>`; `example = "a\n```\nb"` does not prematurely close the fence.
+- **Issue:** [#131](https://gitlab.com/devnw/zig/cli/-/issues/131)
+- **SLA:** 180 days (2026-12-08)
+
+### NS-061: Completion generator hardening (PowerShell / zsh / fish) [Low] -- OPEN
+
+- **Status:** **Open**
+- **Risk Level:** Low
+- **Risk Score:** 12 (Impact: 3, Likelihood: 1)
+- **CWE:** CWE-94 / CWE-78 (Injection), CWE-787 (Out-of-bounds Write)
+- **OWASP:** A05:2021 Injection / A10 (Mishandling of Exceptional Conditions)
+- **Exploit Surface:** Supply chain (dev-controlled names in common case).
+- **Confidence:** `confidence::confirmed`
+- **Affected files:** `src/cli/completion/powershell.zig:33`; `src/cli/completion/zsh.zig:174,218,219`; `src/cli/completion/fish.zig:170-177`
+- **Evidence:** Groups appsec **F-04** (PowerShell `-CommandName '{cmd.name}'` raw -- the lone unescaped single-quoted PS string), **F-05** (zsh case labels + function identifiers raw; zsh has **no** sanitizer while bash has `sanitizeBashIdentifier`/`escapeBashCasePattern`), and **F-06** (fish `new_path[16]` write with no bounds check at depth 16 -> panic in Debug/ReleaseSafe, OOB stack write in ReleaseFast).
+
+  ```zig
+  // powershell.zig:33 (F-04)
+  try w.print("Register-ArgumentCompleter -Native -CommandName '{s}' -ScriptBlock {{\n", .{cmd.name});
+  // fish.zig:176 (F-06) -- no bounds check before write:
+  new_path[new_path_len] = subcmd.name;
+  ```
+
+  Note F-06 vs NS-006 (Won't Do): NS-006 accepted the 16-level *depth limit*; F-06 is the *missing bounds check*, a distinct robustness defect.
+- **Fix guidance:** F-04 wrap with `escapePowerShellString`; F-05 add a zsh identifier sanitizer + case-label escaping; F-06 `if (new_path_len >= new_path.len) return error.TooDeep;`.
+- **Acceptance criteria:** F-04 `cmd.name="a'b"` -> `'a''b'`; F-05 `subcmd.name="a;b"` -> no `;` in case label/function name; F-06 17-level tree -> graceful error.
+- **Issue:** [#132](https://gitlab.com/devnw/zig/cli/-/issues/132)
+- **SLA:** 180 days (2026-12-08)
+
+### NS-062: UTF-8 codepoint splitting / byte-vs-column width math [Low] -- OPEN
+
+- **Status:** **Open**
+- **Risk Level:** Low
+- **Risk Score:** 12 (Impact: 1, Likelihood: 3)
+- **CWE:** CWE-697 (Incorrect Comparison) / CWE-1284
+- **OWASP:** A04:2021 Insecure Design (data integrity)
+- **Exploit Surface:** Local (output correctness; latent integrity issue for downstream UTF-8-validating consumers).
+- **Confidence:** `confidence::confirmed`
+- **Affected files:** `src/util/text.zig:107,110` (and `center`/`padLeft`/`padRight`/`wordWrap`); `src/term/table.zig:223-224,245,249`
+- **Evidence:**
+
+  ```zig
+  // util/text.zig:107,110 -- byte-offset slices can split a codepoint:
+  if (max_len <= 3) return text[0..max_len];
+  try result.appendSlice(allocator, text[0 .. max_len - 3]);
+  // table.zig:224 / 245 -- byte slice of multibyte cell; :249 treats bytes as columns
+  display_cell = cell[0..col.max_width];
+  ```
+
+  In-bounds (guarded by early returns / `cell.len > max_width`), so not memory corruption -- a correctness/robustness defect (invalid UTF-8, mis-aligned columns for CJK/emoji).
+- **Fix guidance:** Snap slice boundaries to UTF-8 codepoint starts (`std.unicode.Utf8View` / `utf8ValidateSlice`); compute display width via codepoint/wcwidth, not `.len`.
+- **Acceptance criteria:** Truncating/aligning multibyte input yields valid UTF-8 (`utf8ValidateSlice`).
+- **Issue:** [#133](https://gitlab.com/devnw/zig/cli/-/issues/133)
+- **SLA:** 180 days (2026-12-08)
+- **Origin:** Adversarial review R-02 (missed by both prior reviews).
+
+---
+
+## Status Corrections -- codepros:audit iteration 1 (2026-06-11)
+
+### NS-016: Secret flag values "zeroed" in Context.deinit -- CORRECTED to FALSE-RESOLVED
+
+- **Previous status:** Closed / Implemented (2026-03-24)
+- **Corrected status:** **False-Resolved** (2026-06-11)
+- **Risk Level:** Low | **Risk Score:** 16 (unchanged)
+- **CWE:** CWE-316 / A02:2021
+- **Why corrected:** The "zeroing" reassigns the 16-byte slice header (`command.zig:199`: `val.* = FlagValue{ .string = "" }`) but the pointed-to bytes are **OS-owned argv/environ** -- never duplicated (`parser.zig:386`: `.string => FlagValue{ .string = value }`, no `dupe`/`alloc`). The bytes are untouched; the original NS-016 acceptance criterion ("inspect the memory region... verify the value is overwritten") is **not met**.
+- **Real-world severity remains Low:** the secret *policy* keeps genuine secrets out of string flags, and argv/environ are OS-visible regardless. The defect is a **false sense of protection**, plus the overstated doc comment at `command.zig:44`.
+- **Remediation options:** (a) correct the `command.zig:44` doc comment to state argv/environ-backed values cannot be scrubbed in `deinit`, and mark NS-016 Won't-Fix-with-rationale; or (b) `dupe` secret-flagged values on store and `@memset` the heap copy in `deinit`.
+- **Origin:** appsec F-02 / adversarial review (confirmed).
+
+### NS-020: generateMarkdown escaping -- CORRECTED to PARTIALLY FALSE-RESOLVED
+
+- **Previous status:** Closed / Implemented (2026-03-24)
+- **Corrected status:** **Partially False-Resolved** (2026-06-11)
+- **Risk Level:** Low | **Risk Score:** 16 (unchanged)
+- **CWE:** CWE-79 / CWE-116 / A05:2021
+- **Why corrected:** `writeMarkdownEscaped` (`help.zig:781`) is applied only to **table cells** (`:845,847,854,862,892,894`). Headings, prose, and code-fence content (`help.zig:807,810,823,830,882`) are emitted **raw**. The NS-020 resolution claimed "table cells **and headings**"; the heading/prose/fence paths are raw.
+- **Open remediation tracked as:** **NS-060** ([#131](https://gitlab.com/devnw/zig/cli/-/issues/131)).
+- **Origin:** appsec F-03 / adversarial review (confirmed).
+
+### NS-057: signal runCleanupCallbacks reads callback_count without mutex -- REFUTED / WON'T DO
+
+- **Status:** **Won't Do** (refuted as a vulnerability, 2026-06-11)
+- **Risk Level:** Info | **Risk Score:** 5
+- **CWE:** CWE-362 (Race Condition) -- not exploitable
+- **Affected files:** `src/signal.zig:156-167` (`onCleanup`), `:315-325` (`runCleanupCallbacks`)
+- **Why refuted:** `onCleanup` writes `cleanup_callbacks[count]` **then** `callback_count.store(count + 1, .release)` under the mutex; `runCleanupCallbacks` does `callback_count.load(.acquire)` **then** iterates `cleanup_callbacks[0..count]`. The `.release`/`.acquire` pairing establishes a happens-before edge: any callback counted by the load is fully written and visible. The array is append-only; a concurrent registration completing after the load is merely deferred to the next `pollSignals()` -- a missed-this-cycle, not a torn read or OOB. No uninitialized slot can be invoked.
+- **Resolution:** Architecturally safe. The scan candidate NS-057's own "what would confirm" condition (acquire/release pairing present) is satisfied. Recorded as Won't Do; no code change required.
+- **Origin:** scan candidate NS-057 / adversarial review adjudication.
+
+---
+
 ## Closed Findings -- Phase 3 Follow-up (2026-03-25)
 
 ### NS-047: Windows password echo not suppressed [Medium] -- CLOSED
@@ -99,6 +343,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 - **Confidence:** `confidence::confirmed` -- code inspection shows Windows path at `prompt.zig:179-183` falls back to `inputSimple()` without disabling echo.
 - **Affected files:** `src/prompt.zig:179-183`
 - **Evidence:**
+
   ```zig
   // prompt.zig:179-183 -- Windows fallback, no echo suppression:
   } else {
@@ -107,6 +352,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
       return inputSimple(stdin, allocator);
   }
   ```
+
 - **Fix guidance:** Use Windows Console API (`SetConsoleMode` to clear `ENABLE_ECHO_INPUT`) or `_getch()` for character-at-a-time input without echo.
 - **Acceptance criteria:** Windows password input does not echo characters. Console mode restored on exit.
 - **Issue:** [#111](https://gitlab.com/devnw/zig/cli/-/issues/111) (confidential)
@@ -124,6 +370,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 - **Confidence:** `confidence::confirmed` -- code inspection shows `escapeFishSingleQuote` (fish.zig:17-43) only escapes `'` and `\`. NUL, newline, CR pass through. Bash (NS-008) and zsh (NS-009) were fixed; fish was not.
 - **Affected files:** `src/cli/completion/fish.zig:17-43`
 - **Evidence:**
+
   ```zig
   // fish.zig:20-26 -- only these chars are checked:
   switch (c) {
@@ -131,6 +378,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
       else => {},  // NUL, newline, CR pass through
   }
   ```
+
 - **Fix guidance:** Add `0x00`, `\n`, `\r` to the filter. Strip NUL bytes. Escape or strip newline/CR.
 - **Acceptance criteria:** NUL/newline/CR neutralized. Unit test confirms. Parity with bash/zsh.
 - **Issue:** [#115](https://gitlab.com/devnw/zig/cli/-/issues/115) (confidential)
@@ -147,6 +395,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 - **Confidence:** `confidence::confirmed` -- code inspection shows `escapePowerShellString` (powershell.zig:174-194) only doubles single quotes. NUL could truncate string; newline could break syntax.
 - **Affected files:** `src/cli/completion/powershell.zig:174-194`
 - **Evidence:**
+
   ```zig
   // powershell.zig:176-181 -- only single quote checked:
   for (s) |c| {
@@ -154,6 +403,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
   }
   // NUL, newline, CR not filtered
   ```
+
 - **Fix guidance:** Add NUL/newline/CR filtering. Strip NUL. Escape or strip newline/CR.
 - **Acceptance criteria:** NUL/newline/CR neutralized. Unit test confirms. Parity with bash/zsh.
 - **Issue:** [#117](https://gitlab.com/devnw/zig/cli/-/issues/117) (confidential)
@@ -170,12 +420,14 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 - **Confidence:** `confidence::confirmed` -- code inspection shows `applyEnvDefaults` (parser.zig:508-544) only iterates `self.root.flags`. Subcommand flags with `env` names are never checked.
 - **Affected files:** `src/cli/parser.zig:508-544`
 - **Evidence:**
+
   ```zig
   // parser.zig:522 -- only root flags iterated:
   for (self.root.flags) |flag| {
       if (flag.env) |env_name| { ... }
   }
   ```
+
 - **Fix guidance:** After subcommand resolution, iterate the resolved command's flags for env defaults.
 - **Acceptance criteria:** Subcommand env flags populated from environment. Test confirms.
 - **Issue:** [#118](https://gitlab.com/devnw/zig/cli/-/issues/118)
@@ -193,12 +445,14 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 - **Confidence:** `confidence::confirmed` -- code inspection shows `buildCondition` and `buildSubcommandCondition` (fish.zig:181-237) use raw `{s}` interpolation for path elements and `subcmd.name`. Partial regression of GAP-S018/NS-010 pattern.
 - **Affected files:** `src/cli/completion/fish.zig:181-237`
 - **Evidence:**
+
   ```zig
   // fish.zig:193 -- unescaped path element:
   w.print(" {s}", .{p}) catch return "";
   // fish.zig:201 -- unescaped subcmd.name:
   w.print(" {s}", .{subcmd.name}) catch return "";
   ```
+
 - **Fix guidance:** Escape names via `escapeFishSingleQuote()` and wrap in single quotes.
 - **Acceptance criteria:** Names in fish conditions are escaped. Test confirms metacharacter safety.
 - **Issue:** [#119](https://gitlab.com/devnw/zig/cli/-/issues/119)
@@ -215,6 +469,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 - **Confidence:** `confidence::confirmed` -- code inspection shows `sanitizeBashIdentifier` (bash.zig:86-99) uses a `struct { var buf: [256]u8 }` static buffer. Returned slice points into shared static memory.
 - **Affected files:** `src/cli/completion/bash.zig:86-99`
 - **Evidence:**
+
   ```zig
   // bash.zig:87-88 -- static mutable buffer:
   const S = struct {
@@ -223,6 +478,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
   // bash.zig:98 -- returns slice into static buffer:
   return S.buf[0..len];
   ```
+
 - **Fix guidance:** Accept an allocator and return an allocated slice, consistent with other escape functions.
 - **Acceptance criteria:** No static mutable buffer. Concurrent calls produce correct results.
 - **Issue:** [#120](https://gitlab.com/devnw/zig/cli/-/issues/120)
@@ -239,6 +495,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 - **Confidence:** `confidence::confirmed` -- code inspection shows `writeMarkdownEscaped` (help.zig:757-771) only escapes `|`. Backticks and angle brackets pass through.
 - **Affected files:** `src/cli/help.zig:757-771`
 - **Evidence:**
+
   ```zig
   // help.zig:762 -- only pipe characters:
   if (c == '|') {
@@ -246,6 +503,7 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
   }
   // Backticks, <, > not handled
   ```
+
 - **Fix guidance:** Escape backticks as `` \` `` and angle brackets as `&lt;`/`&gt;`.
 - **Acceptance criteria:** Backticks and angle brackets escaped. Unit test confirms.
 - **Issue:** [#121](https://gitlab.com/devnw/zig/cli/-/issues/121)
@@ -262,11 +520,13 @@ Previous 40 closed findings remain verified. 1 Info finding (NS-055) tracked as 
 - **Confidence:** `confidence::confirmed` -- code inspection shows `@intCast` on signed subtraction result at `tty.zig:122-123`. If `Right < Left`, result is negative and `@intCast` to `u16` panics.
 - **Affected files:** `src/term/tty.zig:122-123`
 - **Evidence:**
+
   ```zig
   // tty.zig:122-123 -- potentially negative subtraction cast to u16:
   const width = @as(u16, @intCast(csbi.srWindow.Right - csbi.srWindow.Left + 1));
   const height = @as(u16, @intCast(csbi.srWindow.Bottom - csbi.srWindow.Top + 1));
   ```
+
 - **Fix guidance:** Check for negative result before casting; return `null` if negative.
 - **Acceptance criteria:** Negative dimensions return `null` instead of panicking.
 - **Issue:** [#122](https://gitlab.com/devnw/zig/cli/-/issues/122)
@@ -514,6 +774,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `escapeBashDoubleQuote` (bash.zig:17-44) only escapes `$`, `` ` ``, `"`, `\`, `!`. NUL bytes (`\x00`) and newlines (`\n`) pass through unfiltered.
 - **Affected files:** `src/cli/completion/bash.zig:17-44`
 - **Evidence:**
+
   ```zig
   // bash.zig:20-28 -- only these chars are checked:
   switch (c) {
@@ -521,6 +782,7 @@ with 0 memory leaks on 2026-03-24.
       else => {},
   }
   ```
+
 - **Attack scenario:** An attacker who controls a command name, flag name, or help string containing a newline could break out of the current bash statement context. A NUL byte could cause early string termination in some shells.
 - **Fix guidance:** Add `0x00` (NUL) and `\n` (newline) to the escape character set. NUL bytes should be stripped entirely. Newlines should be escaped as `\\n` or stripped.
 - **Acceptance criteria:** `escapeBashDoubleQuote` strips NUL bytes and escapes or strips newline characters. Unit test confirms NUL and newline are neutralized.
@@ -539,6 +801,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `escapeZshDoubleQuote` (zsh.zig:42-68) only escapes `$`, `` ` ``, `"`, `\`. NUL and newline bytes pass through.
 - **Affected files:** `src/cli/completion/zsh.zig:42-68`
 - **Evidence:**
+
   ```zig
   // zsh.zig:46-50 -- only these chars are checked:
   switch (c) {
@@ -546,6 +809,7 @@ with 0 memory leaks on 2026-03-24.
       else => {},
   }
   ```
+
 - **Attack scenario:** Same as NS-008 but targeting zsh completion scripts. A newline in a value string could inject arbitrary zsh commands.
 - **Fix guidance:** Add NUL and newline filtering to `escapeZshDoubleQuote` and `escapeZshSingleQuote`. Strip NUL bytes entirely. Escape or strip newlines.
 - **Acceptance criteria:** Both zsh escape functions strip NUL bytes and neutralize newlines. Unit tests confirm.
@@ -564,6 +828,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `root_name`, `cmd.name`, and `flag.name` are written directly into fish shell syntax at multiple locations without escaping. Only descriptions are escaped.
 - **Affected files:** `src/cli/completion/fish.zig:58,86,100,107,147,152`
 - **Evidence:**
+
   ```zig
   // fish.zig:58 -- root_name used directly:
   try w.print("complete -c {s} -f\n\n", .{cmd.name});
@@ -572,6 +837,7 @@ with 0 memory leaks on 2026-03-24.
   // fish.zig:152 -- subcmd.name in -a without quotes:
   try w.print(" -a {s} -d '{s}'\n", .{ subcmd.name, esc_summary });
   ```
+
 - **Attack scenario:** A library user with a command name containing shell metacharacters (e.g., `my;cmd`) would produce fish completion output that executes arbitrary code when sourced.
 - **Fix guidance:** Escape `root_name`, `cmd.name`, `flag.name`, and `subcmd.name` with `escapeFishSingleQuote()` and wrap in single quotes, or validate that names contain only safe characters (alphanumeric, `-`, `_`).
 - **Acceptance criteria:** All command/flag/subcommand names in fish output are either escaped+quoted or validated as safe shell identifiers. Unit test confirms metacharacters in names do not produce injectable output.
@@ -590,6 +856,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `writeRoffEscaped` (help.zig:549-571) only checks for leading `.`/`'` at `i==0`, not after newlines. A newline followed by `.` or `'` would start a new roff directive.
 - **Affected files:** `src/cli/help.zig:549-571`
 - **Evidence:**
+
   ```zig
   // help.zig:554-559 -- only checks i==0:
   '.' => {
@@ -600,6 +867,7 @@ with 0 memory leaks on 2026-03-24.
       }
   },
   ```
+
 - **Attack scenario:** A help string or description containing `\n.TH` or `\n.SH` would inject roff directives into the generated man page, potentially altering its rendering or injecting misleading content.
 - **Fix guidance:** Track whether the previous character was a newline (or split on `\n` and escape the start of each line). Escape `.` and `'` at the start of every line, not just the start of the entire string.
 - **Acceptance criteria:** `writeRoffEscaped` escapes `.` and `'` at the start of every line within the string. Unit test confirms `"line1\n.TH"` produces `"line1\n\\&.TH"`.
@@ -618,6 +886,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `printVersionImpl` (help.zig:657) interpolates `cmd.name` and `cmd.version` directly into a JSON template without using `writeJsonEscapedString`.
 - **Affected files:** `src/cli/help.zig:657`
 - **Evidence:**
+
   ```zig
   // help.zig:657 -- direct interpolation, no JSON escaping:
   try w.print("{{\"name\":\"{s}\",\"version\":\"{s}\"}}\n", .{
@@ -625,6 +894,7 @@ with 0 memory leaks on 2026-03-24.
       if (cmd.version.len > 0) cmd.version else "0.0.0",
   });
   ```
+
 - **Attack scenario:** A library user whose command name or version contains `"` or `\` would produce malformed JSON. Downstream tools parsing this JSON could crash or misinterpret the data. Note: `writeJsonEscapedString` was added for `printJsonHelp` (GAP-0012) but was not applied to `printVersionImpl`.
 - **Fix guidance:** Use the existing `writeJsonEscapedString` helper for `cmd.name` and `cmd.version` in `printVersionImpl`.
 - **Acceptance criteria:** `printVersionImpl` uses `writeJsonEscapedString` for all string values. Unit test confirms a version string containing `"` produces valid JSON.
@@ -643,6 +913,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `posixSignalHandler` (signal.zig:161-177) calls `runCleanupCallbacks()` (signal.zig:262-271), which iterates user-registered callbacks directly in signal handler context. User callbacks have no async-signal-safety constraint enforced at compile time.
 - **Affected files:** `src/signal.zig:161-177,262-271`
 - **Evidence:**
+
   ```zig
   // signal.zig:175-176 -- called from signal handler:
   // Run cleanup callbacks
@@ -658,6 +929,7 @@ with 0 memory leaks on 2026-03-24.
       }
   }
   ```
+
 - **Attack scenario:** A user registers a cleanup callback that performs heap allocation, file I/O, or mutex locking. A signal arrives during the same operation, causing the callback to deadlock or corrupt heap state. This is undefined behavior per POSIX.
 - **Fix guidance:** Use a flag-and-poll pattern: have the signal handler set an atomic flag, and run cleanup callbacks from normal (non-signal) context. Alternatively, document the strict requirement and add a compile-time or runtime assertion that callbacks are async-signal-safe. Note that GAP-S019 added documentation but the runtime behavior remains unsafe.
 - **Acceptance criteria:** Either (a) cleanup callbacks are no longer invoked directly from signal handler context, or (b) the API enforces and documents that only async-signal-safe operations are permitted, with runtime validation where possible.
@@ -676,6 +948,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::suspected` -- `cmd.name` is typically developer-controlled at compile time, but the library API does not validate it. Would confirm by testing with a cmd.name containing shell metacharacters.
 - **Affected files:** `src/cli/completion/bash.zig:94,106,112`
 - **Evidence:**
+
   ```zig
   // bash.zig:94 -- cmd.name in shell comment (low risk):
   try w.print("# Bash completion for {s}\n", .{cmd.name});
@@ -684,6 +957,7 @@ with 0 memory leaks on 2026-03-24.
   // bash.zig:112 -- cmd.name in complete command:
   try w.print("complete -F _{s} {s}\n", .{ cmd.name, cmd.name });
   ```
+
 - **Attack scenario:** A library consumer passes a command name containing shell metacharacters. The generated bash completion script would contain injectable function definitions. Likelihood is low because command names are typically hardcoded.
 - **Fix guidance:** Validate `cmd.name` contains only `[a-zA-Z0-9_-]` before using it in shell syntax, or escape it appropriately.
 - **Acceptance criteria:** Command names used in bash function definitions and `complete` commands are validated or escaped. Test confirms a name with `;` is either rejected or neutralized.
@@ -702,12 +976,14 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `flag.completions` values at powershell.zig:161 are interpolated into single-quoted PowerShell strings without escaping via `escapePowerShellString`.
 - **Affected files:** `src/cli/completion/powershell.zig:161`
 - **Evidence:**
+
   ```zig
   // powershell.zig:161 -- value written directly:
   try w.print("{s}    [CompletionResult]::new('{s}', '{s}', ...", .{
       indent, value, value, flag.name,
   });
   ```
+
 - **Attack scenario:** A flag completion value containing a single quote (`'`) could break out of the PowerShell string literal and inject arbitrary PowerShell code.
 - **Fix guidance:** Apply `escapePowerShellString()` to `value` before interpolation.
 - **Acceptance criteria:** All `flag.completions` values in PowerShell output are escaped via `escapePowerShellString`. Test confirms a value containing `'` produces valid PowerShell.
@@ -715,9 +991,14 @@ with 0 memory leaks on 2026-03-24.
 - **Resolution:** Applied `escapePowerShellString()` to `flag.name` and `flag.completions` values in `writePowerShellFlag`. Single quotes in values are now doubled as `''`.
 - **Resolved:** 2026-03-24
 
-### NS-016: Secret flag values not zeroed from memory after use [Low] -- CLOSED
+### NS-016: Secret flag values not zeroed from memory after use [Low] -- FALSE-RESOLVED (corrected 2026-06-11)
 
-- **Status:** Closed / Implemented
+> **STATUS CORRECTION (2026-06-11):** Reassigning the slice header does NOT scrub the
+> OS-owned argv/environ bytes. Status changed from Closed to **False-Resolved**. See the
+> "Status Corrections -- codepros:audit iteration 1" section above. The resolution text below
+> reflects the original (incorrect) 2026-03-24 determination and is retained for history.
+
+- **Status:** ~~Closed / Implemented~~ -> **False-Resolved**
 - **Risk Level:** Low
 - **Risk Score:** 16 (Impact: 2, Likelihood: 2)
 - **CWE:** CWE-316 (Cleartext Storage of Sensitive Information in Memory)
@@ -726,6 +1007,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::suspected` -- `Context.deinit()` (command.zig:134-146) frees flag storage but does not zero secret-flagged values before freeing. Would confirm by inspecting freed memory after `deinit()`.
 - **Affected files:** `src/cli/command.zig:134-146`
 - **Evidence:**
+
   ```zig
   // command.zig:134-146 -- no zeroing of secret values:
   pub fn deinit(self: *Context) void {
@@ -740,6 +1022,7 @@ with 0 memory leaks on 2026-03-24.
       // ... no @memset of secret flag values before freeing
   }
   ```
+
 - **Attack scenario:** A process uses secret-flagged CLI arguments (passwords, tokens). After `Context.deinit()`, the secret values remain in freed heap memory and could be read by a memory dump, core dump, or heap spray attack.
 - **Fix guidance:** In `deinit()`, iterate flags and check if the corresponding `FlagSpec` has `secret != .none`. For those flags, zero the string value before freeing. This mirrors the pattern used in `prompt.zig` for password buffers.
 - **Acceptance criteria:** `Context.deinit()` zeros all flag values where the corresponding `FlagSpec.secret` is set. Unit test confirms secret flag memory is zeroed after deinit.
@@ -758,6 +1041,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `pager.zig:58-80` splits the PAGER command on whitespace using `tokenizeAny`. This means `PAGER="less -R"` works, but `PAGER='my pager' --opt` does not (the space inside quotes is treated as a delimiter).
 - **Affected files:** `src/term/pager.zig:58-80`
 - **Evidence:**
+
   ```zig
   // pager.zig:63-68 -- naive whitespace split:
   var iter = std.mem.tokenizeAny(u8, pager_cmd, " \t");
@@ -767,6 +1051,7 @@ with 0 memory leaks on 2026-03-24.
       argv_len += 1;
   }
   ```
+
 - **Attack scenario:** A user sets `PAGER="/usr/local/bin/my pager"` (path with space). The pager fails to launch because the path is split into two tokens. This is a usability issue rather than a security vulnerability.
 - **Fix guidance:** Implement basic shell-style quote parsing (handle `'...'` and `"..."` segments) or document the limitation.
 - **Acceptance criteria:** Either (a) pager command parsing handles quoted arguments, or (b) the limitation is documented in a doc comment.
@@ -785,10 +1070,12 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `writeFileAtomic` (fs.zig:54-79) creates the temp file via `dir.createFile(temp_path, .{})` with default options. Zig's `createFile` uses mode 0o666 masked by umask. With a permissive umask (e.g., 0o000), the temp file is world-readable/writable.
 - **Affected files:** `src/util/fs.zig:54-79`
 - **Evidence:**
+
   ```zig
   // fs.zig:62 -- default file creation options:
   const temp_file = dir.createFile(temp_path, .{}) catch |err| { ... };
   ```
+
 - **Attack scenario:** On a shared system with permissive umask, the temp file is briefly world-readable before being renamed to the target. An attacker with filesystem access could read or replace the temp file contents during this window.
 - **Fix guidance:** Set explicit file mode in `createFile` options: `.{ .mode = 0o600 }` to ensure owner-only access regardless of umask.
 - **Acceptance criteria:** `writeFileAtomic` creates temp files with mode 0o600. Test confirms temp file permissions.
@@ -807,6 +1094,7 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::suspected` -- code inspection shows `active_config` (signal.zig:63) is a plain global variable written at `installWindows` (signal.zig:194) and read by `windowsCtrlHandler` (signal.zig:243). No synchronization protects this access. Would confirm by testing concurrent `install()` calls on Windows.
 - **Affected files:** `src/signal.zig:63,194`
 - **Evidence:**
+
   ```zig
   // signal.zig:63 -- plain global, no synchronization:
   var active_config: Config = .{};
@@ -815,6 +1103,7 @@ with 0 memory leaks on 2026-03-24.
   // signal.zig:243 -- read in handler without lock:
   if (!active_config.handle_interrupt) return 0;
   ```
+
 - **Attack scenario:** If `install()` is called from one thread while a console control event fires on another, the handler could read a partially-written `active_config`, leading to incorrect signal handling (e.g., not running cleanup when it should, or vice versa).
 - **Fix guidance:** Make `active_config` an atomic or protect it with the existing `mutex`. Alternatively, since `Config` is small (two bools), use an atomic bitfield.
 - **Acceptance criteria:** `active_config` reads and writes are synchronized. Unit test or code review confirms no unsynchronized access.
@@ -822,9 +1111,14 @@ with 0 memory leaks on 2026-03-24.
 - **Resolution:** Replaced plain `active_config: Config` with two `std.atomic.Value(bool)` fields: `win_handle_interrupt` and `win_handle_terminate`. `installWindows` stores with `.release` ordering; `windowsCtrlHandler` loads with `.acquire` ordering.
 - **Resolved:** 2026-03-24
 
-### NS-020: generateMarkdown has no Markdown escaping [Low] -- CLOSED
+### NS-020: generateMarkdown has no Markdown escaping [Low] -- PARTIALLY FALSE-RESOLVED (corrected 2026-06-11)
 
-- **Status:** Closed / Implemented
+> **STATUS CORRECTION (2026-06-11):** Only table cells are escaped; headings, prose, and
+> code-fence content (`help.zig:807,810,823,830,882`) are emitted raw. Status changed from
+> Closed to **Partially False-Resolved**. Open remediation tracked as **NS-060** ([#131](https://gitlab.com/devnw/zig/cli/-/issues/131)).
+> The resolution text below reflects the original (partial) 2026-03-24 determination.
+
+- **Status:** ~~Closed / Implemented~~ -> **Partially False-Resolved**
 - **Risk Level:** Low
 - **Risk Score:** 16 (Impact: 2, Likelihood: 2)
 - **CWE:** CWE-79 (Improper Neutralization of Input During Web Page Generation)
@@ -833,12 +1127,14 @@ with 0 memory leaks on 2026-03-24.
 - **Confidence:** `confidence::confirmed` -- code inspection shows `generateMarkdownCommand` (help.zig:681-776) writes `cmd.name`, `cmd.summary`, `cmd.long_help`, `flag.help`, `flag.default_str`, `flag.env`, `subcmd.name`, and `subcmd.summary` directly into Markdown table cells and headings without escaping pipe characters (`|`), backticks, or HTML.
 - **Affected files:** `src/cli/help.zig:681-776`
 - **Evidence:**
+
   ```zig
   // help.zig:723 -- flag.help in table cell, no escaping:
   try w.print("`--{s}` | {s}", .{ flag.name, flag.help });
   // help.zig:763 -- subcmd.summary in table cell:
   try w.print("| `{s}` | {s} |\n", .{ subcmd.name, subcmd.summary });
   ```
+
 - **Attack scenario:** A command with `flag.help` containing `|` would break the Markdown table structure. A value containing raw HTML (e.g., `<script>`) could lead to XSS if the generated Markdown is rendered in a web context without sanitization.
 - **Fix guidance:** Escape pipe characters (`|` -> `\|`), angle brackets (`<` -> `&lt;`), and backticks in Markdown table cells. For headings, escape `#` at start of lines.
 - **Acceptance criteria:** `generateMarkdown` escapes Markdown-significant characters in all user-controlled strings. Test confirms a help string containing `|` and `<script>` produces safe Markdown output.
@@ -877,6 +1173,7 @@ with 0 memory leaks on 2026-03-24.
 - **Risk Score:** 4 (Impact: 1, Likelihood: 1)
 - **Affected files:** `.gitleaks.toml:26-31`
 - **Evidence:**
+
   ```toml
   [[rules]]
   id = "private-key-file"
@@ -884,6 +1181,7 @@ with 0 memory leaks on 2026-03-24.
   regex = '''(?i)(private_key|privkey|id_rsa|id_ed25519)'''
   path = '''\.zig$'''
   ```
+
 - **Reason:** The regex matches any mention of `private_key`, `id_rsa`, etc. in Zig source files, creating false positives from test data, documentation strings, and configuration parsing code. This reduces signal-to-noise ratio in secret scanning but does not create a vulnerability. The rule errs on the side of caution, which is acceptable for a secret detection tool.
 
 ## Informational Findings (Won't Do / Positive)
@@ -991,14 +1289,17 @@ The following Phase 3 findings overlap with existing entries and do not require 
 ## Findings by Area
 
 ### Authentication / Credential Handling
+
 - GAP-0015 (Closed): POSIX password buffer zeroed via defer
 - GAP-S012 (Closed): Windows password buffer zeroed via defer
 - NS-003 (Closed): Heap-allocated password not zeroed on free -- documented caller responsibility
-- **NS-016 (Closed):** Secret flag values zeroed in `Context.deinit()` before HashMap deallocation
-- **NS-047 (Closed):** Windows password echo not suppressed -- falls back to inputSimple() ([#111](https://gitlab.com/devnw/zig/cli/-/issues/111))
+- **NS-016 (False-Resolved):** Secret flag "zeroing" reassigns a slice header, not OS-owned argv/environ bytes
+- **NS-047 (Closed):** Windows password echo not suppressed (primary path) -- falls back to inputSimple() ([#111](https://gitlab.com/devnw/zig/cli/-/issues/111))
 - **NS-050 (Closed):** applyEnvDefaults ignores subcommand flags -- env-based secret delivery fails ([#118](https://gitlab.com/devnw/zig/cli/-/issues/118))
+- **NS-059 (Open):** Windows `password()` echoes input when GetConsoleMode fails (fallback path) ([#130](https://gitlab.com/devnw/zig/cli/-/issues/130))
 
 ### Shell Completion / Injection
+
 - GAP-0008 (Closed): PAGER shell injection -- direct argv exec
 - GAP-0009 (Closed): PowerShell `escapePowerShellString()` -- real escaping
 - GAP-0010 (Closed): PowerShell `escapeRegex()` -- real escaping
@@ -1021,43 +1322,57 @@ The following Phase 3 findings overlap with existing entries and do not require 
 - **NS-049 (Closed):** PowerShell escapePowerShellString does not strip NUL/newline/CR ([#117](https://gitlab.com/devnw/zig/cli/-/issues/117))
 - **NS-051 (Closed):** Fish buildCondition emits unescaped command names ([#119](https://gitlab.com/devnw/zig/cli/-/issues/119))
 - **NS-052 (Closed):** sanitizeBashIdentifier static mutable buffer ([#120](https://gitlab.com/devnw/zig/cli/-/issues/120))
+- **NS-061 (Open):** Completion generator hardening -- PowerShell `-CommandName`, zsh case/identifier, fish [16] OOB ([#132](https://gitlab.com/devnw/zig/cli/-/issues/132))
 
 ### Input Validation / Encoding
+
 - GAP-0012 (Closed): JSON help output -- `writeJsonEscapedString` added
 - GAP-0013 (Closed): Man page roff injection -- `writeRoffEscaped` added
 - GAP-0037 (Closed): SecretPolicy bypass -- secret flags skipped in defaults
 - **NS-011 (Closed):** writeRoffEscaped newline handling fixed
 - **NS-012 (Closed):** printVersionImpl JSON output escaped via writeJsonEscapedString
-- **NS-020 (Closed):** Markdown table cell escaping implemented via `writeMarkdownEscaped`
+- **NS-020 (Partially False-Resolved):** Markdown escaping covers table cells only; headings/prose/fences raw -> NS-060
 - **NS-053 (Closed):** writeMarkdownEscaped incomplete -- backticks not escaped ([#121](https://gitlab.com/devnw/zig/cli/-/issues/121))
+- **NS-060 (Open):** Markdown headings/prose/code-fences emitted raw ([#131](https://gitlab.com/devnw/zig/cli/-/issues/131))
 
 ### Memory Safety
+
 - GAP-S014 (Closed): Zsh @memcpy bounds check added
 - NEW-S003 (Closed): Levenshtein buffer overflow -- bounds check added
 - GAP-S022 (Won't Do): Fixed-size buffers silently truncate
 
 ### Filesystem / Path Handling
+
 - GAP-0016 (Closed): Predictable temp file -- random suffix
 - GAP-0017 (Closed): isSafePath() -- expanded blocklist + traversal detection
 - GAP-S018 (Closed): isSafePath symlink limitation documented
 - **NS-018 (Closed):** writeFileAtomic permissions fixed (mode 0o600)
 
 ### Signal Handling / Concurrency
+
 - GAP-0014 (Closed): Signal handler data race -- atomic callback_count
 - GAP-S019 (Closed): Signal cleanup callbacks documented
 - **NS-013 (Closed):** Signal handler async-safety documented
 - **NS-019 (Closed):** Windows active_config replaced with atomic booleans
+- **NS-057 (Won't Do):** runCleanupCallbacks reads callback_count without mutex -- refuted (acquire/release pairing is sound)
 
-### Terminal / TTY
+### Terminal / TTY / Output Encoding
+
 - **NS-054 (Closed):** @intCast on potentially negative terminal dimension on Windows ([#122](https://gitlab.com/devnw/zig/cli/-/issues/122))
+- **NS-056 (Open):** Terminal escape-sequence injection -- no ESC stripping on TTY output (live-by-default via unknown-command path) ([#128](https://gitlab.com/devnw/zig/cli/-/issues/128))
+- **NS-058 (Open):** ProgressBar.init u16 underflow panic (DoS) when terminal width < 20 ([#129](https://gitlab.com/devnw/zig/cli/-/issues/129))
+- **NS-062 (Open):** UTF-8 codepoint splitting / byte-vs-column width math in truncate + table renderer ([#133](https://gitlab.com/devnw/zig/cli/-/issues/133))
 
 ### Pager
+
 - **NS-017 (Closed):** Pager command splitting limitation documented in doc comment
 
 ### Supply Chain / CI/CD
+
 - NS-001 (Won't Do): CI catalog components pinned to mutable git tags
 
 ### Repository Configuration
+
 - NS-007 (Closed): .gitignore now excludes .env files
 - **NS-055 (Won't Do):** Gitleaks private-key-file rule too broad -- false positives from test data
 
@@ -1141,3 +1456,38 @@ The following security practices are observed and remain in effect:
 5. ~~**NS-054** (Low, 15 min) -- Windows terminal dimension cast. One-line fix.~~ **CLOSED**
 6. ~~**NS-052** (Low, 1 hr) -- Bash identifier static buffer. API consistency improvement.~~ **CLOSED**
 7. ~~**NS-050** (Low, 2-4 hrs) -- Subcommand env defaults. Functional gap with security implications. Cross-ref GAP-0090.~~ **CLOSED**
+
+---
+
+## Remediation Roadmap -- codepros:audit iteration 1 (2026-06-11, OPEN)
+
+### Immediate (leaked secrets / active RCE)
+
+None. No leaked secrets (gitleaks clean, working tree + 70-commit history) and no active RCE.
+
+### Quick Wins (< 1 day each)
+
+| Finding | Risk | Effort | Description | Issue |
+|---------|------|--------|-------------|-------|
+| NS-058 | 24 | 15 min | Saturating subtraction `term_info.width -\| 20` in `ProgressBar.init` | [#129](https://gitlab.com/devnw/zig/cli/-/issues/129) |
+| NS-061 (F-04) | 12 | 30 min | Wrap PowerShell `-CommandName` in `escapePowerShellString` | [#132](https://gitlab.com/devnw/zig/cli/-/issues/132) |
+| NS-061 (F-06) | 12 | 30 min | Add fish `new_path` bounds check (`>= 16` -> `error.TooDeep`) | [#132](https://gitlab.com/devnw/zig/cli/-/issues/132) |
+| NS-016 (doc) | 16 | 15 min | Correct `command.zig:44` doc comment re: argv/environ scrubbing | -- |
+
+### Medium Effort (1-5 days)
+
+| Finding | Risk | Effort | Description | Issue |
+|---------|------|--------|-------------|-------|
+| NS-056 | 36 | 1-2 days | Apply `stripControl` on TTY output (errors/help/color/progress/table/prompt) or export `sanitizeForTerminal()` + SECURITY.md trust contract | [#128](https://gitlab.com/devnw/zig/cli/-/issues/128) |
+| NS-059 | 32 | 2-4 hrs | Windows password no-echo on GetConsoleMode failure (error or `_getch`/`ReadConsole`) | [#130](https://gitlab.com/devnw/zig/cli/-/issues/130) |
+| NS-060 | 16 | 2-4 hrs | Context-aware Markdown escaping for headings/prose/fences | [#131](https://gitlab.com/devnw/zig/cli/-/issues/131) |
+| NS-061 (F-05) | 12 | 1-2 hrs | zsh identifier sanitizer + case-label escaping | [#132](https://gitlab.com/devnw/zig/cli/-/issues/132) |
+| NS-062 | 12 | 1-3 days | Snap slice boundaries to UTF-8 codepoint starts; codepoint/wcwidth display width | [#133](https://gitlab.com/devnw/zig/cli/-/issues/133) |
+
+### Recommended Order
+
+1. **NS-056** (Risk 36) -- highest residual; live-by-default via unknown-command path.
+2. **NS-059** (Risk 32) -- credential exposure; pairs with the already-closed NS-047 primary path.
+3. **NS-058** (Risk 24) -- one-line saturating-subtraction fix; removes a geometry-triggered DoS.
+4. **NS-061** (Risk 12) -- three quick completion-generator hardening fixes; extends existing patterns.
+5. **NS-060** (Risk 16) / **NS-062** (Risk 12) -- output-encoding correctness; close the NS-020 gap.

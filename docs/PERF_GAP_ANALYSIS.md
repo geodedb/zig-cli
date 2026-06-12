@@ -1,18 +1,30 @@
 # Performance Gap Analysis
 
-> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 perf-reviewer round 2 findings (NP-019 through NP-028).
+> Auto-generated from full codebase audit (2026-03-24). Updated 2026-03-25 with Phase 3 perf-reviewer round 2 findings (NP-019 through NP-028). Updated 2026-06-11 with codepros:audit iter1 Phase 4 findings (NP-029 through NP-033).
 
-Last updated: 2026-03-25
+Last updated: 2026-06-11
 
 ## Summary
 
 | PerfSeverity | Open | Closed | Won't Do |
 |-------------|------|--------|----------|
 | P1 | 0 | 4 | 1 |
-| P2 | 0 | 19 | 3 |
-| P3 | 0 | 15 | 2 |
-| Info | 0 | 2 | 0 |
-| **Total** | **0** | **40** | **6** |
+| P2 | 2 | 19 | 3 |
+| P3 | 2 | 15 | 2 |
+| Info | 1 | 2 | 0 |
+| **Total** | **5** | **40** | **6** |
+
+### Open findings (codepros:audit iter1, Phase 4 -- 2026-06-11)
+
+5 new findings confirmed in the iter1 perf scan + manual review. Top risks:
+
+1. **NP-029 (P2, PerfScore 48):** bash completion re-emits `global_flags` per subcommand function (N+1 copies) -- measured 1.87x script size vs zsh at 128 subcmds (+16us at xlarge). [#124](https://gitlab.com/devnw/zig/cli/-/work_items/124)
+2. **NP-030 (P2, PerfScore 36):** `parallel.forEach` chunk_size=1 for n<=64 (caps on MAX_CHUNKS, not worker count); dispatch overhead dominates trivial workloads. [#125](https://gitlab.com/devnw/zig/cli/-/work_items/125)
+3. **NP-031 (P3, PerfScore 16):** Progress spinner 2 writes+flushes on start, per-tick flush. [#126](https://gitlab.com/devnw/zig/cli/-/work_items/126)
+4. **NP-032 (P3, PerfScore 16):** Table `min_width` never applied for all-short columns (**correctness bug**) + per-char border `writeAll`. [#127](https://gitlab.com/devnw/zig/cli/-/work_items/127)
+5. **NP-033 (Info, PerfScore 4):** `wordWrap` `last_space` not reset on no-space width break (latent edge case). Doc-only, no issue.
+
+---
 
 **10 findings from Phase 3 perf-reviewer round 2 (2026-03-25) -- all resolved.** Top 5 risks (now closed/won't do):
 
@@ -26,6 +38,11 @@ Last updated: 2026-03-25
 
 | Rank | PerfSeverity | PerfScore | Finding | Component | Evidence | Measurement | Issue URL | Fix Summary | Owner | SLA/Due | Status |
 |------|-------------|-----------|---------|-----------|----------|-------------|-----------|-------------|-------|---------|--------|
+| NP-029 | P2 | 48 | bash completion re-emits global_flags per subcommand (N+1 copies) | completion/bash.zig | `bash.zig:194-204` loop inside recursive `generateCommandFunction` (`:324`) | bash 80,320B vs zsh 42,840B @128 subcmds (1.87x); +16us xlarge | [#124](https://gitlab.com/devnw/zig/cli/-/work_items/124) | Emit global_flags once into top-level shell var (mirror zsh `_global_flags`) | Completion owner | Next quarter | **Open** |
+| NP-030 | P2 | 36 | parallel.forEach chunk_size=1 for n<=64 (dispatch overhead dominates) | parallel.zig | `parallel.zig:153-154` `num_chunks=@min(items.len, MAX_CHUNKS)` | parallel_foreach_ns=9008 (16 items, ~1-2us seq); 4x more tasks than workers | [#125](https://gitlab.com/devnw/zig/cli/-/work_items/125) | `num_chunks=@min(items.len, worker_count)` | Core maintainer | Next quarter | **Open** |
+| NP-031 | P3 | 16 | Progress spinner 2 writes+flushes on start, per-tick flush | term/progress.zig | `progress.zig:77-78,94-95,141` `stderrPrint` flushes per call | 2 write(2) on start vs 1; 1 flush/tick (static; strace blocked) | [#126](https://gitlab.com/devnw/zig/cli/-/work_items/126) | Accumulate cursor-hide + first frame into one buffered flush | Term owner | Backlog | **Open** |
+| NP-032 | P3 | 16 | Table min_width never applied for all-short columns (correctness) + per-char border writeAll | term/table.zig | `table.zig:140-147` min_width clamp gated on growth; `:272-276` per-char `writeAll(horiz)` | Wrong column widths (bug); O(width) write calls per border segment | [#127](https://gitlab.com/devnw/zig/cli/-/work_items/127) | Seed width `@max(header.len,min_width)`; clamp unconditionally; buffer border run | Term owner | Backlog | **Open** |
+| NP-033 | Info | 4 | wordWrap last_space not reset on no-space width break | util/text.zig | `text.zig:36-39` no-space break path leaves `last_space` stale | Latent: stale break opportunity on "long-word then space" input | -- (doc-only) | Reset/track `last_space` after no-space break; add wrap tests | Util owner | As capacity | **Open** |
 | 1 | P1 | 80 | DeprecatedWriter -> buffered Writer | command.zig, progress.zig, prompt.zig | `command.zig:89,91` uses `DeprecatedWriter` | Est. 4-10x help throughput | [#41](https://gitlab.com/devnw/zig/cli/-/work_items/41) | Replace with `std.io.bufferedWriter` | Core maintainer | Within sprint | Won't Do |
 | **2** | **P1** | **60** | **printHelp 50-80 write(2) syscalls via DeprecatedWriter** | **help.zig** | **`help.zig:180-204` multiple writeAll/print per section** | **19us -> est. 5-10us (50-75% improvement)** | **[#103](https://gitlab.com/devnw/zig/cli/-/work_items/103)** | **Wrap ctx.stdout with BufferedWriter; flush at end** | **Help owner** | **Within sprint** | **Closed** |
 | 3 | P1 | 60 | CI no Zig/apt caching | .gitlab-ci.yml | 10+ jobs re-download Zig each run | ~80-120s wasted/pipeline | [#45](https://gitlab.com/devnw/zig/cli/-/work_items/45) | Add `cache:` for zig-${ZIG_VERSION}/ | CI/DevOps | Within sprint | Closed |
@@ -68,6 +85,11 @@ Last updated: 2026-03-25
 
 | ID | PerfSeverity | PerfScore | Finding | Status |
 |----|-------------|-----------|---------|--------|
+| **NP-029** | **P2** | **48** | **bash completion re-emits global_flags per subcommand (N+1)** | **Open** |
+| **NP-030** | **P2** | **36** | **parallel.forEach chunk_size=1 for n<=64 (dispatch overhead)** | **Open** |
+| **NP-031** | **P3** | **16** | **Progress spinner 2 writes+flushes on start, per-tick flush** | **Open** |
+| **NP-032** | **P3** | **16** | **Table min_width never applied (correctness) + per-char border writeAll** | **Open** |
+| **NP-033** | **Info** | **4** | **wordWrap last_space not reset on no-space width break** | **Open** |
 | NP-003 | P1 | 80 | DeprecatedWriter -> buffered Writer | Won't Do |
 | **NP-019** | **P1** | **60** | **printHelp 50-80 write(2) syscalls (BufferedWriter wrap)** | **Closed** |
 | NP-013 | P2 | 48 | Zero ensureTotalCapacity across 50+ ArrayList instances | **Closed** |
@@ -116,6 +138,9 @@ Last updated: 2026-03-25
 
 | ID | Finding | Effort | Expected Impact | Status |
 |----|---------|--------|-----------------|--------|
+| **NP-031** | **Buffer cursor-hide + first spinner frame into one flush** | **30 min** | **2 write(2)->1 on start; batch per-tick flushes** | **Open** |
+| **NP-032** | **Seed table width `@max(header.len,min_width)`, clamp unconditionally; buffer border run** | **1-2 hrs** | **Correct column widths (bug fix) + O(1) border writes** | **Open** |
+| **NP-033** | **Reset `last_space` after no-space wordWrap break; add wrap tests** | **30 min** | **Fix latent break-opportunity loss on long-word-then-space** | **Open** |
 | **NP-020** | **`ensureTotalCapacity(8)` for Context.flags HashMap** | **15 min** | **Save 1 resize+rehash per parse (~30-80ns)** | **Closed** |
 | **NP-021** | **Span-based flushing for writeRoffEscaped** | **30 min** | **20-40% improvement for man generation** | **Closed** |
 | **NP-023** | **generateMan `ensureTotalCapacity(4096)`** | **5 min** | **Eliminate early reallocs for man page buffer** | **Closed** |
@@ -135,6 +160,8 @@ Last updated: 2026-03-25
 
 | ID | Finding | Effort | Expected Impact | Status |
 |----|---------|--------|-----------------|--------|
+| **NP-029** | **Emit bash global_flags once into top-level shell var (mirror zsh)** | **2-4 hrs** | **bash script ~80KB->~43KB @128 subcmds; xlarge ~35us->~20us** | **Open** |
+| **NP-030** | **Bound forEach num_chunks by worker_count (not MAX_CHUNKS)** | **2-4 hrs** | **Fewer tasks->less enqueue/sync; better scaling for real workloads** | **Open** |
 | **NP-019** | **BufferedWriter wrap for printHelp** | **1-2 hrs** | **50-75% help latency improvement (19us -> 5-10us)** | **Closed** |
 | **NP-028** | **BufferedWriter wrap for printJsonHelp** | **30 min (or free via NP-019)** | **Reduce 30-50 syscalls to 1-2** | **Closed** |
 | **NP-022** | **Pre-sort/pre-group subcommands in printSectionCommands** | **2-4 hrs** | **O(S) instead of O(G*S) -- negligible for small CLIs** | **Won't Do** |
@@ -152,6 +179,75 @@ Last updated: 2026-03-25
 | ID | Finding | Effort | Expected Impact | Status |
 |----|---------|--------|-----------------|--------|
 | NP-012 | PagerWriter streaming | 1-2 weeks | Memory proportional to viewport, not output | Won't Do |
+
+---
+
+## Open Findings (codepros:audit iter1, Phase 4 -- 2026-06-11)
+
+### NP-029: bash completion re-emits global_flags per subcommand [P2, PerfScore: 48] -- OPEN
+
+- **Status:** **Open** (2026-06-11)
+- **PerfScore:** 48 (Impact 3 x Likelihood 4 x 4)
+- **Confidence:** confirmed
+- **Issue:** [#124](https://gitlab.com/devnw/zig/cli/-/work_items/124)
+- **Evidence:** `src/cli/completion/bash.zig:194-204` -- the `for (command.global_flags) ...` loop lives inside `generateCommandFunction`, which is called recursively per subcommand (`bash.zig:324`). For a tree with N subcommands the `local global_flags="..."` literal is emitted N+1 times. zsh/fish/powershell emit global flags once (`zsh.zig:108-129` `_global_flags=(...)`; `fish.zig:90-100` `path.len==0` guard; `powershell.zig:52-63` `$globalFlags=@(...)`).
+- **Measurement:** Generated script size at 128 subcommands -- bash 80,320B vs zsh 42,840B (1.87x); literal repeated 129x (= N+1). bash is the slowest shell at every tier; absolute gap +16us at xlarge (35.2us vs 19.2us, ReleaseFast scale-bench).
+- **Root Cause:** Per-command function body inlines the literal flag text instead of referencing a single shared shell variable; output volume and `Allocating` buffer growth scale O(N·global_flags). Same class as the closed NP-018 (which deduped the source constant) but at the generated-script call site.
+- **Fix:** Emit `global_flags` once into a top-level shell variable at the script preamble (mirror zsh's `_global_flags=(...)`) and reference `$global_flags` by name from each per-command function.
+- **Validation:** `zig build scale-bench 2>/dev/null`; compare `bash_completion_ns` vs `zsh_completion_ns` at xlarge. Expect bash to converge toward ~19-22us and script size toward ~43KB. Correctness: `zig build test` (all bash completion tests pass).
+- **Rollout Risk:** Low. Completion semantics unchanged; ensure the top-level variable is defined before any referencing function runs.
+
+### NP-030: parallel.forEach chunk_size=1 for n<=64 [P2, PerfScore: 36] -- OPEN
+
+- **Status:** **Open** (2026-06-11)
+- **PerfScore:** 36 (Impact 3 x Likelihood 3 x 4)
+- **Confidence:** confirmed
+- **Issue:** [#125](https://gitlab.com/devnw/zig/cli/-/work_items/125)
+- **Evidence:** `src/parallel.zig:153-154` -- `num_chunks = @min(items.len, MAX_CHUNKS=64)` then `chunk_size = ceil(items.len/num_chunks)`. For `items.len <= 64` this yields `chunk_size = 1` -> one `BatchTask` per item. The `min_parallel_items=4` gate (`:124`) only excludes n<4.
+- **Measurement:** `parallel_foreach_ns = 9008` for the small tier (16 items x ~100 muls) -- a ~1-2us sequential workload dominated by dispatch overhead. With 4 workers and 16 items, 16 single-item tasks are submitted (4x more tasks than workers): per-task enqueue + WaitGroup sync + cache-line contention on `results_ptr`.
+- **Root Cause:** Chunk count is bounded by `MAX_CHUNKS`/`items.len`, not by worker count. Optimal is ~one chunk per worker.
+- **Fix:** `num_chunks = @min(items.len, worker_count)` (retain worker_count from `initPool`, or `std.Thread.getCpuCount()`); guard `@max(1, worker_count)`.
+- **Validation:** `zig build scale-bench`; add a microbench sweeping items {8,16,64,1024} x workers {1,2,4,8}. Expect `parallel_foreach_ns` to drop toward the sequential floor for the trivial 16-item case and scale better for real CPU-bound work. Correctness: `zig build test` (every item processed once, ordered results).
+- **Rollout Risk:** Low-moderate. Handle worker_count 0/1; larger chunks mean a slow item delays its chunk (acceptable for small-N trivial work); re-verify `results.len >= items.len`.
+- **Note:** Missed by the automated scan; caught in the manual perf review (concurrency section).
+
+### NP-031: Progress spinner 2 writes+flushes on start, per-tick flush [P3, PerfScore: 16] -- OPEN
+
+- **Status:** **Open** (2026-06-11)
+- **PerfScore:** 16 (Impact 2 x Likelihood 2 x 4)
+- **Confidence:** suspected (static-confirmed; syscall trace blocked by sandbox seccomp/ptrace)
+- **Issue:** [#126](https://gitlab.com/devnw/zig/cli/-/work_items/126)
+- **Evidence:** `src/term/progress.zig:31-36` -- `stderrPrint` builds a fresh ephemeral 4096B writer and flushes every call. `:77-78` (`start`) and `:94-95` (`startIfTty`) each do `stderrPrint("\x1b[?25l")` (cursor-hide, flush #1) then `render()` -> `stderrPrint(...)` (flush #2). `:141` (`render`) flushes per call. `ProgressBar.render` (`:225-251`) already does the correct single-buffer-single-flush pattern.
+- **Root Cause:** `stderrPrint` couples render with flush and re-allocates a writer per call; the start path makes two such calls instead of accumulating cursor-hide + first frame into one buffer.
+- **Fix:** Accumulate cursor-hide + first frame into a single buffered write in `start()`/`startIfTty()` and flush once; optionally give the spinner a reusable scoped writer so `render` flushes once per update.
+- **Validation:** Static call count in `start()` path drops 2->1. `strace -c -e trace=write` would confirm (blocked in sandbox). Correctness: `zig build test` (spinner output order preserved).
+- **Rollout Risk:** Low. Preserve emission order (cursor-hide before frame) and the `\r\x1b[K` clear; don't drop the final flush. TTY-only, guarded by `self.enabled`.
+
+### NP-032: Table min_width never applied for all-short columns + per-char border [P3, PerfScore: 16] -- OPEN
+
+- **Status:** **Open** (2026-06-11)
+- **PerfScore:** 16 (Impact 2 x Likelihood 2 x 4)
+- **Confidence:** confirmed (min_width clamp + addColumn seed); suspected (border micro-opt)
+- **Issue:** [#127](https://gitlab.com/devnw/zig/cli/-/work_items/127)
+- **Evidence (correctness):** `src/term/table.zig:140-147` -- the `min_width` clamp is nested inside `if (cell_width > current_width)`, so it only fires when `current_width < cell_width < min_width`. `addColumn` (`:103-107`) seeds width with `header.len`, never `min_width`. A column whose every cell is shorter than `min_width` keeps its header-length width -> wrong column widths (a **correctness defect**, not just a perf tail).
+- **Evidence (perf):** `src/term/table.zig:272-276` -- `for (0..total_width) |_| try writer.writeAll(horiz);` issues one `writeAll` per character. For the unicode `─` (3 bytes) `splatByteAll` can't apply directly, but a buffered repeated run cuts call count from O(width) to O(1) per segment.
+- **Root Cause:** min_width treated as a clamp-on-growth rather than a floor (and ignored at seed time); no buffered repeat for the border glyph.
+- **Fix:** (a) Seed `column_widths` with `@max(header.len, min_width)` and apply the min_width floor unconditionally in `addRow`. (b) Replace the per-char border loop with a buffered repeat of `horiz`.
+- **Validation:** Failing-first unit test -- column `{min_width=10}` with all cells len<10 asserts `column_widths[i] >= 10` (currently fails). Bench a wide unicode table for the border path. Correctness: `zig build test`.
+- **Rollout Risk:** Low. The width fix changes rendered widths for previously-under-width columns (intended); golden/snapshot table tests may need updating. Border buffering must preserve exact byte output.
+- **Note:** Supersedes NP-009 (Won't Do, border-only perf) by bundling the correctness defect. The min_width portion is a correctness bug -- prioritize ahead of the border micro-opt.
+
+### NP-033: wordWrap last_space not reset on no-space width break [Info, PerfScore: 4] -- OPEN
+
+- **Status:** **Open** (2026-06-11)
+- **PerfScore:** 4 (Impact 1 x Likelihood 1 x 4)
+- **Confidence:** suspected (latent)
+- **Issue:** none (Info-level, doc-only)
+- **Evidence:** `src/util/text.zig:36-39` -- on the no-space width-break path, `line_start` is advanced to `i` but `last_space` is not reset (it is only reset on the space-break path at `:31`). A stale `last_space < line_start` can persist; the `space > line_start` guard at `:27` masks most cases, but the break opportunity from a previous segment is effectively dropped for inputs shaped "word-longer-than-width followed by a space."
+- **Root Cause:** `last_space` tracking is reset only on one of the two break paths.
+- **Fix:** Reset/track `last_space` consistently after the no-space width break; add wrap tests for "word longer than width followed by space" and adjacent shapes.
+- **Validation:** `zig build test` with the new wrap cases. No measurable perf delta -- correctness/hardening of the wrap utility (user-facing, not on a library hot path).
+- **Rollout Risk:** None. Pure utility behavior; covered by added tests.
 
 ---
 

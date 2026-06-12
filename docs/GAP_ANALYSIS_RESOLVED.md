@@ -2,7 +2,27 @@
 
 > Items moved from `docs/GAP_ANALYSIS.md` when resolved or marked as won't-do.
 
-Last updated: 2026-03-24
+Last updated: 2026-06-11
+
+## Closed (codepros:audit Phase 4 -- 2026-06-11)
+
+### GAP-0091: Integration tests hang/timeout -- printHelp stdout deadlock [RESOLVED]
+
+- **Issue:** [#96](https://gitlab.com/devnw/zig/cli/-/issues/96) (closed)
+- **Category:** Bug
+- **Severity:** High
+- **Resolution:** The integration test harness pipe deadlock was fixed by redirecting stdout to `/dev/null` before the only `cli.printHelp` call in the suite. Fix landed in commit `2db1dc9` ("fix: zig 0.16.0 compat", 2026-04-15), after this doc was previously last-updated (2026-03-30), which is why it lingered as "Blocked".
+- **Evidence:** `tests/integration.zig:39-46` (`ctx.stdout = .{ .file = devnull }` before `cli.printHelp(&cmd, &ctx)`); commit `2db1dc9`; 34 integration tests present and passing.
+- **Resolved date:** 2026-06-11
+
+### GAP-0082: DeprecatedWriter usage in command.zig and progress.zig [RESOLVED]
+
+- **Issue:** [#41](https://gitlab.com/devnw/zig/cli/-/issues/41) (closed)
+- **Category:** Code Quality / Performance
+- **Severity:** Medium
+- **Resolution:** Resolved by the Zig 0.16 upgrade. `DeprecatedWriter` was the Zig 0.15 writer type name; the project now requires Zig 0.16 and the type no longer exists anywhere in the codebase. The migration to buffered `file.writer(io, &buf)` happened automatically with the 0.16 API rename. Previously parked as Won't-Do "pending 0.16, not yet released" -- that rationale is now obsolete.
+- **Evidence:** `build.zig.zon:28` (`minimum_zig_version = "0.16.0"`); `.gitlab-ci.yml:26` (`ZIG_VERSION: "0.16.0"`); `src/cli/command.zig` uses `file.writer(io, &buf)`; grep for `DeprecatedWriter` returns nothing; migration in commit `2db1dc9`.
+- **Resolved date:** 2026-06-11
 
 ## Closed (Wave 1 -- Critical/High -- 2026-03-24)
 

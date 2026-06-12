@@ -3,7 +3,7 @@
 > Comprehensive quality tracking for the Zig CLI framework library.
 > Combines initial codebase audit (2026-03-24) with Phase 3/4 quality-reviewer findings.
 
-Last updated: 2026-03-25
+Last updated: 2026-06-11
 
 ## Summary
 
@@ -11,14 +11,63 @@ Last updated: 2026-03-25
 |----------|------|--------|----------|
 | Critical | 0 | 1 | 0 |
 | High | 0 | 14 | 1 |
-| Medium | 0 | 38 | 3 |
-| Low | 0 | 28 | 6 |
-| **Total** | **0** | **80** | **10** |
+| Medium | 2 | 38 | 3 |
+| Low | 9 | 28 | 6 |
+| **Total** | **11** | **80** | **10** |
 
-**No open risks.** All 16 Phase 4 findings resolved (11 closed, 5 won't do).
+**11 open findings** from the Phase 4 codepros:audit iteration (2026-06-11): 21 new findings (NQ-NEW-001..021) tracked across 9 grouped GitLab issues + 2 reopened regressions. Two of the new findings family-overlap a prior regression root cause (no release-step version-sync automation).
 
-16 new findings added from Phase 4 quality review (2026-03-25).
-80 findings closed, 10 won't do across all rounds. 760/760 tests pass with 0 memory leaks.
+**Cross-domain (owned by the security tracker, NOT counted here):** NQ-NEW-007/008-injection-scope (markdown injection = security F-03, issue #131), NQ-NEW-010 (deinit secret-zeroing doc = security F-02), NQ-NEW-015 (Windows password echo on GetConsoleMode failure = security, issue #130).
+
+**Top open risk:** NQ-NEW-003 (#106) — `root.zig` version `0.1.1` vs `build.zig.zon`/tag `0.1.4`; a regression of NQ-053 whose root cause (no version-sync automation) was never addressed. PriorityScore 48.
+
+21 new findings (2026-06-11). 80 closed, 10 won't do across all prior rounds. 803/803 unit + 34/34 integration tests pass; `zig fmt`/`check` clean.
+
+---
+
+## Stack-Ranked Findings
+
+### Phase 4 codepros:audit Iteration (Open — 2026-06-11)
+
+PriorityScore = Impact(1-5) x Likelihood(1-5) x 4. Grouped issues are ranked by their top sub-finding.
+
+| Rank | ID(s) | Severity | PriorityScore | Category | Finding | Component | Evidence | Issue | Fix Summary | ETA/SLA | Status |
+|------|-------|----------|---------------|----------|---------|-----------|----------|-------|-------------|---------|--------|
+| 1 | NQ-NEW-003 | Medium | 48 | maintainability | Version drift: root.zig `0.1.1` vs build.zig.zon/tag `0.1.4`; CHANGELOG missing 3 releases (REGRESSION of NQ-053) | root.zig:67, build.zig.zon:12 | tag v0.1.4 | [#106](https://gitlab.com/devnw/zig/cli/-/issues/106) | Sync root.zig from zon at comptime; add CI check + CHANGELOG entries | 90d | **Open (reopened)** |
+| 2 | NQ-NEW-008 | Medium | 36 | api-contract | writeMarkdownEscaped misses newlines -> broken markdown options table | help.zig:781-800 | help.zig:835-862 | [#136](https://gitlab.com/devnw/zig/cli/-/issues/136) | Map `\n`/`\r` to space/`<br>`; consider `* _ [ ]` | 90d | **Open** |
+| 3 | NQ-NEW-001/002/005 | Low | 32 | docs/ci-gate | Pre-commit + markdownlint failures (16x MD040, 1x MD056, whitespace/EOF/ruff) | docs/*, README.md, templates | pre-commit exit 1 | [#134](https://gitlab.com/devnw/zig/cli/-/issues/134) | Add fence languages; fix table; run pre-commit autofix | 180d | **Open** |
+| 4 | NQ-NEW-017 | Low->Med | 24 | maintainability | pager silently loses output on invalid PAGER (re-triage NQ-064 Won't Do) | pager.zig:~98-110 | catch {} x3 | [#137](https://gitlab.com/devnw/zig/cli/-/issues/137) | Propagate failure or fall back to direct stdout | 180d | **Open** |
+| 5 | NQ-NEW-006 | Low | 24 | docs | CHANGELOG missing entries for v0.1.2/v0.1.3/v0.1.4 | CHANGELOG.md | tags vs headers | [#135](https://gitlab.com/devnw/zig/cli/-/issues/135) | Add 3 release sections | 180d | **Open** |
+| 6 | NQ-NEW-012 | Low | 24 | api-contract | getBool returns bool while sibling accessors return ?T | command.zig:227-235 | vs :216-268 | [#138](https://gitlab.com/devnw/zig/cli/-/issues/138) | Add getBoolOpt() ?bool and/or document default-false | 180d | **Open** |
+| 7 | NQ-NEW-016 | Low | 24 | architecture | parallel pool_started guard non-atomic -> initPool/deinitPool race | parallel.zig:72,80-97 | non-atomic RMW | [#139](https://gitlab.com/devnw/zig/cli/-/issues/139) | atomic.Value(bool) + CAS or document single-thread init | 180d | **Open** (suspected) |
+| 8 | NQ-NEW-014/011/009/013 | Low | 24 | maintainability | help/parser maintainability + edge-input cluster (generator dup, parser reuse, JSON short, env[8] cap) | help.zig, parser.zig, command.zig | see issue | [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) | Shared generator walk; reset parse() fields; validate short; doc cap | 180d | **Open** |
+| 9 | NQ-NEW-021 | Low | 24 | tests | Missing adversarial/edge tests (parser reuse, escaping, getBool) | cli test blocks | happy-path only | [#142](https://gitlab.com/devnw/zig/cli/-/issues/142) | Add negative/edge tests guarding 007/008/009/011/012 | 180d | **Open** |
+| 10 | NQ-NEW-004 | Low | 24 | docs | Makefile says Zig 0.15.2; minimum is 0.16.0 (REGRESSION of NQ-061, fixed to wrong target) | Makefile:185 | build.zig.zon:28 | [#94](https://gitlab.com/devnw/zig/cli/-/issues/94) | Set to 0.16.0; source from build.zig.zon | 180d | **Open (reopened)** |
+| 11 | NQ-NEW-019/020/018 | Low | 12 | docs | Public-API doc gaps (tty.zig, root.zig aliases) + misleading onCleanup doc | tty.zig, root.zig:74-113, signal.zig:153-155 | no `///` / dead ref | [#141](https://gitlab.com/devnw/zig/cli/-/issues/141) | Add doc comments; correct onCleanup doc | 180d | **Open** |
+
+**Cross-referenced (security-owned, not tracked as quality issues):**
+
+| ID | Finding | Owner | Issue |
+|----|---------|-------|-------|
+| NQ-NEW-007 | Markdown injection — name/summary/long_help/examples emitted raw into headings/prose/fences | security F-03 | [#131](https://gitlab.com/devnw/zig/cli/-/issues/131) |
+| NQ-NEW-010 | `deinit` doc claims secrets "zeroed before deallocation" but bytes are neither zeroed nor freed | security F-02 | (security tracker) |
+| NQ-NEW-015 | Windows `password()` echoes typed chars when GetConsoleMode fails (secret exposure) | security | [#130](https://gitlab.com/devnw/zig/cli/-/issues/130) |
+
+**Won't-Do re-triage:** NQ-064 (pager silent error swallowing) scope was underestimated; the content-loss path is now tracked as NQ-NEW-017 (#137).
+
+#### Findings by Category (2026-06-11 iteration)
+
+- **docs:** NQ-NEW-001/002/005 (#134), NQ-NEW-006 (#135), NQ-NEW-004 (#94), NQ-NEW-019/020/018 (#141)
+- **api-contract:** NQ-NEW-008 (#136), NQ-NEW-012 (#138), NQ-NEW-009 (in #140)
+- **maintainability:** NQ-NEW-003 (#106), NQ-NEW-017 (#137), NQ-NEW-014/011/013 (#140)
+- **architecture/concurrency:** NQ-NEW-016 (#139)
+- **tests:** NQ-NEW-021 (#142)
+
+#### Roadmap (2026-06-11 iteration)
+
+- **Quick wins (< 1 day):** #134 (markdownlint/pre-commit), #135 (CHANGELOG), #94 (Makefile 0.16.0), short-term half of #106 (set root.zig to 0.1.4), #141 (doc comments).
+- **Medium (1-5 days):** #136 (markdown newline escaping), #137 (pager content-loss + fallback), #138 (getBoolOpt), #139 (atomic pool guard), #142 (adversarial tests), #140 (generator/parser cluster).
+- **Strategic (> 5 days):** long-term half of #106 (comptime version derivation + CI sync gate, closing the recurring NQ-053/NQ-061 regression class); shared format-generator walk (#140 NQ-NEW-014) to structurally prevent missed-escaping regressions.
 
 ---
 
@@ -917,6 +966,7 @@ Last updated: 2026-03-25
 ## Findings by Category
 
 ### maintainability
+
 - **NQ-050 (High/64): applyEnvDefaults skips subcommand flags -- CLOSED** [#101](https://gitlab.com/devnw/zig/cli/-/issues/101)
 - **NQ-052 (High/48): Windows password echo not disabled -- CLOSED** [#104](https://gitlab.com/devnw/zig/cli/-/issues/104)
 - **NQ-053 (Medium/48): Version string drift 0.1.0 vs v0.1.1 -- CLOSED** [#106](https://gitlab.com/devnw/zig/cli/-/issues/106)
@@ -939,6 +989,7 @@ Last updated: 2026-03-25
 - GAP-Q003 (Medium/55): Duplicated envVarExists/getEnvValue -- **Closed**
 
 ### api-contract
+
 - **NQ-051 (High/64): DeprecatedWriter in public Context API -- WON'T DO** [#102](https://gitlab.com/devnw/zig/cli/-/issues/102)
 - **NQ-056 (Medium/36): Prompt inputInternal buffer caps at 1024 ignoring config.max_length -- CLOSED** [#112](https://gitlab.com/devnw/zig/cli/-/issues/112)
 - NQ-041 (Medium/48): printHelp/printVersion swallow all errors -- **Closed** [#81](https://gitlab.com/devnw/zig/cli/-/issues/81)
@@ -957,6 +1008,7 @@ Last updated: 2026-03-25
 - NQ-026 (Low/3): ParseResult.deinit vs Context.deinit inconsistent allocator -- **Won't Do**
 
 ### tests
+
 - **NQ-058 (Medium/36): Windows signal tests completely skipped -- CLOSED** [#116](https://gitlab.com/devnw/zig/cli/-/issues/116)
 - NQ-035 (High/80): No test coverage for run() function lifecycle -- **Closed** [#75](https://gitlab.com/devnw/zig/cli/-/issues/75)
 - NQ-008 (Medium/6): Prompt tests only cover NotInteractive -- **Closed**
@@ -965,6 +1017,7 @@ Last updated: 2026-03-25
 - GAP-Q005 (Medium/50): prompt.zig has only 2 trivial tests -- **Closed**
 
 ### readability
+
 - **NQ-063 (Low/16): Completion generator boilerplate duplication across 4 files -- WON'T DO**
 - **NQ-065 (Low/8): Inconsistent stdout access pattern -- WON'T DO**
 - NQ-037 (Medium/32): Inline ANSI escape codes duplicated in help.zig -- **Closed** [#77](https://gitlab.com/devnw/zig/cli/-/issues/77)
@@ -979,6 +1032,7 @@ Last updated: 2026-03-25
 - NQ-029 (Low/2): Duplicate comma parsing -- **Closed**
 
 ### architecture
+
 - **NQ-060 (Low/24): parser.zig getEnvVar duplicates env.zig getEnvValueRuntime -- WON'T DO**
 - NQ-032 (High/60): Signal handler calls non-async-signal-safe callbacks -- **Closed** [#69](https://gitlab.com/devnw/zig/cli/-/issues/69)
 - NQ-036 (High/48): Subcommand flag inheritance only checks root -- **Closed** [#76](https://gitlab.com/devnw/zig/cli/-/issues/76)
@@ -990,6 +1044,7 @@ Last updated: 2026-03-25
 - NQ-026 (Low/3): Inconsistent allocator pattern -- **Won't Do**
 
 ### cleanup
+
 - **NQ-059 (Low/24): 51 lines dead code in parser.zig -- CLOSED**
 - GAP-0022 (Medium/40): Dead code printTextHelp/printFlag -- **Closed**
 - GAP-0026 (Low/10): `or true` dead branch -- **Closed**
@@ -998,6 +1053,7 @@ Last updated: 2026-03-25
 - NQ-028 (Low/2): Unused tty import -- **Closed**
 
 ### docs
+
 - **NQ-057 (Medium/32): ARCHITECTURE.md Command struct stale -- CLOSED** [#114](https://gitlab.com/devnw/zig/cli/-/issues/114)
 - **NQ-061 (Low/12): Makefile version says 0.15.1 vs 0.15.2 -- CLOSED**
 - **NQ-062 (Low/12): ROADMAP v0.2.0 lists shipped features -- CLOSED**
@@ -1010,6 +1066,7 @@ Last updated: 2026-03-25
 - NQ-025 (Low/3): config.zig no tests or re-export docs -- **Closed**
 
 ### ci-cd
+
 - **NQ-054 (Medium/48): No cross-compilation CI for Windows -- CLOSED** [#108](https://gitlab.com/devnw/zig/cli/-/issues/108)
 - NQ-018 (Medium/4): No Zig toolchain caching -- **Closed**
 - NQ-019 (Low/4): build.zig duplicate module definitions -- **Closed**
