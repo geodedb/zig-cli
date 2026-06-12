@@ -21,7 +21,13 @@ pub fn formatParseError(parser: *const Parser, err: ParseError, stderr: anytype)
     switch (err) {
         ParseError.UnknownFlag => try stderr.print("Error: Unknown flag\n\n", .{}),
         ParseError.UnknownCommand => try stderr.print("Error: Unknown command\n\n", .{}),
-        ParseError.MissingValue => try stderr.print("Error: Missing value for flag\n\n", .{}),
+        ParseError.MissingValue => {
+            if (parser.missing_value_flag) |flag_name| {
+                try stderr.print("Error: Missing value for flag --{s}\n\n", .{flag_name});
+            } else {
+                try stderr.print("Error: Missing value for flag\n\n", .{});
+            }
+        },
         ParseError.InvalidValue => {
             if (parser.invalid_default_flag) |flag_name| {
                 try stderr.print("Error: Invalid default value for --{s}\n\n", .{flag_name});

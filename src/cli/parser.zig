@@ -79,6 +79,8 @@ pub const Parser = struct {
     env_prefix: []const u8,
     /// Name of missing required flag (for error reporting)
     missing_required_flag: ?[]const u8 = null,
+    /// Name of the flag whose value was missing (for error reporting)
+    missing_value_flag: ?[]const u8 = null,
     /// Current command being parsed (for error reporting)
     current_command: ?*const Command = null,
     /// Conflicting flags for mutually exclusive error
@@ -132,6 +134,7 @@ pub const Parser = struct {
     /// context from a previous invocation (NQ-NEW-011).
     fn resetErrorState(self: *Self) void {
         self.missing_required_flag = null;
+        self.missing_value_flag = null;
         self.current_command = null;
         self.conflicting_flags = null;
         self.missing_together_flags = null;
@@ -255,8 +258,12 @@ pub const Parser = struct {
         if (mem.indexOf(u8, flag_part, "=")) |eq_pos| {
             const name = flag_part[0..eq_pos];
             const value = flag_part[eq_pos + 1 ..];
-            try self.handleFlagWithChain(ctx, cmd, chain, name, value);
-            return .{ .next = i + 1 };
+            if (self.findFlagInFullChain(cmd, chain, name) != null) {
+                try self.handleFlagWithChain(ctx, cmd, chain, name, value);
+                return .{ .next = i + 1 };
+            }
+            // Fall through to global flags (e.g. --quiet=true)
+            return self.handleGlobalFlagEquals(ctx, name, value, i);
         }
 
         // Check if it's a boolean flag or needs a value
@@ -267,6 +274,7 @@ pub const Parser = struct {
             }
             // Need next arg as value
             if (i + 1 >= argv.len) {
+                self.missing_value_flag = flag.name;
                 return ParseError.MissingValue;
             }
             try self.handleFlagWithChain(ctx, cmd, chain, flag_part, argv[i + 1]);
@@ -283,8 +291,10 @@ pub const Parser = struct {
     }
 
     /// Consume one `-x`/`-xyz` short-flag token. Combined boolean short
-    /// flags are all applied; a non-boolean short flag in the last
-    /// position consumes the next argv entry as its value.
+    /// flags are all applied; a non-boolean short flag is only legal in
+    /// the last position, where it consumes the next argv entry as its
+    /// value. A value-taking short flag anywhere else in the cluster is
+    /// a `MissingValue` error (it has no token to consume).
     fn handleShortToken(
         self: *Self,
         ctx: *Context,
@@ -301,14 +311,22 @@ pub const Parser = struct {
 
             if (self.findFlagByShortInFullChain(cmd, chain, c)) |flag| {
                 if (flag.ftype == .bool) {
-                    try self.setFlagValue(ctx, flag.name, FlagValue{ .bool = true });
+                    // Route through the same guarded path as long flags so
+                    // secret-policy and validator checks apply.
+                    try self.handleFlagWithChain(ctx, cmd, chain, flag.name, "true");
                 } else if (j == flags.len - 1) {
                     // Last short flag, next arg is value
                     if (i + 1 >= argv.len) {
+                        self.missing_value_flag = flag.name;
                         return ParseError.MissingValue;
                     }
                     try self.handleFlagWithChain(ctx, cmd, chain, flag.name, argv[i + 1]);
                     next = i + 2;
+                } else {
+                    // Mid-cluster value flag has no token to consume as
+                    // its value; report it instead of dropping the flag.
+                    self.missing_value_flag = flag.name;
+                    return ParseError.MissingValue;
                 }
             } else {
                 try self.handleGlobalShortFlag(ctx, c);
@@ -423,6 +441,25 @@ pub const Parser = struct {
         return ParseError.UnknownFlag;
     }
 
+    /// Apply `--name=value` syntax for a global flag. All global flags are
+    /// boolean, so the value must be exactly "true" or "false" (anything
+    /// else is `InvalidValue`). `--help=true`/`--version=true` behave like
+    /// their bare forms; a "false" value is a no-op. Returns `UnknownFlag`
+    /// for names not in the canonical `command.global_flags` list.
+    fn handleGlobalFlagEquals(self: *Self, ctx: *Context, name: []const u8, value: []const u8, i: usize) ParseError!TokenOutcome {
+        for (command.global_flags) |*gf| {
+            if (!mem.eql(u8, gf.name, name)) continue;
+            const enabled = (try self.parseValue(.bool, value)).bool;
+            if (enabled) {
+                if (mem.eql(u8, name, "help")) return .help;
+                if (mem.eql(u8, name, "version")) return .version;
+                applyGlobalFlagToContext(ctx, name);
+            }
+            return .{ .next = i + 1 };
+        }
+        return ParseError.UnknownFlag;
+    }
+
     /// Map a short global flag character to its long name via
     /// `command.global_flags`, then apply. Returns `UnknownFlag` for
     /// unrecognised characters.
@@ -475,10 +512,12 @@ pub const Parser = struct {
 
     /// Convert a raw string value to a typed `FlagValue` according to the
     /// flag's declared type. Returns `InvalidValue` if the conversion fails.
+    /// Boolean values are strict: exactly "true" or "false" (anything else,
+    /// including the formerly-truthy "1", is `InvalidValue`).
     /// Public for internal use by parser/env.zig; not part of the stable API.
     pub fn parseValue(self: *Self, ftype: FlagType, value: []const u8) ParseError!FlagValue {
         return switch (ftype) {
-            .bool => FlagValue{ .bool = mem.eql(u8, value, "true") or mem.eql(u8, value, "1") },
+            .bool => if (mem.eql(u8, value, "true")) FlagValue{ .bool = true } else if (mem.eql(u8, value, "false")) FlagValue{ .bool = false } else return ParseError.InvalidValue,
             .int => FlagValue{ .int = std.fmt.parseInt(i64, value, 10) catch return ParseError.InvalidValue },
             .float => FlagValue{ .float = std.fmt.parseFloat(f64, value) catch return ParseError.InvalidValue },
             .string, .path => FlagValue{ .string = value },
