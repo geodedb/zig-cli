@@ -61,7 +61,10 @@ pub const SecretPolicy = enum {
 pub const FlagSpec = struct {
     /// Long flag name (e.g., "verbose" for --verbose)
     name: []const u8,
-    /// Short flag character (e.g., 'v' for -v)
+    /// Short flag character (e.g., 'v' for -v). Must be alphanumeric:
+    /// non-alphanumeric bytes are treated as "no short flag" uniformly by
+    /// the parser, help, and every completion generator (they are never a
+    /// valid short option and would be a shell-injection vector otherwise).
     short: ?u8 = null,
     /// Help text for this flag
     help: []const u8,

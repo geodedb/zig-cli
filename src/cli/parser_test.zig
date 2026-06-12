@@ -336,6 +336,23 @@ test "parser: unknown flag returns error" {
     try std.testing.expectError(ParseError.UnknownFlag, result);
 }
 
+test "parser: non-alphanumeric short flag is not matched (treated as unknown)" {
+    // A short flag must be alphanumeric (see FlagSpec.short). A flag that
+    // declares a non-alphanumeric short is uniformly inert: the parser does
+    // not match it, mirroring help/completion output, which omit it.
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{ .name = "evil", .short = '!', .help = "h", .ftype = .bool },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "-!" });
+    try std.testing.expectError(ParseError.UnknownFlag, result);
+}
+
 test "parser: missing value returns error" {
     const root = Command{
         .name = "test",
