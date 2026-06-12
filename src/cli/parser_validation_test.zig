@@ -336,6 +336,8 @@ test "parser: only_valid error message filters control bytes end-to-end (N-01)" 
 // ============================================================================
 // Command Chain Tests (for persistent hooks)
 // ============================================================================
+// Chain-wide validation tests (iter3 findings 4, 6) live in
+// parser_chain_test.zig to keep this file within the size budget.
 
 test "parser: command chain includes root" {
     const root = Command{

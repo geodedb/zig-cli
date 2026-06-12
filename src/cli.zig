@@ -77,9 +77,11 @@ test {
     _ = parser;
     _ = @import("cli/parser/env.zig");
     _ = @import("cli/parser/format.zig");
+    _ = @import("cli/parser/validate.zig");
     _ = @import("cli/parser_test.zig");
     _ = @import("cli/parser_validation_test.zig");
     _ = @import("cli/parser_env_test.zig");
+    _ = @import("cli/parser_chain_test.zig");
     _ = help;
     _ = @import("cli/help/json.zig");
     _ = @import("cli/help/man.zig");

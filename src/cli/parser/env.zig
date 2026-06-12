@@ -19,6 +19,7 @@ const builtin = @import("builtin");
 const command = @import("../command.zig");
 const Command = command.Command;
 const Context = command.Context;
+const FlagSpec = command.FlagSpec;
 
 const parser_mod = @import("../parser.zig");
 const Parser = parser_mod.Parser;
@@ -52,9 +53,11 @@ pub fn getEnvVar(name: []const u8) ?[]const u8 {
 }
 
 /// Populate context fields from environment variables (NO_COLOR,
-/// TERM=dumb) and fill flag values whose specs declare an `env` name.
-/// Processes both root command flags and the resolved current command's flags.
-pub fn applyEnvDefaults(p: *Parser, ctx: *Context) ParseError!void {
+/// TERM=dumb). Env-bound FLAG defaults are intentionally NOT applied
+/// here: they run during finalize, after the argv loop, so CLI values
+/// always take precedence -- including for repeatable string_array flags,
+/// which would otherwise append to an env-seeded array (iter3 finding 2).
+pub fn applyEnvContextDefaults(ctx: *Context) void {
     // Check NO_COLOR
     if (getEnvVar("NO_COLOR")) |_| {
         ctx.no_color = true;
@@ -66,14 +69,34 @@ pub fn applyEnvDefaults(p: *Parser, ctx: *Context) ParseError!void {
             ctx.no_color = true;
         }
     }
+}
 
-    // Apply environment variable flags for root command
-    try applyEnvDefaultsForCommand(p, ctx, p.root);
+/// Record an environment-variable failure (unparseable or rejected by the
+/// flag's custom validator) in the parser's bounded error buffer. The flag
+/// stays unset; required-flag validation later promotes the failure to a
+/// hard `InvalidValue` error with env provenance.
+fn recordEnvFailure(p: *Parser, env_name: []const u8, flag: *const FlagSpec, value: []const u8) void {
+    if (p.env_parse_error_count < p.env_parse_errors.len) {
+        p.env_parse_errors[p.env_parse_error_count] = .{
+            .env_name = env_name,
+            .flag_name = flag.name,
+            .value = value,
+            .expected_type = flag.ftype.format(),
+        };
+        p.env_parse_error_count += 1;
+    } else {
+        // Detail buffer is full: count the drop so the
+        // total failure count is not lost (NQ-NEW-013).
+        p.env_parse_errors_dropped += 1;
+    }
 }
 
 /// Apply environment variable defaults for a specific command's flags.
-/// Called for the root command during initial parsing, and again for
-/// the resolved subcommand after subcommand resolution.
+/// Called during finalize for every command in the resolved chain, root
+/// through leaf. Skips flags already set (CLI takes priority over env)
+/// and enforces the flag's custom validator just like the CLI path
+/// (iter3 finding 3): a rejected env value is recorded as an env failure
+/// and skipped, matching the unparseable-env-value behavior.
 pub fn applyEnvDefaultsForCommand(p: *Parser, ctx: *Context, cmd: *const Command) ParseError!void {
     for (cmd.flags) |flag| {
         if (flag.env) |env_name| {
@@ -84,21 +107,15 @@ pub fn applyEnvDefaultsForCommand(p: *Parser, ctx: *Context, cmd: *const Command
             if (ctx.flags.get(flag.name) != null) continue;
 
             if (getEnvVar(env_name)) |value| {
+                if (!flag.validate(value)) {
+                    // Custom validator rejected the env value: record and
+                    // skip, same channel as a parse failure.
+                    recordEnvFailure(p, env_name, &flag, value);
+                    continue;
+                }
                 const fval = p.parseValue(flag.ftype, value) catch {
                     // Record the parse failure for error reporting
-                    if (p.env_parse_error_count < p.env_parse_errors.len) {
-                        p.env_parse_errors[p.env_parse_error_count] = .{
-                            .env_name = env_name,
-                            .flag_name = flag.name,
-                            .value = value,
-                            .expected_type = flag.ftype.format(),
-                        };
-                        p.env_parse_error_count += 1;
-                    } else {
-                        // Detail buffer is full: count the drop so the
-                        // total failure count is not lost (NQ-NEW-013).
-                        p.env_parse_errors_dropped += 1;
-                    }
+                    recordEnvFailure(p, env_name, &flag, value);
                     continue;
                 };
                 // Propagate allocation failure instead of silently
@@ -109,18 +126,12 @@ pub fn applyEnvDefaultsForCommand(p: *Parser, ctx: *Context, cmd: *const Command
     }
 }
 
-/// Apply default values to flags that were not set during parsing,
-/// starting with the root command and then the current command.
-pub fn applyDefaultValues(p: *Parser, ctx: *Context, cmd: *const Command) ParseError!void {
-    try applyDefaultsForCommand(p, ctx, p.root);
-    if (cmd != p.root) {
-        try applyDefaultsForCommand(p, ctx, cmd);
-    }
-}
-
 /// Apply default values from a single command's flag specifications.
-/// Skips flags that already have a value or have a secret policy
-/// (secrets must be provided via file/stdin, never via defaults).
+/// Called during finalize for every command in the resolved chain, root
+/// through leaf (iter3 finding 5). Skips flags that already have a value
+/// or have a secret policy (secrets must be provided via file/stdin,
+/// never via defaults). Defaults must satisfy the flag's custom validator
+/// just like CLI values (iter3 finding 3).
 pub fn applyDefaultsForCommand(p: *Parser, ctx: *Context, cmd: *const Command) ParseError!void {
     for (cmd.flags) |flag| {
         // Never apply defaults to secret flags -- they must come from
@@ -128,10 +139,14 @@ pub fn applyDefaultsForCommand(p: *Parser, ctx: *Context, cmd: *const Command) P
         if (flag.secret == .from_file_or_stdin) continue;
         if (flag.default_str) |def| {
             if (ctx.getFlag(flag.name) != null) continue;
+            // A default that fails its own validator or cannot be parsed
+            // is a programmer error in the command definition: fail
+            // loudly instead of silently skipping (GAP-0097).
+            if (!flag.validate(def)) {
+                p.invalid_default_flag = flag.name;
+                return ParseError.InvalidValue;
+            }
             const fval = p.parseValue(flag.ftype, def) catch {
-                // An unparseable default is a programmer error in the
-                // command definition: fail loudly instead of silently
-                // skipping (GAP-0097).
                 p.invalid_default_flag = flag.name;
                 return ParseError.InvalidValue;
             };

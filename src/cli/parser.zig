@@ -29,6 +29,7 @@ const help = @import("help.zig");
 // Zig within a module; the help/ split uses the same pattern.
 const env_defaults = @import("parser/env.zig");
 const format = @import("parser/format.zig");
+const validate = @import("parser/validate.zig");
 
 /// Parse errors
 pub const ParseError = error{
@@ -103,10 +104,16 @@ pub const Parser = struct {
     /// Number of env parse errors that could not be recorded because
     /// `env_parse_errors` was already full (NQ-NEW-013)
     env_parse_errors_dropped: usize = 0,
-    /// Name of the flag whose `default_str` failed to parse (for error
-    /// reporting). An unparseable default is a programmer error in the
-    /// command definition (GAP-0097).
+    /// Name of the flag whose `default_str` failed to parse or validate
+    /// (for error reporting). An invalid default is a programmer error in
+    /// the command definition (GAP-0097).
     invalid_default_flag: ?[]const u8 = null,
+    /// Index into `env_parse_errors` when an `InvalidValue` error was
+    /// promoted from an environment-variable failure (a required flag
+    /// whose env value could not be parsed/validated). Null when the
+    /// `InvalidValue` came from a CLI value or a default, so diagnostics
+    /// only render the env message when env was actually the cause.
+    invalid_value_env_index: ?usize = null,
 
     const Self = @This();
 
@@ -144,6 +151,7 @@ pub const Parser = struct {
         self.env_parse_error_count = 0;
         self.env_parse_errors_dropped = 0;
         self.invalid_default_flag = null;
+        self.invalid_value_env_index = null;
         // env_parse_errors entries are overwritten on next use; only the
         // count gates reads, so the array itself needs no zeroing.
     }
@@ -161,10 +169,10 @@ pub const Parser = struct {
     /// Parse command-line arguments.
     ///
     /// Runs as a phase pipeline: reset per-parse diagnostic state, set up
-    /// the context and command chain, apply environment defaults, consume
-    /// argv tokens one at a time (flags, subcommands, positionals), then
-    /// finalize (subcommand env defaults, default values, and
-    /// required/group/args validation).
+    /// the context and command chain, apply environment context defaults
+    /// (NO_COLOR/TERM), consume argv tokens one at a time (flags,
+    /// subcommands, positionals), then finalize (chain-wide env defaults,
+    /// default values, and required/group/args validation).
     pub fn parse(self: *Self, argv: []const []const u8) ParseError!ParseResult {
         self.resetErrorState();
 
@@ -178,8 +186,12 @@ pub const Parser = struct {
         command_chain.ensureTotalCapacity(self.allocator, 4) catch return ParseError.OutOfMemory;
         command_chain.append(self.allocator, self.root) catch return ParseError.OutOfMemory;
 
-        // Apply environment-based defaults
-        try env_defaults.applyEnvDefaults(self, &ctx);
+        // Apply environment-based context defaults (NO_COLOR, TERM=dumb).
+        // Env-bound flag defaults are applied during finalize, AFTER the
+        // argv loop, so CLI values always take precedence -- including for
+        // repeatable string_array flags, which would otherwise append to an
+        // env-seeded array (iter3 finding 2).
+        env_defaults.applyEnvContextDefaults(&ctx);
 
         var current_cmd = self.root;
         self.current_command = self.root;
@@ -203,7 +215,7 @@ pub const Parser = struct {
             }
         }
 
-        try self.finalize(&ctx, current_cmd);
+        try self.finalize(&ctx, command_chain.items);
 
         return ParseResult{
             .command = current_cmd,
@@ -376,24 +388,26 @@ pub const Parser = struct {
         }
     }
 
-    /// Finalization phase: apply env defaults for the resolved subcommand
-    /// (if different from root), fill default values, then run
-    /// required/group/args validation.
-    fn finalize(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
-        // Apply env defaults for resolved subcommand (if different from root)
-        if (cmd != self.root) {
-            try env_defaults.applyEnvDefaultsForCommand(self, ctx, cmd);
-        }
+    /// Finalization phase: walk the full resolved command chain (root
+    /// through leaf) applying env defaults, then `default_str` defaults
+    /// (both skip flags already set, so CLI values win and env beats
+    /// defaults), then run required-flag and flag-group validation for
+    /// every command in the chain. Positional-args validation applies to
+    /// the leaf only (iter3 findings 2, 4, 5).
+    fn finalize(self: *Self, ctx: *Context, chain: []const *const Command) ParseError!void {
+        // Env defaults for the whole chain first: env has priority over
+        // default_str, so all env values must land before any default.
+        for (chain) |c| try env_defaults.applyEnvDefaultsForCommand(self, ctx, c);
+        for (chain) |c| try env_defaults.applyDefaultsForCommand(self, ctx, c);
 
-        // Check for required flags
-        try env_defaults.applyDefaultValues(self, ctx, cmd);
-        try self.checkRequired(ctx, cmd);
+        // Required flags and flag groups are enforced chain-wide: a root
+        // flag marked required must not pass silently when a subcommand
+        // runs, and ancestor flag-group constraints span the chain.
+        for (chain) |c| try validate.checkRequired(self, ctx, c);
+        for (chain) |c| try validate.checkFlagGroups(self, ctx, c);
 
-        // Check flag groups
-        try self.checkFlagGroups(ctx, cmd);
-
-        // Check positional argument validation
-        try self.checkArgs(ctx, cmd);
+        // Positional rules belong to the resolved leaf command.
+        try validate.checkArgs(self, ctx, chain[chain.len - 1]);
     }
 
     /// Walk the full command chain for flag lookup.
@@ -589,100 +603,6 @@ pub const Parser = struct {
         }
 
         return null;
-    }
-
-    /// Verify that all flags marked as `required` have been provided.
-    /// Records the first missing flag name for error reporting.
-    /// Also checks if a missing required flag had an env parse error.
-    fn checkRequired(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
-        for (cmd.flags) |flag| {
-            if (flag.required) {
-                if (ctx.getFlag(flag.name) == null) {
-                    // Check if there was an env parse error for this flag
-                    for (self.env_parse_errors[0..self.env_parse_error_count]) |env_err| {
-                        if (mem.eql(u8, env_err.flag_name, flag.name)) {
-                            // The flag was provided via env but failed to parse
-                            self.missing_required_flag = flag.name;
-                            return ParseError.InvalidValue;
-                        }
-                    }
-                    // Store the missing flag name for better error reporting
-                    self.missing_required_flag = flag.name;
-                    return ParseError.MissingRequired;
-                }
-            }
-        }
-    }
-
-    /// Check flag group constraints
-    fn checkFlagGroups(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
-        for (cmd.flag_groups) |group| {
-            switch (group.group_type) {
-                .mutually_exclusive => {
-                    // Check that at most one flag in the group is set
-                    var set_count: usize = 0;
-                    var first_set: ?[]const u8 = null;
-                    var second_set: ?[]const u8 = null;
-                    for (group.flags) |flag_name| {
-                        if (ctx.getFlag(flag_name) != null) {
-                            set_count += 1;
-                            if (first_set == null) {
-                                first_set = flag_name;
-                            } else if (second_set == null) {
-                                second_set = flag_name;
-                            }
-                        }
-                    }
-                    if (set_count > 1) {
-                        if (first_set != null and second_set != null) {
-                            self.conflicting_flags = .{ first_set.?, second_set.? };
-                        }
-                        return ParseError.MutuallyExclusiveFlags;
-                    }
-                },
-                .required_together => {
-                    // Check that either all or none are set
-                    var any_set = false;
-                    var all_set = true;
-                    for (group.flags) |flag_name| {
-                        if (ctx.getFlag(flag_name) != null) {
-                            any_set = true;
-                        } else {
-                            all_set = false;
-                        }
-                    }
-                    if (any_set and !all_set) {
-                        self.missing_together_flags = group.flags;
-                        return ParseError.RequiredTogetherFlags;
-                    }
-                },
-                .one_required => {
-                    // Check that at least one flag in the group is set
-                    var any_set = false;
-                    for (group.flags) |flag_name| {
-                        if (ctx.getFlag(flag_name) != null) {
-                            any_set = true;
-                            break;
-                        }
-                    }
-                    if (!any_set) {
-                        self.one_required_group = group.flags;
-                        return ParseError.OneRequiredFlags;
-                    }
-                },
-            }
-        }
-    }
-
-    /// Check positional argument constraints
-    fn checkArgs(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
-        if (cmd.args) |args_validator| {
-            args_validator.validate(ctx.positionals.items) catch {
-                // Get error details for better error messages
-                self.args_error = args_validator.getErrorDetails(ctx.positionals.items);
-                return ParseError.InvalidArgs;
-            };
-        }
     }
 };
 
