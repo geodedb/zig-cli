@@ -533,6 +533,45 @@ test "zsh: control bytes in command name stripped from #compdef (CWE-150)" {
     try std.testing.expect(std.mem.startsWith(u8, script, "#compdef app[2Jx"));
 }
 
+test "zsh: control bytes in field metadata stripped from script (CWE-150)" {
+    // Strengthened invariant: ESC/BEL/C0/DEL in flag.help, subcmd.summary,
+    // AND a completion value must all be stripped from the generated script,
+    // not just cmd.name. These ride the per-field escapers (escapeZshSingleQuote
+    // / escapeZshDescribeName), which previously stripped only NUL/newline.
+    const subcmd = Command{
+        .name = "deploy",
+        .summary = "Sum\x1b]0;PWNED\x07mary",
+    };
+    const cmd = Command{
+        .name = "app\x1b[2Jx",
+        .summary = "Hostile name",
+        .subcommands = &.{&subcmd},
+        .flags = &.{
+            FlagSpec{
+                .name = "format",
+                .help = "Out\x1b]0;PWNED\x07put\x01\x7f",
+                .ftype = .string,
+                .completions = &.{ "js\x1bon", "yaml" },
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // No control byte may survive anywhere in the generated script.
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x1b) == null); // ESC
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x07) == null); // BEL
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x01) == null); // C0
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x7f) == null); // DEL
+    // Printable remainder of flag.help is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "Out]0;PWNEDput") != null);
+    // Printable remainder of subcmd.summary is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "Sum]0;PWNEDmary") != null);
+    // Printable remainder of the completion value is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "json") != null);
+}
+
 test "zsh: hostile completion value with single-quote is escaped (gap C)" {
     // A completion value containing '\'' would break the surrounding single-quote
     // context in the zsh optspec `':value:(val1 val2)'`.

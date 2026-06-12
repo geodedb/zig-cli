@@ -37,6 +37,9 @@ Audit hardening batches (2026-06 codepros audit iterations 1-4).
 - `ProgressBar.render` clamps `current` to `total` before computing the bar fill, so a concurrent `increment()` advancing past `total` (its `fetchAdd` runs outside the render mutex) can no longer make `width - filled` underflow — previously a panic in safe builds and a near-infinite stderr write in ReleaseFast (CWE-191/CWE-362 reachable DoS via the thread-safe API; distinct from the closed init-time NS-058)
 - Documented the mixed borrowed/owned return contract on `text.wordWrap`, `padRight`, `padLeft`, and `center` (they return a borrowed slice in the no-op case, like `truncate`): a caller using `defer free(result)` would otherwise free a non-heap pointer when the input already fits
 
+### Fixed (iteration 10)
+- Completion-script per-field escapers (bash/fish/zsh/powershell) now strip the full terminal-control-byte set — ESC (0x1B), BEL (0x07), every other C0 control, and DEL (0x7F) — instead of only NUL/newline/CR. Field metadata (`flag.help`, `gflag.help`, `subcmd.summary`, and completion **values**) could previously carry an embedded `\x1b]0;…\x07` OSC sequence straight into a generated completion script, executing against the terminal when a user inspects/`cat`s/pages the script before `eval` (CWE-150). Shell metacharacter escaping is unchanged — only control bytes are stripped; tab is preserved. The "No ESC byte may survive" invariant test now drives ESC/BEL/C0/DEL through field metadata (not just `cmd.name`), with equivalent field-metadata control-byte invariant tests added for bash, fish, and powershell
+
 ### Changed
 - Invalid flag `default_str` values now return `ParseError.InvalidValue` instead of being silently skipped
 - Windows `password()` returns `NotInteractive` when echo suppression is unavailable (GetConsoleMode/SetConsoleMode failure) instead of reading the password with echo enabled

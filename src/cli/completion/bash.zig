@@ -14,14 +14,21 @@ const FlagSpec = command.FlagSpec;
 
 /// Escape a string for use inside bash double-quoted contexts.
 /// Escapes: $, `, ", \, !
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (`sanitize.isTerminalControl`: all C0
+/// controls including ESC/BEL/CR plus DEL, but keeping tab) and newline. This
+/// closes the field-metadata path where an ESC could survive into the
+/// generated script and execute against the terminal (CWE-150).
 /// Fast path: if no special chars are found, returns `s` directly (no allocation).
 pub fn escapeBashDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
-    // Fast path: scan for special chars
+    // Fast path: scan for chars that must be escaped or stripped.
     var needs_escape = false;
     for (s) |c| {
+        if (c == '\n' or sanitize.isTerminalControl(c)) {
+            needs_escape = true;
+            break;
+        }
         switch (c) {
-            '$', '`', '"', '\\', '!', 0x00, '\n', '\r' => {
+            '$', '`', '"', '\\', '!' => {
                 needs_escape = true;
                 break;
             },
@@ -34,9 +41,9 @@ pub fn escapeBashDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]con
     var list: std.ArrayListUnmanaged(u8) = .empty;
     list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
+        // Strip newline and every terminal-control byte entirely.
+        if (c == '\n' or sanitize.isTerminalControl(c)) continue;
         switch (c) {
-            // Strip NUL bytes and newlines entirely
-            0x00, '\n', '\r' => {},
             '$', '`', '"', '\\', '!' => {
                 list.append(allocator, '\\') catch return error.OutOfMemory;
                 list.append(allocator, c) catch return error.OutOfMemory;
@@ -85,17 +92,16 @@ pub fn escapeBashCasePattern(allocator: std.mem.Allocator, s: []const u8) ![]con
 
 /// Escape a string for use inside bash single-quoted contexts.
 /// Replaces ' with '\'' (close quote, escaped quote, reopen quote).
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (`sanitize.isTerminalControl`: all C0
+/// controls including ESC/BEL/CR plus DEL, but keeping tab) and newline
+/// (CWE-150).
 /// Fast path: if no special chars are found, returns `s` directly (no allocation).
 pub fn escapeBashSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
-        switch (c) {
-            '\'', 0x00, '\n', '\r' => {
-                needs_escape = true;
-                break;
-            },
-            else => {},
+        if (c == '\'' or c == '\n' or sanitize.isTerminalControl(c)) {
+            needs_escape = true;
+            break;
         }
     }
     if (!needs_escape) return s;
@@ -103,9 +109,9 @@ pub fn escapeBashSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]con
     var list: std.ArrayListUnmanaged(u8) = .empty;
     list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
+        // Strip newline and every terminal-control byte entirely.
+        if (c == '\n' or sanitize.isTerminalControl(c)) continue;
         switch (c) {
-            // Strip NUL bytes and newlines entirely
-            0x00, '\n', '\r' => {},
             '\'' => list.appendSlice(allocator, "'\\''") catch return error.OutOfMemory,
             else => list.append(allocator, c) catch return error.OutOfMemory,
         }

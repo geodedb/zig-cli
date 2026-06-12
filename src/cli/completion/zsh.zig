@@ -23,14 +23,17 @@ inline fn inSet(comptime set: []const u8, c: u8) bool {
 /// Shared core for the zsh single-quoted-context escapers.
 /// Handles the two-pass logic: a scan-only fast path (returns `s` directly,
 /// no allocation), the '\'' pattern to break out of single quotes and
-/// re-enter, and stripping of NUL bytes (0x00), newlines (0x0A), and
-/// carriage returns (0x0D). Characters in the comptime `backslash_extra`
+/// re-enter, and stripping of every terminal-control byte
+/// (`sanitize.isTerminalControl`: all C0 controls including ESC/BEL/CR plus
+/// DEL, but keeping tab) and newline. Stripping the full control-byte set
+/// closes the field-metadata path where an ESC could survive into the
+/// generated script (CWE-150). Characters in the comptime `backslash_extra`
 /// set are additionally backslash-escaped for context-specific
 /// metacharacters (optspec brackets, _describe colons).
 fn escapeZshQuoted(comptime backslash_extra: []const u8, allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
-        if (c == '\'' or c == 0x00 or c == '\n' or c == '\r' or inSet(backslash_extra, c)) {
+        if (c == '\'' or c == '\n' or sanitize.isTerminalControl(c) or inSet(backslash_extra, c)) {
             needs_escape = true;
             break;
         }
@@ -40,8 +43,9 @@ fn escapeZshQuoted(comptime backslash_extra: []const u8, allocator: std.mem.Allo
     var list: std.ArrayListUnmanaged(u8) = .empty;
     list.ensureTotalCapacity(allocator, s.len + 4) catch {};
     for (s) |c| {
+        // Strip newline and every terminal-control byte entirely.
+        if (c == '\n' or sanitize.isTerminalControl(c)) continue;
         switch (c) {
-            0x00, '\n', '\r' => {},
             '\'' => {
                 // zsh '\'' pattern: end quote, escaped quote, reopen quote
                 list.appendSlice(allocator, "'\\''") catch return error.OutOfMemory;
@@ -59,7 +63,8 @@ fn escapeZshQuoted(comptime backslash_extra: []const u8, allocator: std.mem.Allo
 
 /// Escape a string for use inside zsh single-quoted contexts.
 /// Uses the '\'' pattern to break out of single quotes and re-enter.
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (all C0 controls incl. ESC/BEL/CR
+/// plus DEL, keeping tab) and newline (CWE-150).
 /// Fast path: if no single quotes or control chars, returns `s` directly (no allocation).
 pub fn escapeZshSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     return escapeZshQuoted("", allocator, s);
@@ -67,13 +72,19 @@ pub fn escapeZshSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]cons
 
 /// Escape a string for use inside zsh double-quoted contexts.
 /// Escapes: $, `, ", \
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (`sanitize.isTerminalControl`: all C0
+/// controls including ESC/BEL/CR plus DEL, but keeping tab) and newline
+/// (CWE-150).
 /// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapeZshDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
+        if (c == '\n' or sanitize.isTerminalControl(c)) {
+            needs_escape = true;
+            break;
+        }
         switch (c) {
-            '$', '`', '"', '\\', 0x00, '\n', '\r' => {
+            '$', '`', '"', '\\' => {
                 needs_escape = true;
                 break;
             },
@@ -85,8 +96,9 @@ pub fn escapeZshDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]cons
     var list: std.ArrayListUnmanaged(u8) = .empty;
     list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
+        // Strip newline and every terminal-control byte entirely.
+        if (c == '\n' or sanitize.isTerminalControl(c)) continue;
         switch (c) {
-            0x00, '\n', '\r' => {},
             '$', '`', '"', '\\' => {
                 list.append(allocator, '\\') catch return error.OutOfMemory;
                 list.append(allocator, c) catch return error.OutOfMemory;
@@ -104,7 +116,8 @@ pub fn escapeZshDoubleQuote(allocator: std.mem.Allocator, s: []const u8) ![]cons
 /// NAME portion would close the description bracket early; a `'` would
 /// break out of the surrounding single-quote context.  `[` is also escaped
 /// to prevent it from opening a spurious bracket.
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (all C0 controls incl. ESC/BEL/CR
+/// plus DEL, keeping tab) and newline (CWE-150).
 /// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapeZshOptspecName(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     return escapeZshQuoted("[]", allocator, s);
@@ -115,7 +128,8 @@ pub fn escapeZshOptspecName(allocator: std.mem.Allocator, s: []const u8) ![]cons
 /// it early, so the completed word would be a prefix of the real name while
 /// the dispatch case label uses the full name — the subcommand becomes
 /// unreachable.  `_describe` supports `\:` for a literal colon in the word.
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (all C0 controls incl. ESC/BEL/CR
+/// plus DEL, keeping tab) and newline (CWE-150).
 /// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapeZshDescribeName(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     return escapeZshQuoted(":", allocator, s);

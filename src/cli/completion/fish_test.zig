@@ -497,3 +497,47 @@ test "fish: benign root name is emitted quoted but byte-identical content (gap A
     // Old bare form must not appear after the fix
     try std.testing.expect(std.mem.indexOf(u8, script, "complete -c myapp -f") == null);
 }
+
+// ============================================================================
+// Field-metadata control-byte stripping (CWE-150, iter-10)
+//
+// flag.help, subcmd.summary, and completion values flow through
+// escapeFishSingleQuote. That escaper must strip the full terminal-control-byte
+// set, not just NUL/newline, so an ESC/BEL in field metadata cannot survive
+// into the `-d '...'` description text of a generated completion line.
+// ============================================================================
+
+test "fish: control bytes in field metadata stripped from script (CWE-150)" {
+    const subcmd = Command{
+        .name = "deploy",
+        .summary = "Sum\x1b]0;PWNED\x07mary",
+    };
+    const cmd = Command{
+        .name = "app",
+        .summary = "App",
+        .subcommands = &.{&subcmd},
+        .flags = &.{
+            .{
+                .name = "format",
+                .help = "Out\x1b]0;PWNED\x07put\x01\x7f",
+                .ftype = .string,
+                .completions = &.{ "js\x1bon", "yaml" },
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // No control byte may survive anywhere in the generated script.
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x1b) == null); // ESC
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x07) == null); // BEL
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x01) == null); // C0
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x7f) == null); // DEL
+    // Printable remainder of flag.help is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "Out]0;PWNEDput") != null);
+    // Printable remainder of subcmd.summary is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "Sum]0;PWNEDmary") != null);
+    // Printable remainder of the completion value is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "json") != null);
+}
