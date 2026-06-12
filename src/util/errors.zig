@@ -329,6 +329,18 @@ test "errors: formatUnknownCommand strips control bytes from input" {
     try std.testing.expect(std.mem.indexOf(u8, fe.message, "not a command") != null);
 }
 
+test "errors: formatUnknownCommand strips control bytes and preserves hint" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const fe = try formatUnknownCommand("de\x1b[2Jploy", "deploy", arena.allocator());
+    // No 0x1b byte must appear anywhere in the message
+    try std.testing.expect(std.mem.indexOfScalar(u8, fe.message, 0x1b) == null);
+    // The hint must still say Did you mean 'deploy'?
+    try std.testing.expect(fe.hint != null);
+    try std.testing.expectEqualStrings("Did you mean 'deploy'?", fe.hint.?);
+}
+
 test "errors: ExitCode values" {
     try std.testing.expectEqual(@as(u8, 0), ExitCode.success.toInt());
     try std.testing.expectEqual(@as(u8, 1), ExitCode.general_error.toInt());

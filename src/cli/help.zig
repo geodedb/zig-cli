@@ -54,7 +54,9 @@ const FlagSpec = command.FlagSpec;
 const textutil = struct {
     /// True for bytes that must be stripped to protect terminal state:
     /// C0 controls (0x00-0x1F) except newline (0x0A) and tab (0x09), plus
-    /// DEL (0x7F). CR (0x0D) is stripped because it overwrites lines.
+    /// DEL (0x7F). CR (0x0D) is included in the stripped set because a bare
+    /// carriage return moves the cursor to column 0, allowing subsequent
+    /// output to overwrite the current terminal line.
     inline fn isTerminalControl(c: u8) bool {
         return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
     }
@@ -233,9 +235,11 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
 }
 
 /// Render a single plain-text help section to `w`.
-/// All command metadata (names, summaries, help strings, examples, env var
-/// names, defaults) is filtered through `textutil.writeControlFiltered` to
+/// All Command-struct metadata (names, summaries, help strings, examples, env
+/// var names, defaults) is filtered through `textutil.writeControlFiltered` to
 /// neutralize terminal escape/control bytes (CWE-150).
+/// HelpTemplate fields (section headers, footer_text) are developer
+/// configuration and are emitted as-is.
 fn renderTextSection(w: anytype, use_color: bool, cmd: *const Command, template: *const HelpTemplate, section: HelpSection) !void {
     switch (section) {
         .header => try printSectionHeader(w, use_color, cmd),
@@ -475,11 +479,16 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     try w.splatByteAll(' ', template.indent);
 
     // Short flag
+    // flag.short is programmer-defined, but guard control bytes for CWE-150 consistency
     if (flag.short) |s| {
-        if (use_color) {
-            try w.print(ansi_yellow ++ "-{c}" ++ ansi_reset ++ ", ", .{s});
+        if (std.ascii.isPrint(s)) {
+            if (use_color) {
+                try w.print(ansi_yellow ++ "-{c}" ++ ansi_reset ++ ", ", .{s});
+            } else {
+                try w.print("-{c}, ", .{s});
+            }
         } else {
-            try w.print("-{c}, ", .{s});
+            try w.print("    ", .{});
         }
     } else {
         try w.print("    ", .{});
@@ -2017,4 +2026,41 @@ test "help: colored text output strips escape bytes from metadata but keeps styl
     // (the ESC byte is stripped; the printable remainder is harmless)
     try std.testing.expect(mem.indexOf(u8, output, "\x1b[2J") == null);
     try std.testing.expect(mem.indexOf(u8, output, "\x1b[31m") == null);
+}
+
+test "help: short flag with control byte is not emitted (CWE-150)" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "test",
+        .flags = &.{
+            FlagSpec{
+                .name = "evil",
+                .short = 0x1b, // ESC — a non-printable byte
+                .help = "should not emit ESC",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const template = HelpTemplate.default;
+    for (template.sections) |section| {
+        try renderTextSection(w, false, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    try std.testing.expect(mem.indexOfScalar(u8, output, 0x1b) == null);
+}
+
+test "help: textutil mirror matches canonical control-byte policy" {
+    // canonical policy: strip <0x20 except \n,\t; strip 0x7f
+    var c: u16 = 0;
+    while (c <= 0xff) : (c += 1) {
+        const b: u8 = @intCast(c);
+        const expected = (b < 0x20 and b != '\n' and b != '\t') or b == 0x7f;
+        try std.testing.expectEqual(expected, textutil.isTerminalControl(b));
+    }
 }
