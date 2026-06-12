@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Audit hardening batches (2026-06 codepros audit iterations 1-4).
+## [0.1.8] - 2026-06-12
+
+Audit hardening release: 11 iterations of `/security:appsec-review` +
+`/codepros:audit` run to convergence (dual-independent confirmation). Test
+suite grew from 803 to 1129 unit tests; `zig build check` is clean for native
+and `x86_64-windows`. Note: versions 0.1.5–0.1.7 were consumed by an unrelated
+dependency-sync tagging line and skipped here.
 
 ### Changed (parser semantics, iteration 4)
 - **Breaking:** a value-taking short flag in any non-final cluster position is now an error (`MissingValue`) instead of being silently dropped (e.g. `-ov file.txt` where `-o` takes a value)
@@ -234,7 +240,8 @@ Initial open source release under Apache-2.0 license.
 - Automatic path redaction for sensitive files in error messages
 - Strict secret handling with file/stdin-only input
 
-[Unreleased]: https://gitlab.com/devnw/zig/cli/-/compare/v0.1.4...HEAD
+[Unreleased]: https://gitlab.com/devnw/zig/cli/-/compare/v0.1.8...HEAD
+[0.1.8]: https://gitlab.com/devnw/zig/cli/-/compare/v0.1.4...v0.1.8
 [0.1.4]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.4
 [0.1.3]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.3
 [0.1.2]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.2
