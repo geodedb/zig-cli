@@ -480,3 +480,20 @@ test "zsh: hostile completion value with single-quote is escaped (gap C)" {
     // Raw unescaped breakout form must NOT appear
     try std.testing.expect(std.mem.indexOf(u8, script, "(v'al") == null);
 }
+
+test "zsh: newline in command name cannot inject a script line (N-04)" {
+    const cmd = Command{
+        .name = "a\necho injected",
+        .summary = "App",
+    };
+
+    const script = try zsh.generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // The newline must be stripped from #compdef and the header comment,
+    // so no generated line may begin with the injected payload.
+    var lines = std.mem.splitScalar(u8, script, '\n');
+    while (lines.next()) |line| {
+        try std.testing.expect(!std.mem.startsWith(u8, line, "echo injected"));
+    }
+}
