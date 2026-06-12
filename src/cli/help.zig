@@ -861,7 +861,8 @@ pub fn generateMarkdown(cmd: *const Command, allocator: std.mem.Allocator) ![]co
 }
 
 /// Write a string to `w` with characters escaped for Markdown table cells.
-/// Escapes: `|` -> `\|`, `` ` `` -> `` \` ``, `<` -> `&lt;`, `>` -> `&gt;`.
+/// Escapes: `|` -> `\|`, `` ` `` -> `` \` ``, `<` -> `&lt;`, `>` -> `&gt;`,
+/// `\n` -> `<br>` (raw newline would terminate the table row), `\r` removed.
 fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
     var start: usize = 0;
     for (s, 0..) |c, idx| {
@@ -870,6 +871,8 @@ fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
             '`' => "\\`",
             '<' => "&lt;",
             '>' => "&gt;",
+            '\n' => "<br>",
+            '\r' => "",
             else => null,
         };
         if (esc) |escape_seq| {
@@ -883,35 +886,105 @@ fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
     }
 }
 
+/// Write a string to `w` escaped for Markdown headings / inline text.
+/// HTML-escapes angle brackets, escapes backticks, and collapses newlines/CR
+/// to spaces (headings must be single-line).
+fn writeMarkdownHeading(w: anytype, s: []const u8) !void {
+    var start: usize = 0;
+    for (s, 0..) |c, idx| {
+        const esc: ?[]const u8 = switch (c) {
+            '<' => "&lt;",
+            '>' => "&gt;",
+            '`' => "\\`",
+            '\n', '\r' => " ",
+            else => null,
+        };
+        if (esc) |escape_seq| {
+            if (idx > start) try w.writeAll(s[start..idx]);
+            try w.writeAll(escape_seq);
+            start = idx + 1;
+        }
+    }
+    if (start < s.len) try w.writeAll(s[start..]);
+}
+
+/// Write a string to `w` escaped for Markdown prose blocks.
+/// HTML-escapes angle brackets and neutralises line-leading `#` so injected
+/// text cannot create headings.
+fn writeMarkdownProse(w: anytype, s: []const u8) !void {
+    var at_line_start = true;
+    for (s) |c| {
+        if (at_line_start and c == '#') {
+            try w.writeAll("\\#");
+            at_line_start = false;
+            continue;
+        }
+        switch (c) {
+            '<' => try w.writeAll("&lt;"),
+            '>' => try w.writeAll("&gt;"),
+            '\n' => {
+                try w.writeAll("\n");
+                at_line_start = true;
+                continue;
+            },
+            else => try w.writeByte(c),
+        }
+        at_line_start = false;
+    }
+}
+
+/// Write content inside a code fence, prefixing any line that starts with
+/// ``` (after optional indentation) with a space so it cannot close the fence.
+fn writeFenceSafe(w: anytype, s: []const u8) !void {
+    var lines = std.mem.splitScalar(u8, s, '\n');
+    var first = true;
+    while (lines.next()) |line| {
+        if (!first) try w.writeAll("\n");
+        first = false;
+        if (std.mem.startsWith(u8, std.mem.trimStart(u8, line, " \t"), "```")) {
+            try w.writeAll(" ");
+        }
+        try w.writeAll(line);
+    }
+}
+
 fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void {
     // Header (depth determines heading level)
     for (0..depth) |_| {
         try w.writeAll("#");
     }
-    try w.print(" {s}\n\n", .{cmd.name});
+    try w.writeAll(" ");
+    try writeMarkdownHeading(w, cmd.name);
+    try w.writeAll("\n\n");
 
     // Summary
-    try w.print("{s}\n\n", .{cmd.summary});
+    try writeMarkdownProse(w, cmd.summary);
+    try w.writeAll("\n\n");
 
     // Synopsis
     try w.print("## Synopsis\n\n", .{});
-    try w.print("```\n{s} [OPTIONS]", .{cmd.name});
+    try w.writeAll("```\n");
+    try writeFenceSafe(w, cmd.name);
+    try w.writeAll(" [OPTIONS]");
     if (cmd.hasSubcommands()) {
-        try w.print(" <COMMAND> [ARGS]", .{});
+        try w.writeAll(" <COMMAND> [ARGS]");
     }
-    try w.print("\n```\n\n", .{});
+    try w.writeAll("\n```\n\n");
 
     // Description
     if (cmd.long_help.len > 0) {
         try w.print("## Description\n\n", .{});
-        try w.print("{s}\n\n", .{cmd.long_help});
+        try writeMarkdownProse(w, cmd.long_help);
+        try w.writeAll("\n\n");
     }
 
     // Examples
     if (cmd.examples.len > 0) {
         try w.print("## Examples\n\n", .{});
         for (cmd.examples) |example| {
-            try w.print("```bash\n{s}\n```\n\n", .{example});
+            try w.writeAll("```bash\n");
+            try writeFenceSafe(w, example);
+            try w.writeAll("\n```\n\n");
         }
     }
 
@@ -963,7 +1036,9 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
         // Print commands by group
         for (groups[0..group_count]) |group_name| {
             if (group_name.len > 0) {
-                try w.print("### {s}\n\n", .{group_name});
+                try w.writeAll("### ");
+                try writeMarkdownHeading(w, group_name);
+                try w.writeAll("\n\n");
             }
 
             try w.print("| Command | Description |\n", .{});
@@ -1581,6 +1656,137 @@ test "help: writeMarkdownEscaped mixed special chars" {
 
     try writeMarkdownEscaped(w, "a|b`c<d>e");
     try std.testing.expectEqualStrings("a\\|b\\`c&lt;d&gt;e", buf.written());
+}
+
+test "help: writeMarkdownEscaped newline becomes br" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownEscaped(w, "line1\nline2");
+    try std.testing.expectEqualStrings("line1<br>line2", buf.written());
+}
+
+test "help: writeMarkdownEscaped cr is removed" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownEscaped(w, "a\r\nb");
+    try std.testing.expectEqualStrings("a<br>b", buf.written());
+}
+
+test "help: writeMarkdownHeading escapes angle brackets" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownHeading(w, "x<script>alert(1)</script>");
+    const result = buf.written();
+    try std.testing.expect(mem.indexOf(u8, result, "<script>") == null);
+    try std.testing.expect(mem.indexOf(u8, result, "&lt;script&gt;") != null);
+}
+
+test "help: writeMarkdownHeading collapses newlines to spaces" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownHeading(w, "foo\nbar\r\nbaz");
+    try std.testing.expectEqualStrings("foo bar  baz", buf.written());
+}
+
+test "help: writeMarkdownProse escapes angle brackets" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownProse(w, "<img src=x onerror=1>");
+    try std.testing.expectEqualStrings("&lt;img src=x onerror=1&gt;", buf.written());
+}
+
+test "help: writeMarkdownProse neutralises line-leading hash" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownProse(w, "# fake heading\nnormal line");
+    const result = buf.written();
+    // Line-leading # must be escaped so it doesn't become a heading
+    try std.testing.expect(mem.indexOf(u8, result, "\n# fake") == null);
+    try std.testing.expect(mem.indexOf(u8, result, "\\# fake heading") != null);
+}
+
+test "help: writeFenceSafe blocks fence breakout" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeFenceSafe(w, "a\n```\nevil");
+    const result = buf.written();
+    // The ``` line must be prefixed with a space so it cannot close the outer fence
+    try std.testing.expect(mem.indexOf(u8, result, "\n```\n") == null);
+    try std.testing.expect(mem.indexOf(u8, result, "\n ```\n") != null);
+}
+
+test "help: generateMarkdown headings and prose are escaped" {
+    const cmd = Command{
+        .name = "x<script>",
+        .summary = "<img src=x onerror=1>",
+        .long_help = "# fake heading\n<b>bold</b>",
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    // The heading line must not contain a raw angle bracket — it would render as HTML
+    // when Markdown is converted to HTML. The synopsis code-fence is safe (code
+    // fences are not parsed as HTML), so we only check the heading line itself.
+    const heading_end = mem.indexOf(u8, md, "\n\n") orelse md.len;
+    const heading_line = md[0..heading_end];
+    try std.testing.expect(mem.indexOf(u8, heading_line, "<script>") == null);
+    try std.testing.expect(mem.indexOf(u8, heading_line, "&lt;script&gt;") != null);
+
+    // Summary prose must have angle brackets escaped
+    try std.testing.expect(mem.indexOf(u8, md, "<img") == null);
+    try std.testing.expect(mem.indexOf(u8, md, "&lt;img") != null);
+
+    // Heading injection via long_help: "\n# fake" must not appear
+    try std.testing.expect(mem.indexOf(u8, md, "\n# fake") == null);
+}
+
+test "help: generateMarkdown fence breakout blocked" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .examples = &.{"a\n```\nevil"},
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    // The ``` line inside the example must not appear unescaped — it would close
+    // the outer ```bash fence if emitted raw.
+    try std.testing.expect(mem.indexOf(u8, md, "\n```\nevil") == null);
+}
+
+test "help: generateMarkdown cell newline becomes br" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "flag",
+                .help = "line1\nline2",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    try std.testing.expect(mem.indexOf(u8, md, "line1<br>line2") != null);
 }
 
 // ============================================================================
