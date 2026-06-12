@@ -156,3 +156,118 @@ test "parser: required flag with unparseable env renders env-parse message (iter
     try std.testing.expect(std.mem.indexOf(u8, msg, "PATH") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "num") != null);
 }
+
+// ============================================================================
+// Subcommand resolution lock at first positional (iter3 finding 8)
+// ============================================================================
+
+test "parser: positional stops subcommand resolution - prog svc myname start (iter3-8)" {
+    // Bug: after "myname" becomes a positional, "start" (a subcommand of
+    // svc) was still being resolved as a subcommand.  Cobra semantics:
+    // resolution is locked the moment the first positional is recorded.
+    const start_cmd = Command{
+        .name = "start",
+        .summary = "Start service",
+    };
+    const svc_cmd = Command{
+        .name = "svc",
+        .summary = "Service management",
+        .subcommands = &.{&start_cmd},
+    };
+    const root = Command{
+        .name = "prog",
+        .summary = "Root command",
+        .subcommands = &.{&svc_cmd},
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "prog", "svc", "myname", "start" });
+    defer result.deinit(std.testing.allocator);
+
+    // Must resolve to "svc", not "start".
+    try std.testing.expectEqualStrings("svc", result.command.name);
+    // Both "myname" and "start" are positionals of svc.
+    try std.testing.expectEqual(@as(usize, 2), result.context.positionals.items.len);
+    try std.testing.expectEqualStrings("myname", result.context.positionals.items[0]);
+    try std.testing.expectEqualStrings("start", result.context.positionals.items[1]);
+}
+
+test "parser: normal subcommand resolution unchanged - prog svc start (iter3-8)" {
+    // Regression guard: when there is no positional before a subcommand
+    // token it must still be resolved as a subcommand.
+    const start_cmd = Command{
+        .name = "start",
+        .summary = "Start service",
+    };
+    const svc_cmd = Command{
+        .name = "svc",
+        .summary = "Service management",
+        .subcommands = &.{&start_cmd},
+    };
+    const root = Command{
+        .name = "prog",
+        .summary = "Root command",
+        .subcommands = &.{&svc_cmd},
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "prog", "svc", "start" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("start", result.command.name);
+    try std.testing.expectEqual(@as(usize, 0), result.context.positionals.items.len);
+}
+
+test "parser: positional after subcommand is kept - prog svc start myname (iter3-8)" {
+    // Regression guard: a positional AFTER a resolved subcommand is kept.
+    const start_cmd = Command{
+        .name = "start",
+        .summary = "Start service",
+    };
+    const svc_cmd = Command{
+        .name = "svc",
+        .summary = "Service management",
+        .subcommands = &.{&start_cmd},
+    };
+    const root = Command{
+        .name = "prog",
+        .summary = "Root command",
+        .subcommands = &.{&svc_cmd},
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "prog", "svc", "start", "myname" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("start", result.command.name);
+    try std.testing.expectEqual(@as(usize, 1), result.context.positionals.items.len);
+    try std.testing.expectEqualStrings("myname", result.context.positionals.items[0]);
+}
+
+test "parser: flags after positionals still parse (iter3-8)" {
+    // Flags must continue to be parsed even after positionals are recorded.
+    const svc_cmd = Command{
+        .name = "svc",
+        .summary = "Service management",
+        .flags = &.{
+            FlagSpec{ .name = "force", .help = "Force action", .ftype = .bool },
+        },
+    };
+    const root = Command{
+        .name = "prog",
+        .summary = "Root command",
+        .subcommands = &.{&svc_cmd},
+        .flags = &.{
+            FlagSpec{ .name = "force", .help = "Force action", .ftype = .bool },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "prog", "svc", "myname", "--force" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("svc", result.command.name);
+    try std.testing.expectEqual(@as(usize, 1), result.context.positionals.items.len);
+    try std.testing.expectEqualStrings("myname", result.context.positionals.items[0]);
+    try std.testing.expect(result.context.getBool("force"));
+}

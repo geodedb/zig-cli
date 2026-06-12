@@ -350,6 +350,13 @@ pub const Parser = struct {
     /// Consume one non-flag token: a single `-` (stdin/stdout placeholder)
     /// is recorded as a positional; anything else is resolved as a
     /// subcommand or appended as a positional.
+    ///
+    /// Cobra semantics: subcommand resolution is locked once the first
+    /// positional exists.  After that every bare token is a positional,
+    /// even if it matches a subcommand name deeper in the tree.  This
+    /// prevents `prog svc myname start` (where `start` is a subcommand
+    /// of `svc`) from silently changing the executed command when `myname`
+    /// is already a positional (iter3 finding 8).
     fn handlePlainToken(
         self: *Self,
         ctx: *Context,
@@ -360,6 +367,13 @@ pub const Parser = struct {
     ) ParseError!TokenOutcome {
         if (arg.len == 1 and arg[0] == '-') {
             // Single dash means stdin/stdout
+            ctx.positionals.append(ctx.allocator, arg) catch return ParseError.OutOfMemory;
+            return .{ .next = i + 1 };
+        }
+        // Resolution lock: once any positional has been recorded, every
+        // subsequent bare token is also a positional -- subcommand lookup
+        // is skipped entirely.
+        if (ctx.positionals.items.len > 0) {
             ctx.positionals.append(ctx.allocator, arg) catch return ParseError.OutOfMemory;
             return .{ .next = i + 1 };
         }
