@@ -11,8 +11,12 @@
 //!
 //! ## Thread Safety
 //!
-//! The parallel module is thread-safe. The underlying thread pool manages
-//! all synchronization internally. Results are collected into caller-owned slices.
+//! The parallel *operations* (`forEach`, `map`) are thread-safe: the underlying
+//! thread pool manages all synchronization internally and results are collected
+//! into disjoint, caller-owned slices. The *lifecycle* functions (`initPool`,
+//! `deinitPool`) are not concurrency-safe with each other — call them once at
+//! program start/exit (as the usage example shows), before/after any worker
+//! activity, not concurrently from multiple threads.
 //!
 //! ## Usage
 //!
@@ -55,7 +59,9 @@ const tp = if (tp_enabled) @import("thread_pool") else struct {};
 
 /// Thread pool configuration.
 pub const PoolConfig = struct {
-    /// Number of background worker threads. null = auto-detect from CPU count.
+    /// Number of background worker threads. `null` or `0` both auto-detect
+    /// from the CPU count. Values above the thread-pool maximum (64) are
+    /// clamped down rather than rejected.
     worker_count: ?usize = null,
     /// (unused; kept for API compatibility)
     heartbeat_interval: usize = 100 * std.time.ns_per_us,
@@ -76,22 +82,26 @@ var pool_workers: usize = 1;
 /// hard-caps `max_threads` at 64 (its non-empty-workers steal bitmap is a
 /// single u64) and `Config.validate()` rejects `max_threads > 64` with
 /// `error.TooManyWorkers`. The library is not exported as a named constant, so
-/// it is mirrored here; an explicit `worker_count` above this would make
-/// `ThreadPool.init` fail. The auto path (`max_threads = 0`) is clamped to <=64
-/// inside the library's `normalized()`, so only the explicit path needs us to
-/// clamp. Keep in sync with the vendored dep if it ever lifts the cap.
+/// it is mirrored here. We resolve the requested count to a concrete value and
+/// clamp it to this cap before `ThreadPool.init`, so neither an over-large
+/// explicit count nor a >64-thread auto-detected host can make init fail. Keep
+/// in sync with the vendored dep if it ever lifts the cap.
 const MAX_WORKERS: usize = 64;
 
-/// Clamp an explicit worker count to the thread-pool maximum.
+/// Resolve a requested worker count to the concrete number of threads the pool
+/// will run.
 ///
-/// `null` (auto-detect) passes through as 0 — the library auto-clamps the
-/// detected CPU count to `MAX_WORKERS` itself. An explicit count above the cap
-/// is clamped down so `ThreadPool.init` cannot fail with `error.TooManyWorkers`
-/// (8-1). The clamped value is what `pool_workers` records, so chunking math
-/// reflects the real worker count rather than the caller's request.
-fn clampWorkerCount(worker_count: ?usize) usize {
+/// `null` or `0` both mean auto-detect: the host CPU count is probed via
+/// `getCpuCount` (falling back to 1) — `detected_cpus` carries that probe so the
+/// caller can make it exactly once (avoiding a TOCTOU divergence between the
+/// value the library spawns and the value `pool_workers` records on CPU-hotplug
+/// hosts, A1). Any value above `MAX_WORKERS` is clamped so `ThreadPool.init`
+/// cannot fail with `error.TooManyWorkers` (8-1). The returned value is what
+/// `pool_workers` records, so chunking math reflects the real worker count.
+fn resolveWorkerCount(worker_count: ?usize, detected_cpus: usize) usize {
     const requested = worker_count orelse 0;
-    return @min(requested, MAX_WORKERS);
+    const resolved = if (requested == 0) detected_cpus else requested;
+    return @min(@max(resolved, 1), MAX_WORKERS);
 }
 
 /// Initialize and start the thread pool.
@@ -101,11 +111,13 @@ pub fn initPool(config: PoolConfig) void {
 
     if (pool_started.load(.acquire)) return;
 
-    // Clamp the explicit worker count to the library cap so an over-large
-    // `--jobs N` (or getCpuCount() on >64-thread hardware) does not abort the
-    // process via thread_pool's `error.TooManyWorkers` (8-1). worker_count=0
-    // (auto) stays 0; the library clamps the detected CPU count itself.
-    const max: usize = clampWorkerCount(config.worker_count);
+    // Resolve the worker count once, up front: a null/0 request auto-detects via
+    // a single CPU probe (so pool_workers cannot diverge from the spawned count,
+    // A1; and explicit 0 == auto, A2), and any over-large `--jobs N` is clamped
+    // to the library cap so thread_pool's `error.TooManyWorkers` cannot abort the
+    // process (8-1).
+    const detected = std.Thread.getCpuCount() catch 1;
+    const max: usize = resolveWorkerCount(config.worker_count, detected);
     // The remaining `catch @panic` covers a genuine init failure (OOM). initPool
     // returns void and is documented as "call once at startup", so aborting on
     // an out-of-memory pool allocation is acceptable: the program cannot make
@@ -113,12 +125,9 @@ pub fn initPool(config: PoolConfig) void {
     pool = tp.ThreadPool.init(std.heap.page_allocator, .{
         .max_threads = max,
     }) catch @panic("thread-pool: init failed");
-    // Record the CLAMPED worker count, not the requested one, so chunking math
-    // (computeNumChunks) is consistent with the pool that actually spawned. On
-    // the auto path the library clamps the detected CPU count to MAX_WORKERS, so
-    // clamp the locally-detected count too to stay in agreement on >64-thread
-    // hardware.
-    pool_workers = if (max > 0) max else @min(std.Thread.getCpuCount() catch 1, MAX_WORKERS);
+    // Record the resolved (concrete, clamped) worker count, so chunking math
+    // (computeNumChunks) is consistent with the pool that actually spawned.
+    pool_workers = max;
     pool_started.store(true, .release);
 }
 
@@ -199,7 +208,10 @@ const TailRange = struct { start: usize, end: usize };
 /// `start` is clamped to `items_len` so a (pathological) `submitted` larger than
 /// `n_chunks` can never produce `start > end`.
 fn tailItemRange(n_chunks: usize, chunk_size: usize, submitted: usize, items_len: usize) TailRange {
-    _ = n_chunks; // shape documented above; the tail is bounded by items_len.
+    // submitted can never exceed the number of chunks we built; assert the
+    // invariant so a future miscalculation surfaces in Debug/ReleaseSafe rather
+    // than silently leaving result slots unprocessed.
+    std.debug.assert(submitted <= n_chunks);
     const start = @min(submitted * chunk_size, items_len);
     return .{ .start = start, .end = items_len };
 }
@@ -389,14 +401,17 @@ test "chunk count bounded by workers, items, and MAX_CHUNKS" {
     try std.testing.expectEqual(@as(usize, 1), computeNumChunks(1, 0)); // degenerate: never zero
 }
 
-test "clampWorkerCount: explicit >MAX clamps, auto/in-range pass through" {
+test "resolveWorkerCount: explicit >MAX clamps; null/0 auto-detect; floor 1" {
     // 8-1: thread_pool validate() rejects max_threads > MAX_WORKERS with
     // error.TooManyWorkers; the explicit path must clamp before init.
-    try std.testing.expectEqual(@as(usize, 0), clampWorkerCount(null)); // auto stays 0 (lib clamps)
-    try std.testing.expectEqual(@as(usize, 4), clampWorkerCount(4)); // in-range unchanged
-    try std.testing.expectEqual(MAX_WORKERS, clampWorkerCount(MAX_WORKERS)); // exactly at cap
-    try std.testing.expectEqual(MAX_WORKERS, clampWorkerCount(100)); // explicit >cap clamps
-    try std.testing.expectEqual(MAX_WORKERS, clampWorkerCount(10_000));
+    // A2: explicit 0 resolves the same as null (auto-detect).
+    try std.testing.expectEqual(@as(usize, 8), resolveWorkerCount(null, 8)); // auto -> detected
+    try std.testing.expectEqual(@as(usize, 8), resolveWorkerCount(0, 8)); // explicit 0 == auto
+    try std.testing.expectEqual(@as(usize, 4), resolveWorkerCount(4, 8)); // in-range unchanged
+    try std.testing.expectEqual(MAX_WORKERS, resolveWorkerCount(MAX_WORKERS, 8)); // at cap
+    try std.testing.expectEqual(MAX_WORKERS, resolveWorkerCount(100, 8)); // explicit >cap clamps
+    try std.testing.expectEqual(MAX_WORKERS, resolveWorkerCount(null, 10_000)); // auto >cap clamps
+    try std.testing.expectEqual(@as(usize, 1), resolveWorkerCount(null, 0)); // degenerate detect -> 1
 }
 
 test "parallel: initPool with worker_count over thread-pool cap does not panic" {
@@ -472,10 +487,10 @@ test "tailItemRange: unsubmitted chunk tail maps to correct item indices" {
         TailRange{ .start = 6, .end = 7 },
         tailItemRange(4, 2, 3, 7),
     );
-    // Clamp guard: a submitted count that would push start past items_len
-    // (cannot happen in practice, but the math must not produce start > end).
+    // Clamp guard: a ragged final chunk where submitted*chunk_size overshoots
+    // items_len must clamp start to items_len (empty tail), not exceed it.
     try std.testing.expectEqual(
         TailRange{ .start = 7, .end = 7 },
-        tailItemRange(4, 2, 5, 7),
+        tailItemRange(4, 2, 4, 7),
     );
 }
