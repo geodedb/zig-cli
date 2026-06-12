@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const tty = @import("tty.zig");
+const sanitize = @import("sanitize.zig");
 
 inline fn io() std.Io {
     return std.Io.Threaded.global_single_threaded.io();
@@ -73,9 +74,8 @@ pub const Progress = struct {
         };
 
         if (self.enabled) {
-            // Hide cursor
-            stderrPrint("\x1b[?25l", .{}) catch {};
-            self.render() catch {};
+            // NP-031: hide-cursor + first frame batched into one write
+            self.renderWithPrefix("\x1b[?25l") catch {};
         }
 
         return self;
@@ -91,8 +91,8 @@ pub const Progress = struct {
         };
 
         if (self.enabled) {
-            stderrPrint("\x1b[?25l", .{}) catch {};
-            self.render() catch {};
+            // NP-031: hide-cursor + first frame batched into one write
+            self.renderWithPrefix("\x1b[?25l") catch {};
         }
 
         return self;
@@ -123,24 +123,51 @@ pub const Progress = struct {
         stderrPrint("\r\x1b[K\x1b[?25h", .{}) catch {};
     }
 
-    /// Stop with a completion message
+    /// Stop with a completion message. The message is control-filtered so
+    /// caller data cannot inject ANSI/OSC escape sequences (NS-056 / CWE-150).
     pub fn stopWithMessage(self: *Self, message: []const u8) void {
+        var mbuf: [256]u8 = undefined;
+        var mw = std.Io.Writer.fixed(&mbuf);
+        // Truncation of >256-byte messages is acceptable for a single line.
+        sanitize.writeControlFiltered(&mw, message) catch {};
         if (self.enabled) {
             // Clear line, show message, show cursor
-            stderrPrint("\r\x1b[K{s}\n\x1b[?25h", .{message}) catch {};
+            stderrPrint("\r\x1b[K{s}\n\x1b[?25h", .{mw.buffered()}) catch {};
         } else {
-            stderrPrint("{s}\n", .{message}) catch {};
+            stderrPrint("{s}\n", .{mw.buffered()}) catch {};
         }
     }
 
     fn render(self: *Self) !void {
+        return self.renderWithPrefix("");
+    }
+
+    /// Render the spinner line; `prefix` is emitted in the same single write
+    /// (used to batch the hide-cursor sequence with the first render).
+    /// `prefix` bypasses sanitization: callers must pass only trusted,
+    /// compile-time-constant ANSI sequences.
+    fn renderWithPrefix(self: *Self, prefix: []const u8) !void {
         const frames = self.spinner_style.frames();
         const frame = frames[self.frame_index];
 
+        // Control-filter the message so caller data cannot inject ANSI/OSC
+        // escape sequences (NS-056 / CWE-150).
+        var mbuf: [256]u8 = undefined;
+        var mw = std.Io.Writer.fixed(&mbuf);
+        // Truncation of >256-byte messages is acceptable for a single
+        // spinner line.
+        sanitize.writeControlFiltered(&mw, self.message) catch {};
+
         // Clear line and write progress
-        try stderrPrint("\r\x1b[K{s} {s}", .{ frame, self.message });
+        try stderrPrint("{s}\r\x1b[K{s} {s}", .{ prefix, frame, mw.buffered() });
     }
 };
+
+/// Compute the bar width for a terminal of `term_width` columns.
+/// Saturating: never underflows on narrow terminals; minimum 1 column.
+fn barWidthForTerminal(term_width: u16) u16 {
+    return @max(@min(term_width -| 20, 50), 1);
+}
 
 /// Thread-safe progress bar.
 ///
@@ -176,7 +203,7 @@ pub const ProgressBar = struct {
         return .{
             .total = total,
             .current = std.atomic.Value(usize).init(0),
-            .width = @min(term_info.width - 20, 50),
+            .width = barWidthForTerminal(term_info.width),
             .enabled = term_info.is_tty,
             .message = message,
             .render_mutex = .{},
@@ -237,11 +264,18 @@ pub const ProgressBar = struct {
 
         const empty = self.width - filled;
 
+        // Control-filter the message so caller data cannot inject ANSI/OSC
+        // escape sequences (NS-056 / CWE-150).
+        var mbuf: [256]u8 = undefined;
+        var mw = std.Io.Writer.fixed(&mbuf);
+        // Truncation of >256-byte messages is acceptable for a single line.
+        sanitize.writeControlFiltered(&mw, self.message) catch {};
+
         var wbuf: [4096]u8 = undefined;
         var fw = std.Io.File.stderr().writer(io(), &wbuf);
         const w = &fw.interface;
 
-        try w.print("\r{s} [", .{self.message});
+        try w.print("\r{s} [", .{mw.buffered()});
 
         try w.splatByteAll('=', filled);
         try w.splatByteAll(' ', empty);
@@ -402,4 +436,11 @@ test "progress: Progress stopWithMessage when disabled" {
     var progress = Progress.startIfTty(false, "Loading...");
     // Should not crash when disabled
     progress.stopWithMessage("Done!");
+}
+
+test "progress: ProgressBar width computation does not underflow on narrow terminals" {
+    try std.testing.expectEqual(@as(u16, 1), barWidthForTerminal(10));
+    try std.testing.expectEqual(@as(u16, 1), barWidthForTerminal(0));
+    try std.testing.expectEqual(@as(u16, 50), barWidthForTerminal(200));
+    try std.testing.expectEqual(@as(u16, 20), barWidthForTerminal(40));
 }

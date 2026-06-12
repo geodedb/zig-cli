@@ -8,9 +8,16 @@
 //! - Configurable borders and padding
 //! - ANSI color support
 //! - Row separators and alignment
+//!
+//! ## Width model
+//! Column widths are byte-oriented (not codepoint- or grapheme-cluster-aware).
+//! Multibyte UTF-8 content is never split mid-codepoint (NS-062 / CWE-1284).
+//! Display alignment of wide glyphs (e.g. CJK double-width characters) is not
+//! wcwidth-aware — this is a documented limitation.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const sanitize = @import("sanitize.zig");
 
 /// Column alignment options
 pub const Alignment = enum {
@@ -102,8 +109,11 @@ pub const Table = struct {
     /// Add a column definition
     pub fn addColumn(self: *Self, column: Column) !void {
         try self.columns.append(self.allocator, column);
-        // Initialize width with header length
-        try self.column_widths.append(self.allocator, column.header.len);
+        // Initialize width with the larger of header length and min_width.
+        // max_width wins if it conflicts: a column cannot be wider than its cap.
+        var initial = @max(column.header.len, column.min_width);
+        if (column.max_width > 0 and initial > column.max_width) initial = column.max_width;
+        try self.column_widths.append(self.allocator, initial);
     }
 
     /// Add columns from a slice of headers (convenience method)
@@ -131,19 +141,18 @@ pub const Table = struct {
 
             var cell_width = cell.len;
 
-            // Apply max width constraint
+            // Apply min width constraint unconditionally so a column whose
+            // cells are all shorter than min_width still reaches min_width.
+            if (col.min_width > 0 and cell_width < col.min_width) {
+                cell_width = col.min_width;
+            }
+            // Apply max width constraint last (hard cap; wins over min_width,
+            // matching addColumn's seed precedence).
             if (col.max_width > 0 and cell_width > col.max_width) {
                 cell_width = col.max_width;
             }
-
-            // Update to larger of current or new
             if (cell_width > current_width) {
-                // Apply min width constraint
-                if (col.min_width > 0 and cell_width < col.min_width) {
-                    self.column_widths.items[i] = col.min_width;
-                } else {
-                    self.column_widths.items[i] = cell_width;
-                }
+                self.column_widths.items[i] = cell_width;
             }
         }
     }
@@ -218,10 +227,12 @@ pub const Table = struct {
                 // Padding
                 try writer.splatByteAll(' ', pad);
 
-                // Cell content (possibly truncated)
+                // Cell content (possibly truncated).
+                // utf8FloorIndex ensures we never split a multibyte codepoint
+                // at the column boundary (NS-062 / CWE-1284).
                 var display_cell = cell;
                 if (col.max_width > 0 and cell.len > col.max_width) {
-                    display_cell = cell[0..col.max_width];
+                    display_cell = cell[0..sanitize.utf8FloorIndex(cell, col.max_width)];
                 }
                 try self.writeAligned(writer, display_cell, width, col.alignment);
 
@@ -239,28 +250,35 @@ pub const Table = struct {
         }
     }
 
+    /// Write cell/header content padded to `width`. Content is
+    /// control-filtered so cell data cannot inject ANSI/OSC escape
+    /// sequences (NS-056 / CWE-150). Width math is byte-oriented; multibyte
+    /// UTF-8 codepoints are never split mid-sequence (NS-062 / CWE-1284) via
+    /// `sanitize.utf8FloorIndex`. Display alignment of wide glyphs (e.g.
+    /// CJK double-width) is not wcwidth-aware — that is a documented
+    /// limitation; byte counts are used for column-width bookkeeping.
     fn writeAligned(self: *Self, writer: anytype, text: []const u8, width: usize, alignment: Alignment) !void {
         _ = self;
         if (text.len >= width) {
-            try writer.writeAll(text[0..width]);
+            try sanitize.writeControlFiltered(writer, text[0..sanitize.utf8FloorIndex(text, width)]);
             return;
         }
 
         const space = width - text.len;
         switch (alignment) {
             .left => {
-                try writer.writeAll(text);
+                try sanitize.writeControlFiltered(writer, text);
                 try writer.splatByteAll(' ', space);
             },
             .right => {
                 try writer.splatByteAll(' ', space);
-                try writer.writeAll(text);
+                try sanitize.writeControlFiltered(writer, text);
             },
             .center => {
                 const left_pad = space / 2;
                 const right_pad = space - left_pad;
                 try writer.splatByteAll(' ', left_pad);
-                try writer.writeAll(text);
+                try sanitize.writeControlFiltered(writer, text);
                 try writer.splatByteAll(' ', right_pad);
             },
         }
@@ -271,8 +289,12 @@ pub const Table = struct {
         try writer.writeAll(left);
         for (self.column_widths.items, 0..) |width, i| {
             const total_width = width + (pad * 2);
-            for (0..total_width) |_| {
-                try writer.writeAll(horiz);
+            if (horiz.len == 1) {
+                // Single-byte glyph (e.g. ASCII "-"): one syscall per column.
+                try writer.splatByteAll(horiz[0], total_width);
+            } else {
+                // Multibyte border glyph (e.g. Unicode "─"): batch with splatBytesAll.
+                try writer.splatBytesAll(horiz, total_width);
             }
             if (i < self.column_widths.items.len - 1) {
                 try writer.writeAll(mid);
@@ -521,6 +543,49 @@ test "table: auto column width from content" {
     try std.testing.expect(table.column_widths.items[1] >= 19);
 }
 
+test "table: cells are control-filtered" {
+    var table = Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    try table.addColumn(.{ .header = "h" });
+    try table.addRow(&.{"a\x1b[2Jb"});
+
+    const output = try table.render();
+    defer std.testing.allocator.free(output);
+
+    // Default config has use_color=false, so any ESC byte in the output
+    // must have come from injected cell content.
+    try std.testing.expect(std.mem.indexOfScalar(u8, output, 0x1b) == null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "a[2Jb") != null);
+}
+
+test "table: headers are control-filtered" {
+    var table = Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    try table.addColumn(.{ .header = "h\x1b[31me\x07ad" });
+    try table.addRow(&.{"x"});
+
+    const output = try table.render();
+    defer std.testing.allocator.free(output);
+
+    try std.testing.expect(std.mem.indexOfScalar(u8, output, 0x1b) == null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, output, 0x07) == null);
+}
+
+test "table: truncated cell is control-filtered" {
+    var table = Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    try table.addColumn(.{ .header = "h", .max_width = 4 });
+    try table.addRow(&.{"a\x1b[2Jblongtail"});
+
+    const output = try table.render();
+    defer std.testing.allocator.free(output);
+
+    try std.testing.expect(std.mem.indexOfScalar(u8, output, 0x1b) == null);
+}
+
 test "table: multiple rows" {
     var table = Table.init(std.testing.allocator);
     defer table.deinit();
@@ -536,4 +601,70 @@ test "table: multiple rows" {
     try std.testing.expect(std.mem.indexOf(u8, output, "Alice") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "Bob") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "Charlie") != null);
+}
+
+test "table: min_width is honored even when all cells are short" {
+    var t = Table.init(std.testing.allocator);
+    defer t.deinit();
+    try t.addColumn(.{ .header = "h", .min_width = 10 });
+    try t.addRow(&.{"ab"});
+    try std.testing.expectEqual(@as(usize, 10), t.column_widths.items[0]);
+}
+
+test "table: min_width honored with no rows (addColumn seed)" {
+    var t = Table.init(std.testing.allocator);
+    defer t.deinit();
+    try t.addColumn(.{ .header = "h", .min_width = 10 });
+    try std.testing.expectEqual(@as(usize, 10), t.column_widths.items[0]);
+}
+
+test "table: max_width wins over a conflicting larger min_width" {
+    var t = Table.init(std.testing.allocator);
+    defer t.deinit();
+    try t.addColumn(.{ .header = "h", .min_width = 10, .max_width = 5 });
+    try std.testing.expectEqual(@as(usize, 5), t.column_widths.items[0]);
+    try t.addRow(&.{"ab"});
+    try std.testing.expectEqual(@as(usize, 5), t.column_widths.items[0]);
+}
+
+test "table: ascii border line is exactly correct width" {
+    var t = Table.initWithConfig(std.testing.allocator, .{
+        .border = .ascii,
+        .padding = 1,
+    });
+    defer t.deinit();
+    try t.addColumn(.{ .header = "AB" }); // width=2, pad=1 each side → 4 dashes between + chars
+    try t.addRow(&.{"xy"});
+
+    const output = try t.render();
+    defer std.testing.allocator.free(output);
+
+    // Top border must be "+----+" (2 content + 2 padding = 4 dashes)
+    try std.testing.expect(std.mem.indexOf(u8, output, "+----+") != null);
+}
+
+test "table: unicode border line is exactly correct width" {
+    var t = Table.initWithConfig(std.testing.allocator, .{
+        .border = .unicode,
+        .padding = 1,
+    });
+    defer t.deinit();
+    try t.addColumn(.{ .header = "AB" }); // width=2, pad=1 → 4 × "─" (3-byte each)
+    try t.addRow(&.{"xy"});
+
+    const output = try t.render();
+    defer std.testing.allocator.free(output);
+
+    // Top-left corner followed by exactly 4 horizontal glyphs then top-right
+    try std.testing.expect(std.mem.indexOf(u8, output, "┌────┐") != null);
+}
+
+test "table: max_width truncation does not split multibyte UTF-8" {
+    var t = Table.init(std.testing.allocator);
+    defer t.deinit();
+    try t.addColumn(.{ .header = "h", .max_width = 3 });
+    try t.addRow(&.{"ab\xc3\xa9"});
+    const out = try t.render();
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(out));
 }

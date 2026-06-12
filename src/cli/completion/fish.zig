@@ -11,6 +11,10 @@ const command = @import("../command.zig");
 const Command = command.Command;
 const FlagSpec = command.FlagSpec;
 
+/// Maximum subcommand nesting depth for generated completions.
+/// Levels beyond this are skipped rather than written out of bounds.
+const max_depth = 16;
+
 /// Escape a string for use inside fish single-quoted contexts.
 /// Escapes: ' as \', \ as \\
 /// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
@@ -166,8 +170,12 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
         // Recursively generate completions for subcommands
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                // Build new path (limit: 16 levels of subcommand nesting)
-                var new_path: [16][]const u8 = undefined;
+                // Depth cap: completions are generated at most max_depth levels
+                // deep (documented limit). Deeper trees are skipped, never an
+                // out-of-bounds stack write (CWE-787).
+                if (path.len >= max_depth) break;
+                // Build new path (limit: max_depth levels of subcommand nesting)
+                var new_path: [max_depth][]const u8 = undefined;
                 var new_path_len: usize = 0;
                 for (path) |p| {
                     new_path[new_path_len] = p;
@@ -519,6 +527,32 @@ test "fish: path flag enables file completion" {
 
     // Path flags should have -F for file completion
     try std.testing.expect(std.mem.indexOf(u8, script, "-F") != null);
+}
+
+test "fish: nesting deeper than 16 levels is capped, never OOB (F-06)" {
+    // Build an 18-deep command chain: cmds[0] -> cmds[1] -> ... -> cmds[17].
+    var cmds: [18]Command = undefined;
+    var ptrs: [17][1]*const Command = undefined;
+    var i: usize = cmds.len;
+    while (i > 0) {
+        i -= 1;
+        if (i == cmds.len - 1) {
+            cmds[i] = Command{ .name = "leaf", .summary = "Leaf command" };
+        } else {
+            ptrs[i] = .{&cmds[i + 1]};
+            cmds[i] = Command{
+                .name = "nest",
+                .summary = "Nested command",
+                .subcommands = &ptrs[i],
+            };
+        }
+    }
+
+    // Must not panic (Debug) or write out of bounds (ReleaseFast, CWE-787);
+    // levels beyond the documented 16-level cap are silently skipped.
+    const script = try generate(&cmds[0], std.testing.allocator);
+    defer std.testing.allocator.free(script);
+    try std.testing.expect(script.len > 0);
 }
 
 // ============================================================================

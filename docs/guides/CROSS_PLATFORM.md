@@ -84,6 +84,7 @@ if (ctx.useColor()) {
 ```
 
 Color is disabled when:
+
 - `NO_COLOR` environment variable is set
 - `TERM=dumb`
 - Not a TTY
@@ -106,6 +107,7 @@ try signal.install(.{
 ### Windows
 
 On Windows, the signal module handles:
+
 - `CTRL_C_EVENT` (Ctrl+C)
 - `CTRL_BREAK_EVENT` (Ctrl+Break)
 - `CTRL_CLOSE_EVENT` (console close)

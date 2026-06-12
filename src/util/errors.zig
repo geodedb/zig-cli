@@ -6,6 +6,7 @@
 //! Error formatting and handling utilities.
 
 const std = @import("std");
+const text = @import("text.zig");
 
 /// Error severity levels
 pub const Severity = enum {
@@ -98,13 +99,17 @@ pub fn printErrorWithSuggestion(
     try err.print(writer, use_color);
 }
 
-/// Format unknown command error with suggestion
+/// Format unknown command error with suggestion.
+/// The echoed input is sanitized of terminal control bytes (CWE-150) so a
+/// malicious argv string cannot rewrite the terminal via the error message.
 pub fn formatUnknownCommand(
     input: []const u8,
     suggestion: ?[]const u8,
     allocator: std.mem.Allocator,
 ) !FormattedError {
-    const message = try std.fmt.allocPrint(allocator, "'{s}' is not a command", .{input});
+    const safe_input = try text.stripControlChars(input, allocator);
+    defer allocator.free(safe_input);
+    const message = try std.fmt.allocPrint(allocator, "'{s}' is not a command", .{safe_input});
 
     const hint = if (suggestion) |s|
         try std.fmt.allocPrint(allocator, "Did you mean '{s}'?", .{s})
@@ -310,6 +315,30 @@ test "errors: formatUnknownCommand without suggestion" {
 
     try std.testing.expect(std.mem.indexOf(u8, err.message, "foobar") != null);
     try std.testing.expect(err.hint == null);
+}
+
+test "errors: formatUnknownCommand strips control bytes from input" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const fe = try formatUnknownCommand("de\x1b[2Jploy", null, arena.allocator());
+    try std.testing.expect(std.mem.indexOfScalar(u8, fe.message, 0x1b) == null);
+    // Printable content survives
+    try std.testing.expect(std.mem.indexOf(u8, fe.message, "de") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fe.message, "ploy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fe.message, "not a command") != null);
+}
+
+test "errors: formatUnknownCommand strips control bytes and preserves hint" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const fe = try formatUnknownCommand("de\x1b[2Jploy", "deploy", arena.allocator());
+    // No 0x1b byte must appear anywhere in the message
+    try std.testing.expect(std.mem.indexOfScalar(u8, fe.message, 0x1b) == null);
+    // The hint must still say Did you mean 'deploy'?
+    try std.testing.expect(fe.hint != null);
+    try std.testing.expectEqualStrings("Did you mean 'deploy'?", fe.hint.?);
 }
 
 test "errors: ExitCode values" {

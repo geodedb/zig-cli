@@ -29,8 +29,10 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     try w.print("using namespace System.Management.Automation\n", .{});
     try w.print("using namespace System.Management.Automation.Language\n\n", .{});
 
-    // Register the argument completer
-    try w.print("Register-ArgumentCompleter -Native -CommandName '{s}' -ScriptBlock {{\n", .{cmd.name});
+    // Register the argument completer (command name escaped for the
+    // single-quoted -CommandName argument, CWE-94)
+    const esc_cmd_name = try escapePowerShellString(esc_alloc, cmd.name);
+    try w.print("Register-ArgumentCompleter -Native -CommandName '{s}' -ScriptBlock {{\n", .{esc_cmd_name});
     try w.writeAll("    param($wordToComplete, $commandAst, $cursorPosition)\n\n");
 
     // Parse the command line to understand context
@@ -52,8 +54,9 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     try w.writeAll("    $globalFlags = @(\n");
     for (command.global_flags) |*gflag| {
         const esc_help = try escapePowerShellString(esc_alloc, gflag.help);
+        const esc_gname = try escapePowerShellString(esc_alloc, gflag.name);
         try w.print("        [CompletionResult]::new('--{s}', '--{s}', [CompletionResultType]::ParameterName, '{s}')\n", .{
-            gflag.name, gflag.name, esc_help,
+            esc_gname, esc_gname, esc_help,
         });
         if (gflag.short) |s| {
             try w.print("        [CompletionResult]::new('-{c}', '-{c}', [CompletionResultType]::ParameterName, '{s}')\n", .{
@@ -420,6 +423,21 @@ test "powershell: flag value completions" {
     try std.testing.expect(std.mem.indexOf(u8, script, "'json'") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "'yaml'") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "'toml'") != null);
+}
+
+test "powershell: CommandName escapes single quotes in command name (F-04)" {
+    const cmd = Command{
+        .name = "app'b",
+        .summary = "Application",
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // Single quote in the command name must be doubled inside the
+    // single-quoted -CommandName argument (CWE-94).
+    try std.testing.expect(std.mem.indexOf(u8, script, "-CommandName 'app''b'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "-CommandName 'app'b'") == null);
 }
 
 // ============================================================================

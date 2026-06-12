@@ -21,6 +21,14 @@ pub const PagerConfig = struct {
     force: bool = false,
 };
 
+/// Write content directly to stdout. Used as fallback when pager is unavailable.
+fn writeDirect(stdout: std.Io.File, io: std.Io, content: []const u8) error{WriteFailed}!void {
+    var wbuf: [4096]u8 = undefined;
+    var fw = stdout.writer(io, &wbuf);
+    fw.interface.writeAll(content) catch return error.WriteFailed;
+    fw.interface.flush() catch return error.WriteFailed;
+}
+
 /// Write content through a pager if appropriate
 pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
     const io = std.Io.Threaded.global_single_threaded.io();
@@ -30,11 +38,7 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
     const is_tty = stdout.isTty(io) catch false;
     if (!config.force and !is_tty) {
         // Not a TTY, write directly
-        var wbuf: [4096]u8 = undefined;
-        var fw = stdout.writer(io, &wbuf);
-        fw.interface.writeAll(content) catch return error.WriteFailed;
-        fw.interface.flush() catch return error.WriteFailed;
-        return;
+        return writeDirect(stdout, io, content);
     }
 
     // Count lines
@@ -48,20 +52,12 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
 
     // If content fits in terminal OR is below the min_lines threshold, write directly
     if (line_count < term_info.height or line_count < config.min_lines) {
-        var wbuf: [4096]u8 = undefined;
-        var fw = stdout.writer(io, &wbuf);
-        fw.interface.writeAll(content) catch return error.WriteFailed;
-        fw.interface.flush() catch return error.WriteFailed;
-        return;
+        return writeDirect(stdout, io, content);
     }
 
     if (builtin.os.tag == .windows) {
         // Windows: fall back to direct output
-        var wbuf: [4096]u8 = undefined;
-        var fw = stdout.writer(io, &wbuf);
-        fw.interface.writeAll(content) catch return error.WriteFailed;
-        fw.interface.flush() catch return error.WriteFailed;
-        return;
+        return writeDirect(stdout, io, content);
     }
 
     // Try to use pager
@@ -82,32 +78,51 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
         argv_len += 1;
     }
     if (argv_len == 0) {
-        var wbuf: [4096]u8 = undefined;
-        var fw = stdout.writer(io, &wbuf);
-        fw.interface.writeAll(content) catch return error.WriteFailed;
-        fw.interface.flush() catch return error.WriteFailed;
-        return;
+        return writeDirect(stdout, io, content);
     }
 
-    // Spawn pager process directly
-    var child = std.process.Child.init(argv_buf[0..argv_len], std.heap.page_allocator);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-
-    try child.spawn();
+    // Spawn pager process directly (no shell).
+    var child = std.process.spawn(io, .{
+        .argv = argv_buf[0..argv_len],
+        .stdin = .pipe,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    }) catch {
+        // Pager could not be started: emit directly instead of losing output.
+        return writeDirect(stdout, io, content);
+    };
 
     // Write content to pager stdin
+    var write_failed = false;
     if (child.stdin) |stdin| {
         var wbuf: [4096]u8 = undefined;
         var fw = stdin.writer(io, &wbuf);
-        fw.interface.writeAll(content) catch {};
-        fw.interface.flush() catch {};
+        fw.interface.writeAll(content) catch {
+            write_failed = true;
+        };
+        if (!write_failed) fw.interface.flush() catch {
+            write_failed = true;
+        };
         stdin.close(io);
     }
 
     // Wait for pager to finish
-    _ = child.wait() catch {};
+    const term_result = child.wait(io) catch {
+        if (write_failed) return writeDirect(stdout, io, content);
+        return;
+    };
+
+    // If the pager could not consume the content (exec of an invalid PAGER
+    // fails after fork -> nonzero exit; or our stdin write failed), re-emit
+    // directly. A mid-stream pager crash may duplicate partial output; losing
+    // the content entirely is worse.
+    const pager_failed = switch (term_result) {
+        .exited => |code| code != 0,
+        else => true,
+    };
+    if (write_failed or pager_failed) {
+        return writeDirect(stdout, io, content);
+    }
 }
 
 /// Create a pager writer that buffers output
@@ -147,6 +162,13 @@ pub const PagerWriter = struct {
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "pager: writeIfTty body is semantically analyzed" {
+    // Taking the function's address forces full analysis of the spawn path,
+    // which is otherwise lazily skipped because no unit test reaches it.
+    // This caught a stale pre-0.16 std.process.Child API in the spawn block.
+    _ = &writeIfTty;
+}
 
 test "PagerWriter initialization" {
     var pw = PagerWriter.init(std.testing.allocator, .{});

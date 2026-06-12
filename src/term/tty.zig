@@ -9,7 +9,11 @@ const std = @import("std");
 const builtin = @import("builtin");
 const env = @import("env.zig");
 
-/// Terminal information
+/// Terminal information for stdout.
+///
+/// Returned by `getInfo()`. `width`/`height` default to 80×24 when stdout
+/// is not a TTY or when the terminal size query fails. `color_supported` is
+/// false for dumb terminals and when the NO_COLOR env var is set.
 pub const TermInfo = struct {
     /// Whether stdout is a TTY
     is_tty: bool,
@@ -29,7 +33,11 @@ inline fn io() std.Io {
     return std.Io.Threaded.global_single_threaded.io();
 }
 
-/// Get terminal information for stdout
+/// Get terminal information for stdout.
+///
+/// Always succeeds; falls back to 80×24 when stdout is not a TTY or when
+/// the terminal size query fails. `color_supported` is false for dumb
+/// terminals and when NO_COLOR is set. Never returns null.
 pub fn getInfo() TermInfo {
     const stdout = std.Io.File.stdout();
     const is_tty = stdout.isTty(io()) catch false;
@@ -57,13 +65,19 @@ pub fn getInfo() TermInfo {
     };
 }
 
-/// Terminal size
+/// Terminal dimensions in columns and rows.
+///
+/// Returned by `getTermSize()`. Returns `null` when the terminal size
+/// cannot be queried (non-TTY stdout, unsupported platform, ioctl failure).
 pub const TermSize = struct {
     cols: u16,
     rows: u16,
 };
 
-/// Get terminal size
+/// Get the current terminal size.
+///
+/// Returns `null` when stdout is not a TTY, when the ioctl/API call fails,
+/// or when the reported dimensions are zero or negative (invalid console state).
 pub fn getTermSize() ?TermSize {
     if (builtin.os.tag == .windows) {
         return getTermSizeWindows();
@@ -161,17 +175,20 @@ fn hasNoColor() bool {
     return env.envVarExists("NO_COLOR");
 }
 
-/// Check if stdout is a TTY
+/// Returns true when stdout is connected to a terminal, false otherwise
+/// (piped, redirected, or when the check itself fails).
 pub fn isStdoutTty() bool {
     return std.Io.File.stdout().isTty(io()) catch false;
 }
 
-/// Check if stderr is a TTY
+/// Returns true when stderr is connected to a terminal, false otherwise
+/// (piped, redirected, or when the check itself fails).
 pub fn isStderrTty() bool {
     return std.Io.File.stderr().isTty(io()) catch false;
 }
 
-/// Check if stdin is a TTY
+/// Returns true when stdin is connected to a terminal, false otherwise
+/// (piped, redirected, or when the check itself fails).
 pub fn isStdinTty() bool {
     return std.Io.File.stdin().isTty(io()) catch false;
 }

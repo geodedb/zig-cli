@@ -43,6 +43,39 @@ const Command = command.Command;
 const Context = command.Context;
 const FlagSpec = command.FlagSpec;
 
+/// Control-byte filtering for plain-text help output (NS-056 / CWE-150).
+///
+/// This mirrors `util.text.writeControlFiltered`. It is duplicated here
+/// because a source file may belong to only one Zig module: importing
+/// `src/util/text.zig` from the `cli` module breaks builds that link the
+/// `cli` and `util` modules together (integration tests, demo, benches)
+/// with "file exists in modules 'util' and 'cli'". Keep the predicate in
+/// sync with `src/util/text.zig`.
+const textutil = struct {
+    /// True for bytes that must be stripped to protect terminal state:
+    /// C0 controls (0x00-0x1F) except newline (0x0A) and tab (0x09), plus
+    /// DEL (0x7F). CR (0x0D) is included in the stripped set because a bare
+    /// carriage return moves the cursor to column 0, allowing subsequent
+    /// output to overwrite the current terminal line.
+    inline fn isTerminalControl(c: u8) bool {
+        return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
+    }
+
+    /// Write `text` to `w`, removing terminal control bytes. Removing ESC
+    /// (0x1B) neutralizes ANSI/OSC escape sequences; the remaining
+    /// printable bytes are kept.
+    fn writeControlFiltered(w: anytype, text: []const u8) !void {
+        var start: usize = 0;
+        for (text, 0..) |c, idx| {
+            if (isTerminalControl(c)) {
+                if (idx > start) try w.writeAll(text[start..idx]);
+                start = idx + 1;
+            }
+        }
+        if (start < text.len) try w.writeAll(text[start..]);
+    }
+};
+
 // ============================================================================
 // ANSI escape code constants
 // ============================================================================
@@ -195,34 +228,50 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
             }
         }
 
-        switch (section) {
-            .header => try printSectionHeader(w, use_color, cmd),
-            .usage => try printSectionUsage(w, cmd, template),
-            .examples => try printSectionExamples(w, cmd, template),
-            .description => try printSectionDescription(w, cmd, template),
-            .commands => try printSectionCommands(w, use_color, cmd, template),
-            .flags => try printSectionFlags(w, use_color, cmd, template),
-            .env_vars => try printSectionEnvVars(w, use_color, cmd, template),
-            .footer => try printSectionFooter(w, cmd, template),
-        }
+        try renderTextSection(w, use_color, cmd, template, section);
     }
 
     try ctx.stdout.writeAll(buf.written());
 }
 
+/// Render a single plain-text help section to `w`.
+/// All Command-struct metadata (names, summaries, help strings, examples, env
+/// var names, defaults) is filtered through `textutil.writeControlFiltered` to
+/// neutralize terminal escape/control bytes (CWE-150).
+/// HelpTemplate fields (section headers, footer_text) are developer
+/// configuration and are emitted as-is.
+fn renderTextSection(w: anytype, use_color: bool, cmd: *const Command, template: *const HelpTemplate, section: HelpSection) !void {
+    switch (section) {
+        .header => try printSectionHeader(w, use_color, cmd),
+        .usage => try printSectionUsage(w, cmd, template),
+        .examples => try printSectionExamples(w, cmd, template),
+        .description => try printSectionDescription(w, cmd, template),
+        .commands => try printSectionCommands(w, use_color, cmd, template),
+        .flags => try printSectionFlags(w, use_color, cmd, template),
+        .env_vars => try printSectionEnvVars(w, use_color, cmd, template),
+        .footer => try printSectionFooter(w, cmd, template),
+    }
+}
+
 /// Print header section (name and summary)
 fn printSectionHeader(w: anytype, use_color: bool, cmd: *const Command) !void {
     if (use_color) {
-        try w.print(ansi_bold ++ "{s}" ++ ansi_reset, .{cmd.name});
+        try w.writeAll(ansi_bold);
+        try textutil.writeControlFiltered(w, cmd.name);
+        try w.writeAll(ansi_reset);
     } else {
-        try w.print("{s}", .{cmd.name});
+        try textutil.writeControlFiltered(w, cmd.name);
     }
-    try w.print(" - {s}\n", .{cmd.summary});
+    try w.writeAll(" - ");
+    try textutil.writeControlFiltered(w, cmd.summary);
+    try w.writeAll("\n");
 }
 
 /// Print usage section
 fn printSectionUsage(w: anytype, cmd: *const Command, template: *const HelpTemplate) !void {
-    try w.print("\n{s}: {s} [flags]", .{ template.usage_header, cmd.name });
+    try w.print("\n{s}: ", .{template.usage_header});
+    try textutil.writeControlFiltered(w, cmd.name);
+    try w.writeAll(" [flags]");
     if (cmd.hasSubcommands()) {
         try w.print(" <command> [args]", .{});
     }
@@ -237,7 +286,8 @@ fn printSectionExamples(w: anytype, cmd: *const Command, template: *const HelpTe
     for (cmd.examples) |example| {
         // Write indent
         try w.splatByteAll(' ', template.indent);
-        try w.print("{s}\n", .{example});
+        try textutil.writeControlFiltered(w, example);
+        try w.writeAll("\n");
     }
 }
 
@@ -250,7 +300,8 @@ fn printSectionDescription(w: anytype, cmd: *const Command, template: *const Hel
     } else {
         try w.print("\n", .{});
     }
-    try w.print("{s}\n", .{cmd.long_help});
+    try textutil.writeControlFiltered(w, cmd.long_help);
+    try w.writeAll("\n");
 }
 
 /// Collect unique group names from a command's visible subcommands.
@@ -288,9 +339,13 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
     for (groups[0..group_count]) |group_name| {
         if (group_name.len > 0) {
             if (use_color) {
-                try w.print("\n" ++ ansi_bold ++ "{s}:" ++ ansi_reset ++ "\n", .{group_name});
+                try w.writeAll("\n" ++ ansi_bold);
+                try textutil.writeControlFiltered(w, group_name);
+                try w.writeAll(":" ++ ansi_reset ++ "\n");
             } else {
-                try w.print("\n{s}:\n", .{group_name});
+                try w.writeAll("\n");
+                try textutil.writeControlFiltered(w, group_name);
+                try w.writeAll(":\n");
             }
         } else {
             try w.print("\n{s}:\n", .{template.commands_header});
@@ -304,18 +359,24 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
             try w.splatByteAll(' ', template.indent);
 
             if (use_color) {
-                try w.print(ansi_cyan ++ "{s}" ++ ansi_reset, .{subcmd.name});
+                try w.writeAll(ansi_cyan);
+                try textutil.writeControlFiltered(w, subcmd.name);
+                try w.writeAll(ansi_reset);
             } else {
-                try w.print("{s}", .{subcmd.name});
+                try textutil.writeControlFiltered(w, subcmd.name);
             }
 
-            // Padding to align descriptions
+            // Padding to align descriptions. Computed from the raw name
+            // length: well-formed metadata contains no control bytes, so
+            // raw and filtered lengths match in practice; filtering above
+            // is the security boundary, alignment is cosmetic.
             const sub_name_len: usize = subcmd.name.len;
             const col_width: usize = @as(usize, template.name_column_width) - template.indent;
             const sub_min_len: usize = @min(sub_name_len, col_width);
             const sub_padding: usize = col_width - sub_min_len;
             try w.splatByteAll(' ', sub_padding);
-            try w.print("{s}\n", .{subcmd.summary});
+            try textutil.writeControlFiltered(w, subcmd.summary);
+            try w.writeAll("\n");
         }
     }
 }
@@ -392,19 +453,24 @@ fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, 
     try w.splatByteAll(' ', template.indent);
 
     if (use_color) {
-        try w.print(ansi_cyan ++ "{s}" ++ ansi_reset, .{name});
+        try w.writeAll(ansi_cyan);
+        try textutil.writeControlFiltered(w, name);
+        try w.writeAll(ansi_reset);
     } else {
-        try w.print("{s}", .{name});
+        try textutil.writeControlFiltered(w, name);
     }
 
-    // Padding to align descriptions
+    // Padding to align descriptions. Computed from the raw name length:
+    // well-formed metadata contains no control bytes, so raw and filtered
+    // lengths match in practice.
     const name_len: usize = name.len;
     const col_width: usize = @as(usize, template.name_column_width) - template.indent;
     const min_len: usize = @min(name_len, col_width);
     const pad: usize = col_width - min_len;
     try w.splatByteAll(' ', pad);
 
-    try w.print("{s}\n", .{description});
+    try textutil.writeControlFiltered(w, description);
+    try w.writeAll("\n");
 }
 
 /// Print a single flag with template settings
@@ -413,11 +479,16 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     try w.splatByteAll(' ', template.indent);
 
     // Short flag
+    // flag.short is programmer-defined, but guard control bytes for CWE-150 consistency
     if (flag.short) |s| {
-        if (use_color) {
-            try w.print(ansi_yellow ++ "-{c}" ++ ansi_reset ++ ", ", .{s});
+        if (std.ascii.isPrint(s)) {
+            if (use_color) {
+                try w.print(ansi_yellow ++ "-{c}" ++ ansi_reset ++ ", ", .{s});
+            } else {
+                try w.print("-{c}, ", .{s});
+            }
         } else {
-            try w.print("-{c}, ", .{s});
+            try w.print("    ", .{});
         }
     } else {
         try w.print("    ", .{});
@@ -425,12 +496,17 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
 
     // Long flag
     if (use_color) {
-        try w.print(ansi_yellow ++ "--{s}" ++ ansi_reset, .{flag.name});
+        try w.writeAll(ansi_yellow ++ "--");
+        try textutil.writeControlFiltered(w, flag.name);
+        try w.writeAll(ansi_reset);
     } else {
-        try w.print("--{s}", .{flag.name});
+        try w.writeAll("--");
+        try textutil.writeControlFiltered(w, flag.name);
     }
 
-    // Padding
+    // Padding. Computed from the raw name length: well-formed metadata
+    // contains no control bytes, so raw and filtered lengths match in
+    // practice.
     const name_len: usize = flag.name.len;
     const col_width: usize = @as(usize, template.name_column_width) - template.indent - 6; // -6 for "  -X, "
     const min_len: usize = @min(name_len, col_width);
@@ -438,11 +514,13 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     try w.splatByteAll(' ', padding_amount);
 
     // Help text
-    try w.print("{s}", .{flag.help});
+    try textutil.writeControlFiltered(w, flag.help);
 
     // Default value
     if (flag.default_str) |def| {
-        try w.print(" [default: {s}]", .{def});
+        try w.writeAll(" [default: ");
+        try textutil.writeControlFiltered(w, def);
+        try w.writeAll("]");
     }
 
     // Required indicator
@@ -466,9 +544,13 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     // Environment variable indicator
     if (flag.env) |env_var| {
         if (use_color) {
-            try w.print(" " ++ ansi_cyan ++ "[${s}]" ++ ansi_reset, .{env_var});
+            try w.writeAll(" " ++ ansi_cyan ++ "[$");
+            try textutil.writeControlFiltered(w, env_var);
+            try w.writeAll("]" ++ ansi_reset);
         } else {
-            try w.print(" [${s}]", .{env_var});
+            try w.writeAll(" [$");
+            try textutil.writeControlFiltered(w, env_var);
+            try w.writeAll("]");
         }
     }
 
@@ -482,7 +564,9 @@ fn printSectionFooter(w: anytype, cmd: *const Command, template: *const HelpTemp
     if (template.footer_text) |footer| {
         try w.print("\n{s}\n", .{footer});
     } else {
-        try w.print("\nFor full help: {s} --help\n", .{cmd.name});
+        try w.writeAll("\nFor full help: ");
+        try textutil.writeControlFiltered(w, cmd.name);
+        try w.writeAll(" --help\n");
     }
 }
 
@@ -594,9 +678,11 @@ fn printJsonFlag(w: anytype, flag: *const FlagSpec) !void {
     try writeJsonEscapedString(w, flag.help);
     try w.writeAll("\",");
     if (flag.short) |s| {
-        try w.print("\"short\":\"{c}\",", .{s});
+        try w.writeAll("\"short\":\"");
+        try writeJsonEscapedString(w, &[_]u8{s});
+        try w.writeAll("\",");
     } else {
-        try w.print("\"short\":null,", .{});
+        try w.writeAll("\"short\":null,");
     }
     try w.print("\"type\":\"{s}\",", .{flag.ftype.format()});
     try w.print("\"required\":{},", .{flag.required});
@@ -777,7 +863,8 @@ pub fn generateMarkdown(cmd: *const Command, allocator: std.mem.Allocator) ![]co
 }
 
 /// Write a string to `w` with characters escaped for Markdown table cells.
-/// Escapes: `|` -> `\|`, `` ` `` -> `` \` ``, `<` -> `&lt;`, `>` -> `&gt;`.
+/// Escapes: `|` -> `\|`, `` ` `` -> `` \` ``, `<` -> `&lt;`, `>` -> `&gt;`,
+/// `\n` -> `<br>` (raw newline would terminate the table row), `\r` removed.
 fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
     var start: usize = 0;
     for (s, 0..) |c, idx| {
@@ -786,6 +873,8 @@ fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
             '`' => "\\`",
             '<' => "&lt;",
             '>' => "&gt;",
+            '\n' => "<br>",
+            '\r' => "",
             else => null,
         };
         if (esc) |escape_seq| {
@@ -799,35 +888,115 @@ fn writeMarkdownEscaped(w: anytype, s: []const u8) !void {
     }
 }
 
+/// Write a string to `w` escaped for Markdown headings / inline text.
+/// HTML-escapes angle brackets, escapes backticks, collapses `\n` to a
+/// single space, and discards `\r` (so CRLF produces exactly one space).
+/// Headings must be single-line.
+fn writeMarkdownHeading(w: anytype, s: []const u8) !void {
+    var start: usize = 0;
+    for (s, 0..) |c, idx| {
+        const esc: ?[]const u8 = switch (c) {
+            '<' => "&lt;",
+            '>' => "&gt;",
+            '`' => "\\`",
+            '\n' => " ",
+            '\r' => "",
+            else => null,
+        };
+        if (esc) |escape_seq| {
+            if (idx > start) try w.writeAll(s[start..idx]);
+            try w.writeAll(escape_seq);
+            start = idx + 1;
+        }
+    }
+    if (start < s.len) try w.writeAll(s[start..]);
+}
+
+/// Write a string to `w` escaped for Markdown prose blocks.
+/// HTML-escapes angle brackets and neutralises line-leading `#` so injected
+/// text cannot create headings.  `\r` is discarded (does not affect
+/// `at_line_start`) so CRLF line endings are handled correctly.
+fn writeMarkdownProse(w: anytype, s: []const u8) !void {
+    var at_line_start = true;
+    for (s) |c| {
+        if (at_line_start and c == '#') {
+            try w.writeAll("\\#");
+            at_line_start = false;
+            continue;
+        }
+        switch (c) {
+            '<' => try w.writeAll("&lt;"),
+            '>' => try w.writeAll("&gt;"),
+            '\n' => {
+                try w.writeAll("\n");
+                at_line_start = true;
+                continue;
+            },
+            '\r' => continue,
+            else => try w.writeByte(c),
+        }
+        at_line_start = false;
+    }
+}
+
+/// Write content inside a code fence, prefixing any line that starts with
+/// ``` (after optional indentation) with a space so it cannot close the fence.
+/// Trailing `\r` on each line (from CRLF input) is stripped before writing.
+fn writeFenceSafe(w: anytype, s: []const u8) !void {
+    var lines = std.mem.splitScalar(u8, s, '\n');
+    var first = true;
+    while (lines.next()) |raw_line| {
+        if (!first) try w.writeAll("\n");
+        first = false;
+        // Strip trailing CR so CRLF input does not embed \r in fence content.
+        const line = if (raw_line.len > 0 and raw_line[raw_line.len - 1] == '\r')
+            raw_line[0 .. raw_line.len - 1]
+        else
+            raw_line;
+        if (std.mem.startsWith(u8, std.mem.trimStart(u8, line, " \t"), "```")) {
+            try w.writeAll(" ");
+        }
+        try w.writeAll(line);
+    }
+}
+
 fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void {
     // Header (depth determines heading level)
     for (0..depth) |_| {
         try w.writeAll("#");
     }
-    try w.print(" {s}\n\n", .{cmd.name});
+    try w.writeAll(" ");
+    try writeMarkdownHeading(w, cmd.name);
+    try w.writeAll("\n\n");
 
     // Summary
-    try w.print("{s}\n\n", .{cmd.summary});
+    try writeMarkdownProse(w, cmd.summary);
+    try w.writeAll("\n\n");
 
     // Synopsis
     try w.print("## Synopsis\n\n", .{});
-    try w.print("```\n{s} [OPTIONS]", .{cmd.name});
+    try w.writeAll("```\n");
+    try writeFenceSafe(w, cmd.name);
+    try w.writeAll(" [OPTIONS]");
     if (cmd.hasSubcommands()) {
-        try w.print(" <COMMAND> [ARGS]", .{});
+        try w.writeAll(" <COMMAND> [ARGS]");
     }
-    try w.print("\n```\n\n", .{});
+    try w.writeAll("\n```\n\n");
 
     // Description
     if (cmd.long_help.len > 0) {
         try w.print("## Description\n\n", .{});
-        try w.print("{s}\n\n", .{cmd.long_help});
+        try writeMarkdownProse(w, cmd.long_help);
+        try w.writeAll("\n\n");
     }
 
     // Examples
     if (cmd.examples.len > 0) {
         try w.print("## Examples\n\n", .{});
         for (cmd.examples) |example| {
-            try w.print("```bash\n{s}\n```\n\n", .{example});
+            try w.writeAll("```bash\n");
+            try writeFenceSafe(w, example);
+            try w.writeAll("\n```\n\n");
         }
     }
 
@@ -879,7 +1048,9 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
         // Print commands by group
         for (groups[0..group_count]) |group_name| {
             if (group_name.len > 0) {
-                try w.print("### {s}\n\n", .{group_name});
+                try w.writeAll("### ");
+                try writeMarkdownHeading(w, group_name);
+                try w.writeAll("\n\n");
             }
 
             try w.print("| Command | Description |\n", .{});
@@ -1499,6 +1670,146 @@ test "help: writeMarkdownEscaped mixed special chars" {
     try std.testing.expectEqualStrings("a\\|b\\`c&lt;d&gt;e", buf.written());
 }
 
+test "help: writeMarkdownEscaped newline becomes br" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownEscaped(w, "line1\nline2");
+    try std.testing.expectEqualStrings("line1<br>line2", buf.written());
+}
+
+test "help: writeMarkdownEscaped cr is removed" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownEscaped(w, "a\r\nb");
+    try std.testing.expectEqualStrings("a<br>b", buf.written());
+}
+
+test "help: writeMarkdownHeading escapes angle brackets" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownHeading(w, "x<script>alert(1)</script>");
+    const result = buf.written();
+    try std.testing.expect(mem.indexOf(u8, result, "<script>") == null);
+    try std.testing.expect(mem.indexOf(u8, result, "&lt;script&gt;") != null);
+}
+
+test "help: writeMarkdownHeading collapses newlines to spaces" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownHeading(w, "foo\nbar\r\nbaz");
+    try std.testing.expectEqualStrings("foo bar baz", buf.written());
+}
+
+test "help: writeMarkdownProse escapes angle brackets" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownProse(w, "<img src=x onerror=1>");
+    try std.testing.expectEqualStrings("&lt;img src=x onerror=1&gt;", buf.written());
+}
+
+test "help: writeMarkdownProse neutralises line-leading hash" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownProse(w, "# fake heading\nnormal line");
+    const result = buf.written();
+    // Line-leading # must be escaped so it doesn't become a heading
+    try std.testing.expect(mem.indexOf(u8, result, "\n# fake") == null);
+    try std.testing.expect(mem.indexOf(u8, result, "\\# fake heading") != null);
+}
+
+test "help: writeMarkdownProse discards lone CR" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeMarkdownProse(w, "foo\rbar");
+    try std.testing.expectEqualStrings("foobar", buf.written());
+}
+
+test "help: writeFenceSafe blocks fence breakout" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    try writeFenceSafe(w, "a\n```\nevil");
+    const result = buf.written();
+    // The ``` line must be prefixed with a space so it cannot close the outer fence
+    try std.testing.expect(mem.indexOf(u8, result, "\n```\n") == null);
+    try std.testing.expect(mem.indexOf(u8, result, "\n ```\n") != null);
+}
+
+test "help: generateMarkdown headings and prose are escaped" {
+    const cmd = Command{
+        .name = "x<script>",
+        .summary = "<img src=x onerror=1>",
+        .long_help = "# fake heading\n<b>bold</b>",
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    // The heading line must not contain a raw angle bracket — it would render as HTML
+    // when Markdown is converted to HTML. The synopsis code-fence is safe (code
+    // fences are not parsed as HTML), so we only check the heading line itself.
+    const heading_end = mem.indexOf(u8, md, "\n\n") orelse md.len;
+    const heading_line = md[0..heading_end];
+    try std.testing.expect(mem.indexOf(u8, heading_line, "<script>") == null);
+    try std.testing.expect(mem.indexOf(u8, heading_line, "&lt;script&gt;") != null);
+
+    // Summary prose must have angle brackets escaped
+    try std.testing.expect(mem.indexOf(u8, md, "<img") == null);
+    try std.testing.expect(mem.indexOf(u8, md, "&lt;img") != null);
+
+    // Heading injection via long_help: "\n# fake" must not appear
+    try std.testing.expect(mem.indexOf(u8, md, "\n# fake") == null);
+}
+
+test "help: generateMarkdown fence breakout blocked" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .examples = &.{"a\n```\nevil"},
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    // The ``` line inside the example must not appear unescaped — it would close
+    // the outer ```bash fence if emitted raw.
+    try std.testing.expect(mem.indexOf(u8, md, "\n```\nevil") == null);
+}
+
+test "help: generateMarkdown cell newline becomes br" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "flag",
+                .help = "line1\nline2",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    try std.testing.expect(mem.indexOf(u8, md, "line1<br>line2") != null);
+}
+
 // ============================================================================
 // HelpTemplate Tests
 // ============================================================================
@@ -1833,4 +2144,203 @@ test "help: env section in template sections list renders correctly" {
     try std.testing.expect(mem.indexOf(u8, output, "ENVAPP_HOST") != null);
     try std.testing.expect(mem.indexOf(u8, output, "NO_COLOR") != null);
     try std.testing.expect(mem.indexOf(u8, output, "TERM") != null);
+}
+
+// ============================================================================
+// Control-Byte Filtering Tests (NS-056 / CWE-150)
+// ============================================================================
+
+test "help: text output strips terminal escape bytes from metadata" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const cmd = Command{
+        .name = "esc",
+        .summary = "s\x1b[2Jummary",
+        .flags = &.{
+            FlagSpec{
+                .name = "bad",
+                .help = "h\x1b]0;evil\x07elp",
+                .ftype = .bool,
+                .default_str = "d\x1befault",
+                .env = "EV\x1bIL_VAR",
+            },
+        },
+    };
+
+    const template = HelpTemplate.default;
+    for (template.sections) |section| {
+        try renderTextSection(w, false, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    try std.testing.expect(mem.indexOfScalar(u8, output, 0x1b) == null);
+    try std.testing.expect(mem.indexOfScalar(u8, output, 0x07) == null);
+    // Printable remainder survives (only the control bytes are removed)
+    try std.testing.expect(mem.indexOf(u8, output, "s[2Jummary") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "h]0;evilelp") != null);
+}
+
+test "help: text output strips escape bytes from examples, subcommands, long help, groups, env section" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const subcmd = Command{
+        .name = "su\x1b[1mb",
+        .summary = "sub \x1b[31msummary",
+        .group = "Gr\x1b[2Joup",
+    };
+    const cmd = Command{
+        .name = "esc",
+        .summary = "summary",
+        .long_help = "long\x1bc help text",
+        .examples = &.{"esc run \x1b[2J--force"},
+        .subcommands = &.{&subcmd},
+        .flags = &.{
+            FlagSpec{
+                .name = "token",
+                .help = "auth \x1b[9999Htoken",
+                .ftype = .string,
+                .env = "ESC_\x1b[2JTOKEN",
+            },
+        },
+    };
+
+    const template = HelpTemplate{
+        .sections = &.{ .header, .usage, .examples, .description, .commands, .flags, .env_vars, .footer },
+        .show_env_section = true,
+    };
+    for (template.sections) |section| {
+        try renderTextSection(w, false, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    try std.testing.expect(mem.indexOfScalar(u8, output, 0x1b) == null);
+    // Printable content survives
+    try std.testing.expect(mem.indexOf(u8, output, "long") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "--force") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "sub ") != null);
+}
+
+test "help: colored text output strips escape bytes from metadata but keeps styling" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const cmd = Command{
+        .name = "e\x1b[2Jsc",
+        .summary = "summary",
+        .flags = &.{
+            FlagSpec{
+                .name = "ba\x1b[31md",
+                .help = "help",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const template = HelpTemplate.default;
+    for (template.sections) |section| {
+        try renderTextSection(w, true, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    // Framework styling is present...
+    try std.testing.expect(mem.indexOf(u8, output, ansi_bold) != null);
+    // ...but injected escape sequences from metadata are neutralized
+    // (the ESC byte is stripped; the printable remainder is harmless)
+    try std.testing.expect(mem.indexOf(u8, output, "\x1b[2J") == null);
+    try std.testing.expect(mem.indexOf(u8, output, "\x1b[31m") == null);
+}
+
+test "help: short flag with control byte is not emitted (CWE-150)" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "test",
+        .flags = &.{
+            FlagSpec{
+                .name = "evil",
+                .short = 0x1b, // ESC — a non-printable byte
+                .help = "should not emit ESC",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const template = HelpTemplate.default;
+    for (template.sections) |section| {
+        try renderTextSection(w, false, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    try std.testing.expect(mem.indexOfScalar(u8, output, 0x1b) == null);
+}
+
+test "help: textutil mirror matches canonical control-byte policy" {
+    // canonical policy: strip <0x20 except \n,\t; strip 0x7f
+    var c: u16 = 0;
+    while (c <= 0xff) : (c += 1) {
+        const b: u8 = @intCast(c);
+        const expected = (b < 0x20 and b != '\n' and b != '\t') or b == 0x7f;
+        try std.testing.expectEqual(expected, textutil.isTerminalControl(b));
+    }
+}
+
+test "help: json short flag with quote char is escaped" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const flag = FlagSpec{
+        .name = "delim",
+        .help = "Delimiter character",
+        .short = '"',
+        .ftype = .string,
+    };
+    try printJsonFlag(w, &flag);
+    const out = buf.written();
+    // "short" value must be JSON-escaped: "short":"\"" not "short":"""
+    try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"\\\"\"") != null);
+    // The raw double-quote must not appear as an unescaped JSON value
+    try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"\"") == null);
+}
+
+test "help: json short flag with backslash is escaped" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const flag = FlagSpec{
+        .name = "sep",
+        .help = "Separator",
+        .short = '\\',
+        .ftype = .string,
+    };
+    try printJsonFlag(w, &flag);
+    const out = buf.written();
+    // "short" value must be JSON-escaped: "short":"\\" not "short":"\"
+    try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"\\\\\"") != null);
+}
+
+test "help: json short flag benign char renders verbatim" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const flag = FlagSpec{
+        .name = "verbose",
+        .help = "Verbose output",
+        .short = 'v',
+        .ftype = .bool,
+    };
+    try printJsonFlag(w, &flag);
+    const out = buf.written();
+    // Benign char must render unchanged: "short":"v"
+    try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"v\"") != null);
 }

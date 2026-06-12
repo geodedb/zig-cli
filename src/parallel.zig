@@ -69,20 +69,22 @@ pub const is_enabled = tp_enabled;
 // ---------------------------------------------------------------------------
 
 var pool: if (tp_enabled) tp.ThreadPool else void = undefined;
-var pool_started: bool = false;
+var pool_started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+var pool_workers: usize = 1;
 
 /// Initialize and start the thread pool.
 /// Call once at program startup. No-op if thread-pool is disabled.
 pub fn initPool(config: PoolConfig) void {
     if (!tp_enabled) return;
 
-    if (pool_started) return;
+    if (pool_started.load(.acquire)) return;
 
-    const max: usize = if (config.worker_count) |n| n else 0;
+    const max: usize = config.worker_count orelse 0;
     pool = tp.ThreadPool.init(std.heap.page_allocator, .{
         .max_threads = max,
     }) catch @panic("thread-pool: init failed");
-    pool_started = true;
+    pool_workers = if (max > 0) max else (std.Thread.getCpuCount() catch 1);
+    pool_started.store(true, .release);
 }
 
 /// Shut down the thread pool and release resources.
@@ -90,10 +92,9 @@ pub fn initPool(config: PoolConfig) void {
 pub fn deinitPool() void {
     if (!tp_enabled) return;
 
-    if (!pool_started) return;
-
+    if (!pool_started.load(.acquire)) return;
     pool.deinit();
-    pool_started = false;
+    pool_started.store(false, .release);
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +122,7 @@ pub fn forEach(
 ) void {
     std.debug.assert(results.len >= items.len);
 
-    if (!tp_enabled or !pool_started or items.len < min_parallel_items) {
+    if (!tp_enabled or !pool_started.load(.acquire) or items.len < min_parallel_items) {
         sequentialForEach(T, R, items, results, func);
         return;
     }
@@ -141,6 +142,13 @@ fn sequentialForEach(
     }
 }
 
+/// Number of chunks for forEach: ~2 chunks per worker for load balancing,
+/// never more than the item count or MAX_CHUNKS, never zero (NP-030).
+fn computeNumChunks(item_count: usize, workers: usize) usize {
+    const by_workers = @max(workers, 1) * 2;
+    return @max(@min(item_count, MAX_CHUNKS, by_workers), 1);
+}
+
 fn tpForEach(
     comptime T: type,
     comptime R: type,
@@ -150,7 +158,7 @@ fn tpForEach(
 ) void {
     if (!tp_enabled) return;
 
-    const num_chunks = @min(items.len, MAX_CHUNKS);
+    const num_chunks = computeNumChunks(items.len, pool_workers);
     const chunk_size = (items.len + num_chunks - 1) / num_chunks;
 
     const ChunkContext = struct {
@@ -189,7 +197,13 @@ fn tpForEach(
     }
 
     _ = pool.submitBatch(tasks[0..n_chunks], .{ .wait_group = &wg }) catch {
-        // Fallback: process sequentially
+        // submitBatch with .return_error backpressure can partially enqueue
+        // tasks before returning an error (enqueuePush calls wait_group.add(1)
+        // before tryPush, and only calls wait_group.done() on QueueFull, not
+        // on successfully-queued tasks).  Those accepted tasks are already
+        // writing into results[].  Wait for them to drain before falling back
+        // sequentially, otherwise both paths race on overlapping indices.
+        wg.wait();
         sequentialForEach(T, R, items, results, func);
         return;
     };
@@ -294,4 +308,12 @@ test "parallel: map allocates and computes" {
     try std.testing.expectEqual(@as(u64, 10), results[0]);
     try std.testing.expectEqual(@as(u64, 20), results[1]);
     try std.testing.expectEqual(@as(u64, 30), results[2]);
+}
+
+test "chunk count bounded by workers, items, and MAX_CHUNKS" {
+    try std.testing.expectEqual(@as(usize, 2), computeNumChunks(8, 1)); // 1 worker * 2
+    try std.testing.expectEqual(@as(usize, 8), computeNumChunks(64, 4)); // 4 workers * 2
+    try std.testing.expectEqual(@as(usize, 16), computeNumChunks(16, 32)); // never more chunks than items
+    try std.testing.expectEqual(@as(usize, 64), computeNumChunks(10_000, 64)); // MAX_CHUNKS cap
+    try std.testing.expectEqual(@as(usize, 1), computeNumChunks(1, 0)); // degenerate: never zero
 }

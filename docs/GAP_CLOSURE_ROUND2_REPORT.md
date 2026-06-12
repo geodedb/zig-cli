@@ -22,7 +22,7 @@
 | NQ-008 | QUALITY_GAP_ANALYSIS.md | Prompt interactive tests | `src/prompt.zig` -- `inputInternal`, `passwordInternal`, `confirmInternal`, `selectInternal`, `multiSelectInternal` accepting `anytype` reader/writer; 30 new tests; 710 total (up from 680) |
 | NP-010 | PERF_GAP_ANALYSIS.md | Benchmark allocation tracking | `tests/bench.zig` -- `CountingAllocator` VTable wrapper tracking `alloc_count`, `free_count`, `total_bytes`; `BenchResult` struct; `formatBytes` helper; `printResult` updated |
 | NEW-P003 | PERF_GAP_ANALYSIS.md | CI bench gate per-rule allow_failure | `.gitlab-ci.yml` bench-regression job `rules:` block -- MR: `allow_failure: false` (blocking), main/schedule: `allow_failure: true` (soft) |
-| NEW-P004 | PERF_GAP_ANALYSIS.md | CI apt caching conditional | `.gitlab-ci.yml` `.install-zig` template -- `if ! command -v curl >/dev/null 2>&1 || ...` conditional guard |
+| NEW-P004 | PERF_GAP_ANALYSIS.md | CI apt caching conditional | `.gitlab-ci.yml` `.install-zig` template -- `if ! command -v curl >/dev/null 2>&1 \|\| ...` conditional guard |
 
 ## Won't Do Items
 

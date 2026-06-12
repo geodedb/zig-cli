@@ -332,6 +332,7 @@ const cmd = Command{
 ```
 
 Users can disable active help with environment variable:
+
 ```bash
 export MYAPP_ACTIVE_HELP=0
 ```
@@ -382,7 +383,7 @@ const val = tracker.get("port").?;
 
 ### Source Precedence
 
-```
+```text
 flag > env > project > user > system > default
 ```
 
@@ -515,7 +516,7 @@ bar.increment(1);   // Add 1 to current
 
 ### Format Placeholders
 
-```
+```text
 {bar}     - Progress bar visualization
 {percent} - Percentage complete
 {current} - Current value
@@ -568,7 +569,7 @@ const Alignment = enum { left, center, right };
 
 ### Border Styles
 
-```
+```text
 .ascii          +----+---------+
                 | ID | Name    |
                 +----+---------+

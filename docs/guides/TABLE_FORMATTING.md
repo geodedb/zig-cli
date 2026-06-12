@@ -37,7 +37,8 @@ pub fn listUsers(ctx: *cli.Context) !void {
 ```
 
 Output:
-```
+
+```text
 +----+---------+---------------------+
 | ID | Name    | Email               |
 +----+---------+---------------------+
@@ -57,7 +58,8 @@ var t = table.Table.init(allocator, .{
     // ...
 });
 ```
-```
+
+```text
 +----+---------+
 | ID | Name    |
 +----+---------+
@@ -74,7 +76,8 @@ var t = table.Table.init(allocator, .{
     // ...
 });
 ```
-```
+
+```text
 ┌────┬─────────┐
 │ ID │ Name    │
 ├────┼─────────┤
@@ -91,7 +94,8 @@ var t = table.Table.init(allocator, .{
     // ...
 });
 ```
-```
+
+```text
 ╔════╦═════════╗
 ║ ID ║ Name    ║
 ╠════╬═════════╣
@@ -108,7 +112,8 @@ var t = table.Table.init(allocator, .{
     // ...
 });
 ```
-```
+
+```text
 ID  Name
 --  ----
  1  Alice
@@ -123,7 +128,8 @@ var t = table.Table.init(allocator, .{
     // ...
 });
 ```
-```
+
+```text
 ID  Name
  1  Alice
  2  Bob
@@ -150,7 +156,8 @@ ID  Name
 ```
 
 Long text will be truncated with "...":
-```
+
+```text
 | Description                              |
 | This is a very long description that ... |
 ```

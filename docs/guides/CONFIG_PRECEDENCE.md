@@ -15,7 +15,7 @@ From highest to lowest priority:
 
 ## Example Scenario
 
-```
+```text
 /etc/myapp/config.toml:
   port = 80
 
@@ -34,6 +34,7 @@ Command line:
 ```
 
 Result:
+
 - `port = 8080` (from flag)
 - `host = "localhost"` (from env, overrides user config)
 - `debug = true` (from project config)

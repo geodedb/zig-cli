@@ -122,6 +122,18 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     // Sanitize cmd.name for use in bash function identifiers
     const safe_name = try sanitizeBashIdentifier(esc_alloc, cmd.name);
 
+    // Global flags shared by all completion functions (emitted once; NP-029).
+    try w.print("_{s}_global_flags=\"", .{safe_name});
+    for (command.global_flags, 0..) |*gflag, gi| {
+        if (gi > 0) try w.writeAll(" ");
+        const esc_gname = try escapeBashDoubleQuote(esc_alloc, gflag.name);
+        try w.print("--{s}", .{esc_gname});
+        if (gflag.short) |s| {
+            try w.print(" -{c}", .{s});
+        }
+    }
+    try w.writeAll("\"\n\n");
+
     // Generate completion functions for all commands recursively
     try generateCommandFunction(w, cmd, safe_name, "", enable_active_help, esc_alloc);
 
@@ -191,17 +203,8 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
     try w.print("    local cur=\"${{COMP_WORDS[COMP_CWORD]}}\"\n", .{});
     try w.print("    local prev=\"${{COMP_WORDS[COMP_CWORD-1]}}\"\n\n", .{});
 
-    // Global flags (sourced from canonical command.global_flags definition)
-    try w.writeAll("    local global_flags=\"");
-    for (command.global_flags, 0..) |*gflag, gi| {
-        if (gi > 0) try w.writeAll(" ");
-        const esc_gname = try escapeBashDoubleQuote(esc_alloc, gflag.name);
-        try w.print("--{s}", .{esc_gname});
-        if (gflag.short) |s| {
-            try w.print(" -{c}", .{s});
-        }
-    }
-    try w.writeAll("\"\n");
+    // Global flags: reference the variable emitted once at top level (NP-029).
+    try w.print("    local global_flags=\"${{_{s}_global_flags}}\"\n", .{root_name});
 
     // Command-specific flags
     try w.writeAll("    local flags=\"$global_flags");
@@ -423,6 +426,38 @@ test "bash: completion with flags" {
 
     try std.testing.expect(std.mem.indexOf(u8, script, "--config") != null);
     try std.testing.expect(std.mem.indexOf(u8, script, "--verbose") != null);
+}
+
+test "bash: global flags emitted once, referenced per function" {
+    const subcmd = Command{
+        .name = "sub",
+        .summary = "A subcommand",
+    };
+    const cmd = Command{
+        .name = "app",
+        .summary = "Application",
+        .subcommands = &.{&subcmd},
+    };
+
+    const out = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(out);
+
+    // The top-level variable must appear exactly once
+    const first = std.mem.indexOf(u8, out, "_app_global_flags=").?;
+    try std.testing.expect(std.mem.indexOfPos(u8, out, first + 1, "_app_global_flags=") == null);
+
+    // Every completion function must reference it via the local alias
+    // (one function for the root, one for the subcommand)
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        std.mem.count(u8, out, "local global_flags=\"${_app_global_flags}\""),
+    );
+
+    // The alias must still be composed into flags=
+    try std.testing.expect(std.mem.indexOf(u8, out, "local flags=\"$global_flags") != null);
+
+    // The definition must precede the first completion function
+    try std.testing.expect(first < std.mem.indexOf(u8, out, "_app_main() {").?);
 }
 
 test "bash: completion includes global flags" {
@@ -728,4 +763,6 @@ test "bash: cmd.name with hyphens produces valid function names" {
     try std.testing.expect(std.mem.indexOf(u8, script, "_my_app()") != null);
     // But complete registration should use the original name
     try std.testing.expect(std.mem.indexOf(u8, script, "complete -F _my_app my-app") != null);
+    // The shared global-flags variable must also use the sanitized name
+    try std.testing.expect(std.mem.indexOf(u8, script, "_my_app_global_flags=") != null);
 }
