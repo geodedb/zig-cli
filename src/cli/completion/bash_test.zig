@@ -354,3 +354,51 @@ test "bash: hostile flag name cannot break out of the value-completion case" {
     try std.testing.expect(std.mem.indexOf(u8, out, "        --out\"; touch") == null);
     try std.testing.expect(std.mem.indexOf(u8, out, "'--out\"; touch /tmp/PWNED #'") != null);
 }
+
+// ============================================================================
+// Field-metadata control-byte stripping (CWE-150, iter-10)
+//
+// flag.help, subcmd.summary, and completion values flow through the per-field
+// shell escapers (escapeBashDoubleQuote / escapeBashSingleQuote). Those
+// escapers must strip the full terminal-control-byte set, not just NUL/newline,
+// so an ESC/BEL embedded in field metadata cannot survive into the generated
+// script and execute against a terminal that displays the script before eval.
+// ============================================================================
+
+/// Assert no terminal-control byte (ESC, BEL, a sample C0, DEL) survives.
+fn expectNoControlBytes(out: []const u8) !void {
+    try std.testing.expect(std.mem.indexOfScalar(u8, out, 0x1b) == null); // ESC
+    try std.testing.expect(std.mem.indexOfScalar(u8, out, 0x07) == null); // BEL
+    try std.testing.expect(std.mem.indexOfScalar(u8, out, 0x01) == null); // sample C0
+    try std.testing.expect(std.mem.indexOfScalar(u8, out, 0x7f) == null); // DEL
+}
+
+test "bash: control bytes in field metadata stripped from script (CWE-150)" {
+    // bash emits completion values (escapeBashDoubleQuote) and active-help
+    // messages (escapeBashDoubleQuote) from field metadata. flag.help and
+    // subcmd.summary are not rendered by the bash generator, so the hostile
+    // field bytes here ride the completion-value and active-help paths.
+    const cmd = Command{
+        .name = "app",
+        .summary = "App",
+        .flags = &.{
+            .{
+                .name = "format",
+                .help = "h",
+                .ftype = .string,
+                .completions = &.{ "js\x1b]0;PWNED\x07on\x01\x7f", "yaml" },
+            },
+        },
+        .active_help = &.{"Hint\x1b]0;X\x07msg"},
+    };
+
+    const out = try bash.generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(out);
+
+    // No control byte may survive anywhere in the generated script.
+    try expectNoControlBytes(out);
+    // Printable remainder of the completion value is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, out, "js]0;PWNEDon") != null);
+    // Printable remainder of the active-help message is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, out, "Hint]0;Xmsg") != null);
+}

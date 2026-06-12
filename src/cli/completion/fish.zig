@@ -18,13 +18,20 @@ const max_depth = 16;
 
 /// Escape a string for use inside fish single-quoted contexts.
 /// Escapes: ' as \', \ as \\
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (`sanitize.isTerminalControl`: all C0
+/// controls including ESC/BEL/CR plus DEL, but keeping tab) and newline. This
+/// closes the field-metadata path where an ESC could survive into the `-d`
+/// description text of a generated completion line (CWE-150).
 /// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapeFishSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
+        if (c == '\n' or sanitize.isTerminalControl(c)) {
+            needs_escape = true;
+            break;
+        }
         switch (c) {
-            '\'', '\\', 0x00, '\n', '\r' => {
+            '\'', '\\' => {
                 needs_escape = true;
                 break;
             },
@@ -36,9 +43,9 @@ pub fn escapeFishSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]con
     var list: std.ArrayListUnmanaged(u8) = .empty;
     list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
+        // Strip newline and every terminal-control byte entirely.
+        if (c == '\n' or sanitize.isTerminalControl(c)) continue;
         switch (c) {
-            // Strip NUL bytes and newlines entirely
-            0x00, '\n', '\r' => {},
             '\'', '\\' => {
                 list.append(allocator, '\\') catch return error.OutOfMemory;
                 list.append(allocator, c) catch return error.OutOfMemory;

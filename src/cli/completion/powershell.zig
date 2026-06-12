@@ -191,17 +191,17 @@ fn writePowerShellFlag(w: anytype, flag: *const FlagSpec, indent: []const u8, es
 
 /// Escape special characters for PowerShell single-quoted strings.
 /// Doubles single quotes: ' -> ''
-/// Strips: NUL bytes (0x00), newlines (0x0A), carriage returns (0x0D).
+/// Strips: every terminal-control byte (`sanitize.isTerminalControl`: all C0
+/// controls including ESC/BEL/CR plus DEL, but keeping tab) and newline. This
+/// closes the field-metadata path where an ESC could survive into a
+/// single-quoted CompletionResult and execute against the terminal (CWE-150).
 /// Fast path: if no special chars, returns `s` directly (no allocation).
 pub fn escapePowerShellString(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
-        switch (c) {
-            '\'', 0x00, '\n', '\r' => {
-                needs_escape = true;
-                break;
-            },
-            else => {},
+        if (c == '\'' or c == '\n' or sanitize.isTerminalControl(c)) {
+            needs_escape = true;
+            break;
         }
     }
     if (!needs_escape) return s;
@@ -209,9 +209,9 @@ pub fn escapePowerShellString(allocator: std.mem.Allocator, s: []const u8) ![]co
     var list: std.ArrayListUnmanaged(u8) = .empty;
     list.ensureTotalCapacity(allocator, s.len) catch {};
     for (s) |c| {
+        // Strip newline and every terminal-control byte entirely.
+        if (c == '\n' or sanitize.isTerminalControl(c)) continue;
         switch (c) {
-            // Strip NUL bytes and newlines entirely
-            0x00, '\n', '\r' => {},
             '\'' => {
                 list.append(allocator, '\'') catch return error.OutOfMemory;
                 list.append(allocator, '\'') catch return error.OutOfMemory;
@@ -662,4 +662,57 @@ test "powershell: escapePowerShellString strips newlines and CR" {
     const result = try escapePowerShellString(std.testing.allocator, "line1\nline2\rline3");
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("line1line2line3", result);
+}
+
+test "powershell: escapePowerShellString strips ESC, BEL, C0 and DEL but keeps tab" {
+    // Every terminal-control byte is removed; tab (0x09) is preserved, matching
+    // the sanitize terminal policy (isTerminalControl keeps \t).
+    const result = try escapePowerShellString(std.testing.allocator, "a\x1bb\x07c\x01d\x7fe\tf");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("abcde\tf", result);
+}
+
+// ============================================================================
+// Field-metadata control-byte stripping (CWE-150, iter-10)
+//
+// flag.help, subcmd.summary, and completion values flow through
+// escapePowerShellString into single-quoted CompletionResult description and
+// value positions. That escaper must strip the full terminal-control-byte set,
+// not just NUL/newline, so an ESC/BEL in field metadata cannot survive into the
+// generated script and execute against a terminal that displays it.
+// ============================================================================
+
+test "powershell: control bytes in field metadata stripped from script (CWE-150)" {
+    const subcmd = Command{
+        .name = "deploy",
+        .summary = "Sum\x1b]0;PWNED\x07mary",
+    };
+    const cmd = Command{
+        .name = "app",
+        .summary = "App",
+        .subcommands = &.{&subcmd},
+        .flags = &.{
+            command.FlagSpec{
+                .name = "format",
+                .help = "Out\x1b]0;PWNED\x07put\x01\x7f",
+                .ftype = .string,
+                .completions = &.{ "js\x1bon", "yaml" },
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // No control byte may survive anywhere in the generated script.
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x1b) == null); // ESC
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x07) == null); // BEL
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x01) == null); // C0
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, 0x7f) == null); // DEL
+    // Printable remainder of flag.help is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "Out]0;PWNEDput") != null);
+    // Printable remainder of subcmd.summary is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "Sum]0;PWNEDmary") != null);
+    // Printable remainder of the completion value is preserved.
+    try std.testing.expect(std.mem.indexOf(u8, script, "json") != null);
 }
