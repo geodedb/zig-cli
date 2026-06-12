@@ -28,6 +28,11 @@ Audit hardening batches (2026-06 codepros audit iterations 1-4).
 - JSON help output is always valid RFC 8259 UTF-8 — invalid bytes are replaced with U+FFFD
 - `.only_valid` argument errors, completion-script headers, and the bash `complete -F` registration target are control-filtered/escaped (iteration-2/3 findings N-01, N-03, N-04)
 
+### Fixed (iteration 8)
+- `parallel.initPool` clamps an explicit `worker_count` to the thread-pool maximum (64) instead of `@panic`-ing the whole process — a `--jobs N` above the cap, or `getCpuCount()` on >64-thread hardware, no longer aborts at startup; `pool_workers` records the clamped value so chunking math stays consistent (iter-8 finding 8-1)
+- `parallel.forEach` runs the unsubmitted tail chunks inline when `submitBatch` partially enqueues under `.return_error` backpressure — previously the partial-success result was discarded, leaving the dropped chunks' result slots uninitialized and read as garbage (iter-8 finding 8-2)
+- The pager ignores SIGPIPE (SIG_IGN, saved/restored) for the duration of the spawn/write/wait interaction so a pager that closes its read end early (user quits `less` with `q`) yields `EPIPE` → the existing direct-output fallback, instead of the default SIGPIPE disposition killing the process before the fallback can run; POSIX-only, no-op on Windows (iter-8 finding 8-3, refs #137)
+
 ### Changed
 - Invalid flag `default_str` values now return `ParseError.InvalidValue` instead of being silently skipped
 - Windows `password()` returns `NotInteractive` when echo suppression is unavailable (GetConsoleMode/SetConsoleMode failure) instead of reading the password with echo enabled

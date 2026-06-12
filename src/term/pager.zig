@@ -29,6 +29,43 @@ fn writeDirect(stdout: std.Io.File, io: std.Io, content: []const u8) error{Write
     fw.interface.flush() catch return error.WriteFailed;
 }
 
+/// Scoped SIGPIPE → SIG_IGN guard for the pager interaction (8-3).
+///
+/// Zig 0.16 installs no `SIG_IGN` for SIGPIPE and the CLI's `signal.zig` only
+/// registers INT/TERM/HUP/QUIT, so SIGPIPE keeps its default disposition:
+/// terminate the process. When `$PAGER` (e.g. `less`) closes its read end early
+/// — the user quits with `q` on large output — the next `write()` to the pager's
+/// stdin raises SIGPIPE and kills the parent BEFORE the `catch` that sets
+/// `write_failed` and triggers the direct-output fallback (#137).
+///
+/// Ignoring SIGPIPE turns that write into a plain `EPIPE` → `error.BrokenPipe`,
+/// which the existing `catch` handles. The previous disposition is saved and
+/// restored by `deinit` (run via `defer`) so the consumer's signal setup is not
+/// disturbed beyond this one pager call. No-op on Windows, which has no SIGPIPE.
+const SigPipeGuard = struct {
+    const enabled = builtin.os.tag != .windows;
+    prev: if (enabled) std.posix.Sigaction else void = undefined,
+
+    fn ignore() SigPipeGuard {
+        if (comptime !enabled) return .{};
+        var guard: SigPipeGuard = .{};
+        const ign = std.posix.Sigaction{
+            .handler = .{ .handler = std.posix.SIG.IGN },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        // std.posix.sigaction returns void in Zig 0.16 (EINVAL is unreachable
+        // for SIGPIPE), so no error to handle.
+        std.posix.sigaction(std.posix.SIG.PIPE, &ign, &guard.prev);
+        return guard;
+    }
+
+    fn deinit(self: *SigPipeGuard) void {
+        if (comptime !enabled) return;
+        std.posix.sigaction(std.posix.SIG.PIPE, &self.prev, null);
+    }
+};
+
 /// Write content through a pager if appropriate
 pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
     const io = std.Io.Threaded.global_single_threaded.io();
@@ -80,6 +117,13 @@ pub fn writeIfTty(content: []const u8, config: PagerConfig) !void {
     if (argv_len == 0) {
         return writeDirect(stdout, io, content);
     }
+
+    // Ignore SIGPIPE for the duration of the pager interaction so that a pager
+    // closing its read end early (user quits `less` with `q`) turns the stdin
+    // write into EPIPE → error.BrokenPipe instead of killing this process before
+    // the write-failure fallback below can run (8-3). Restored on return.
+    var sigpipe_guard = SigPipeGuard.ignore();
+    defer sigpipe_guard.deinit();
 
     // Spawn pager process directly (no shell).
     var child = std.process.spawn(io, .{
@@ -168,6 +212,39 @@ test "pager: writeIfTty body is semantically analyzed" {
     // which is otherwise lazily skipped because no unit test reaches it.
     // This caught a stale pre-0.16 std.process.Child API in the spawn block.
     _ = &writeIfTty;
+}
+
+test "pager: SigPipeGuard ignores then restores SIGPIPE disposition" {
+    // 8-3: on POSIX the guard must set SIGPIPE to SIG_IGN for the pager
+    // interaction and restore the previous disposition on deinit. SIGPIPE
+    // delivery itself is not deterministically unit-testable, so we verify the
+    // observable contract: while the guard is live the handler is SIG_IGN, and
+    // afterwards it matches whatever was installed before.
+    if (comptime builtin.os.tag == .windows) {
+        // Guard is a comptime no-op on Windows; just take its address so the
+        // body is analyzed for the windows target too.
+        _ = &SigPipeGuard.ignore;
+        _ = &SigPipeGuard.deinit;
+        return;
+    }
+
+    // Snapshot the disposition before we touch it.
+    var before: std.posix.Sigaction = undefined;
+    std.posix.sigaction(std.posix.SIG.PIPE, null, &before);
+
+    {
+        var guard = SigPipeGuard.ignore();
+        defer guard.deinit();
+
+        var during: std.posix.Sigaction = undefined;
+        std.posix.sigaction(std.posix.SIG.PIPE, null, &during);
+        try std.testing.expectEqual(std.posix.SIG.IGN, during.handler.handler);
+    }
+
+    // Disposition is restored to exactly what it was before the guard.
+    var after: std.posix.Sigaction = undefined;
+    std.posix.sigaction(std.posix.SIG.PIPE, null, &after);
+    try std.testing.expectEqual(before.handler.handler, after.handler.handler);
 }
 
 test "PagerWriter initialization" {
