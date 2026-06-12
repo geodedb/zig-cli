@@ -5,6 +5,7 @@ This document tracks planned features and improvements for zig-cli, with referen
 ## Current Status
 
 The library provides comprehensive CLI functionality with near-complete Cobra feature parity:
+
 - Command and subcommand parsing with aliases
 - Flag parsing (bool, string, int, float, path, string_array)
 - **Flag groups** (mutually exclusive, required together, one required)
@@ -118,15 +119,18 @@ Contributions are welcome! Please:
 ## Version History
 
 ### v0.2.0 (Unreleased)
+
 - Zig package registry publishing (#12)
 
 ### v0.1.1
+
 - Audit hardening: security, performance, quality, and documentation fixes
 - Cross-compilation CI for Windows and aarch64-linux
 - Subcommand environment variable defaults
 - Windows echo suppression for password prompts
 
 ### v0.1.0
+
 - Command groups for organized help output
 - Markdown documentation generation
 - Table output formatter with multiple border styles
@@ -142,6 +146,7 @@ Contributions are welcome! Please:
 - Flag value completion in all shells
 
 ### v0.0.0 (Initial)
+
 - Initial development release
 - Core command parsing
 - Configuration file support via zig-config

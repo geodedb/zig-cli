@@ -13,6 +13,7 @@ A comprehensive command-line interface and configuration library for Zig, provid
 ## Features
 
 ### CLI Features
+
 - **Nested command trees** with subcommands and aliases
 - **Type-safe flag parsing** (bool, int, float, string, path, string_array)
 - **Automatic help generation** with examples-first approach
@@ -24,6 +25,7 @@ A comprehensive command-line interface and configuration library for Zig, provid
 - **Default flag values** applied when unspecified
 
 ### Config Features
+
 - **Multiple format support** (TOML, JSON, YAML) via config
 - **XDG Base Directory compliance** (~/.config, /etc)
 - **Strict precedence**: flags > env > project > user > system > defaults
@@ -32,6 +34,7 @@ A comprehensive command-line interface and configuration library for Zig, provid
 - **Validation hooks**
 
 ### Terminal Features
+
 - **TTY detection** and terminal size
 - **ANSI color** with NO_COLOR/TERM=dumb compliance
 - **Pager integration** (less) for long output
@@ -126,7 +129,7 @@ const cfg = try config.load(AppConfig, .{
 
 ## Configuration Precedence
 
-```
+```text
 +--------+  highest priority
 | Flags  |  --port=7000
 +--------+
@@ -178,6 +181,7 @@ cat token.txt | myapp login
 ```
 
 Configure secret flags:
+
 ```zig
 cli.FlagSpec{
     .name = "token",
@@ -195,6 +199,7 @@ cli.FlagSpec{
 ### Error Message Redaction
 
 Paths to sensitive files are automatically redacted in error messages:
+
 - `/etc/shadow`, `/etc/passwd`
 - `.ssh/`, `.gnupg/`, `.aws/`
 - Files named `credentials`, `secrets`, `.env`
@@ -280,6 +285,7 @@ zig build -Doptimize=ReleaseSafe
 - [Roadmap](docs/ROADMAP.md) - Planned features and Cobra comparison
 
 ### Guides
+
 - [Subcommands](docs/guides/SUBCOMMANDS.md) - Nested command structures
 - [Config Precedence](docs/guides/CONFIG_PRECEDENCE.md) - Configuration loading order
 - [Shell Completions](docs/guides/SHELL_COMPLETIONS.md) - Completion script generation

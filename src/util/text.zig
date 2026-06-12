@@ -157,15 +157,24 @@ pub fn splitWhitespace(text: []const u8, allocator: std.mem.Allocator) ![]const 
     return words.toOwnedSlice(allocator);
 }
 
+/// Returns true for bytes that must be stripped to protect terminal state:
+/// C0 controls (0x00–0x1F) except newline (0x0A) and tab (0x09), plus
+/// DEL (0x7F). CR (0x0D) is intentionally stripped because it moves the
+/// cursor to the start of the current line and can cause output to be
+/// overwritten in terminals.
+inline fn isTerminalControl(c: u8) bool {
+    return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
+}
+
 /// Write `text` to `w`, removing bytes that can alter terminal state:
-/// C0 controls (0x00-0x08, 0x0B-0x1F), DEL (0x7F). Newline (0x0A) and
-/// tab (0x09) are preserved. Removing ESC (0x1B) neutralizes ANSI/OSC
-/// escape sequences (CWE-150); the remaining printable bytes are kept.
+/// C0 controls (0x00–0x1F) except newline (0x0A) and tab (0x09), plus
+/// DEL (0x7F). CR (0x0D) is stripped because it overwrites terminal output
+/// lines. Removing ESC (0x1B) neutralizes ANSI/OSC escape sequences
+/// (CWE-150); the remaining printable bytes are kept.
 pub fn writeControlFiltered(w: anytype, text: []const u8) !void {
     var start: usize = 0;
     for (text, 0..) |c, idx| {
-        const is_control = (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
-        if (is_control) {
+        if (isTerminalControl(c)) {
             if (idx > start) try w.writeAll(text[start..idx]);
             start = idx + 1;
         }
@@ -179,8 +188,7 @@ pub fn stripControlChars(text: []const u8, allocator: std.mem.Allocator) ![]cons
     errdefer result.deinit(allocator);
     var start: usize = 0;
     for (text, 0..) |c, idx| {
-        const is_control = (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
-        if (is_control) {
+        if (isTerminalControl(c)) {
             if (idx > start) try result.appendSlice(allocator, text[start..idx]);
             start = idx + 1;
         }
@@ -233,4 +241,30 @@ test "stripControlChars allocating variant" {
     const out = try stripControlChars("x\x1b]0;evil\x07y", std.testing.allocator);
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("x]0;evily", out);
+}
+
+test "writeControlFiltered empty input" {
+    var buf: [16]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try writeControlFiltered(&w, "");
+    try std.testing.expectEqualStrings("", w.buffered());
+}
+
+test "stripControlChars empty input" {
+    const out = try stripControlChars("", std.testing.allocator);
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("", out);
+}
+
+test "writeControlFiltered all-control input" {
+    var buf: [16]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try writeControlFiltered(&w, "\x01\x02\x03");
+    try std.testing.expectEqualStrings("", w.buffered());
+}
+
+test "stripControlChars all-control input" {
+    const out = try stripControlChars("\x01\x02\x03", std.testing.allocator);
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("", out);
 }
