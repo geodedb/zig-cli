@@ -808,7 +808,8 @@ with 0 memory leaks on 2026-03-24.
 - **Risk Score:** 8
 - **CWE:** CWE-78 (OS Command Injection)
 - **Issue:** [#38](https://gitlab.com/devnw/zig/cli/-/issues/38)
-- **Resolution:** All 7 original injection points now covered by escape functions implemented as part of GAP-0011 closure. Escape functions applied at all string interpolation sites in all 4 completion generators.
+- **Resolution:** All 7 original injection points now covered by escape functions implemented as part of GAP-0011 closure.
+- **Iteration-5 correction (2026-06-12):** the original "all string interpolation sites in all 4 completion generators" claim was over-broad — the bash `local commands="..."` candidate list still interpolated `subcmd.name` raw (the registration line, flags list, and case patterns were covered). Fixed by escaping the candidate list via `escapeBashDoubleQuote` with a hostile-name regression test (iteration-5 convergence review finding).
 - **Resolved:** 2026-03-24
 
 ---
