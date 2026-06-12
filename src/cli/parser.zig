@@ -140,6 +140,8 @@ pub const Parser = struct {
         self.env_parse_error_count = 0;
         self.env_parse_errors_dropped = 0;
         self.invalid_default_flag = null;
+        // env_parse_errors entries are overwritten on next use; only the
+        // count gates reads, so the array itself needs no zeroing.
     }
 
     /// Parse command-line arguments
@@ -692,14 +694,17 @@ fn formatParseError(parser: *const Parser, err: ParseError, stderr: anytype) !vo
         ParseError.MissingValue => try stderr.print("Error: Missing value for flag\n\n", .{}),
         ParseError.InvalidValue => {
             if (parser.invalid_default_flag) |flag_name| {
-                try stderr.print("Error: invalid default value for --{s}\n\n", .{flag_name});
+                try stderr.print("Error: Invalid default value for --{s}\n\n", .{flag_name});
             } else if (parser.env_parse_error_count > 0) {
                 const env_err = parser.env_parse_errors[0];
                 try stderr.print("Error: Invalid value for --{s}: environment variable ${s} has value that cannot be parsed as {s}", .{
                     env_err.flag_name, env_err.env_name, env_err.expected_type,
                 });
-                if (parser.env_parse_errors_dropped > 0) {
-                    try stderr.print(" (+{d} more)", .{parser.env_parse_errors_dropped});
+                // Only the first error is rendered; count the remaining
+                // recorded errors plus any dropped beyond the buffer.
+                const more = (parser.env_parse_error_count - 1) + parser.env_parse_errors_dropped;
+                if (more > 0) {
+                    try stderr.print(" (+{d} more)", .{more});
                 }
                 try stderr.print("\n\n", .{});
             } else {
