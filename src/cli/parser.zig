@@ -22,8 +22,13 @@ const FlagGroupType = command.FlagGroupType;
 const ArgsValidator = command.ArgsValidator;
 const ArgsValidationError = command.ArgsValidationError;
 const ArgsErrorDetails = command.ArgsErrorDetails;
-const builtin = @import("builtin");
 const help = @import("help.zig");
+
+// Env/default-value machinery and error rendering live in sibling files.
+// The mutual file imports (parser.zig <-> parser/env.zig) are legal in
+// Zig within a module; the help/ split uses the same pattern.
+const env_defaults = @import("parser/env.zig");
+const format = @import("parser/format.zig");
 
 /// Parse errors
 pub const ParseError = error{
@@ -103,13 +108,9 @@ pub const Parser = struct {
 
     const Self = @This();
 
-    /// Record of an environment variable parse failure
-    pub const EnvParseErrorEntry = struct {
-        env_name: []const u8 = "",
-        flag_name: []const u8 = "",
-        value: []const u8 = "",
-        expected_type: []const u8 = "",
-    };
+    /// Record of an environment variable parse failure.
+    /// Defined in parser/env.zig; re-exported here for API stability.
+    pub const EnvParseErrorEntry = env_defaults.EnvParseErrorEntry;
 
     /// Initialize a new parser
     pub fn init(
@@ -144,7 +145,23 @@ pub const Parser = struct {
         // count gates reads, so the array itself needs no zeroing.
     }
 
-    /// Parse command-line arguments
+    /// Result of consuming one argv token in the parse loop.
+    const TokenOutcome = union(enum) {
+        /// Continue scanning at this argv index.
+        next: usize,
+        /// `--help`/`-h` was encountered; return immediately.
+        help,
+        /// `--version`/`-V` was encountered; return immediately.
+        version,
+    };
+
+    /// Parse command-line arguments.
+    ///
+    /// Runs as a phase pipeline: reset per-parse diagnostic state, set up
+    /// the context and command chain, apply environment defaults, consume
+    /// argv tokens one at a time (flags, subcommands, positionals), then
+    /// finalize (subcommand env defaults, default values, and
+    /// required/group/args validation).
     pub fn parse(self: *Self, argv: []const []const u8) ParseError!ParseResult {
         self.resetErrorState();
 
@@ -159,146 +176,31 @@ pub const Parser = struct {
         command_chain.append(self.allocator, self.root) catch return ParseError.OutOfMemory;
 
         // Apply environment-based defaults
-        try self.applyEnvDefaults(&ctx);
+        try env_defaults.applyEnvDefaults(self, &ctx);
 
         var current_cmd = self.root;
         self.current_command = self.root;
-        var i: usize = 0;
 
         // Skip program name
-        if (argv.len > 0) {
-            i = 1;
-        }
+        var i: usize = if (argv.len > 0) 1 else 0;
 
         while (i < argv.len) {
             const arg = argv[i];
+            const outcome = if (mem.startsWith(u8, arg, "--"))
+                try self.handleLongToken(&ctx, current_cmd, command_chain.items, argv, i)
+            else if (mem.startsWith(u8, arg, "-") and arg.len > 1)
+                try self.handleShortToken(&ctx, current_cmd, command_chain.items, argv, i)
+            else
+                try self.handlePlainToken(&ctx, &command_chain, &current_cmd, arg, i);
 
-            if (mem.startsWith(u8, arg, "--")) {
-                // Long flag
-                const flag_part = arg[2..];
-
-                // Handle -- (end of flags)
-                if (flag_part.len == 0) {
-                    i += 1;
-                    // Rest are positionals
-                    while (i < argv.len) : (i += 1) {
-                        ctx.positionals.append(ctx.allocator, argv[i]) catch return ParseError.OutOfMemory;
-                    }
-                    break;
-                }
-
-                // Check for --flag=value format
-                if (mem.indexOf(u8, flag_part, "=")) |eq_pos| {
-                    const name = flag_part[0..eq_pos];
-                    const value = flag_part[eq_pos + 1 ..];
-                    try self.handleFlagWithChain(&ctx, current_cmd, command_chain.items, name, value);
-                } else {
-                    // Check if it's a boolean flag or needs a value
-                    if (self.findFlagInFullChain(current_cmd, command_chain.items, flag_part)) |flag| {
-                        if (flag.ftype == .bool) {
-                            try self.handleFlagWithChain(&ctx, current_cmd, command_chain.items, flag_part, "true");
-                        } else {
-                            // Need next arg as value
-                            i += 1;
-                            if (i >= argv.len) {
-                                return ParseError.MissingValue;
-                            }
-                            try self.handleFlagWithChain(&ctx, current_cmd, command_chain.items, flag_part, argv[i]);
-                        }
-                    } else {
-                        // Check global flags
-                        if (mem.eql(u8, flag_part, "help")) {
-                            return ParseResult{
-                                .command = current_cmd,
-                                .context = ctx,
-                                .help_requested = true,
-                                .command_chain = command_chain,
-                                .allocator = self.allocator,
-                            };
-                        } else if (mem.eql(u8, flag_part, "version")) {
-                            return ParseResult{
-                                .command = current_cmd,
-                                .context = ctx,
-                                .version_requested = true,
-                                .command_chain = command_chain,
-                                .allocator = self.allocator,
-                            };
-                        }
-
-                        // Handle other global flags
-                        try self.handleGlobalFlag(&ctx, flag_part);
-                    }
-                }
-            } else if (mem.startsWith(u8, arg, "-") and arg.len > 1) {
-                // Short flags
-                const flags = arg[1..];
-                for (flags, 0..) |c, j| {
-                    if (c == 'h') {
-                        return ParseResult{
-                            .command = current_cmd,
-                            .context = ctx,
-                            .help_requested = true,
-                            .command_chain = command_chain,
-                            .allocator = self.allocator,
-                        };
-                    } else if (c == 'V') {
-                        return ParseResult{
-                            .command = current_cmd,
-                            .context = ctx,
-                            .version_requested = true,
-                            .command_chain = command_chain,
-                            .allocator = self.allocator,
-                        };
-                    }
-
-                    if (self.findFlagByShortInFullChain(current_cmd, command_chain.items, c)) |flag| {
-                        if (flag.ftype == .bool) {
-                            try self.setFlagValue(&ctx, flag.name, FlagValue{ .bool = true });
-                        } else if (j == flags.len - 1) {
-                            // Last short flag, next arg is value
-                            i += 1;
-                            if (i >= argv.len) {
-                                return ParseError.MissingValue;
-                            }
-                            try self.handleFlagWithChain(&ctx, current_cmd, command_chain.items, flag.name, argv[i]);
-                        }
-                    } else {
-                        try self.handleGlobalShortFlag(&ctx, c);
-                    }
-                }
-            } else if (arg[0] == '-' and arg.len == 1) {
-                // Single dash means stdin/stdout
-                ctx.positionals.append(ctx.allocator, arg) catch return ParseError.OutOfMemory;
-            } else {
-                // Subcommand or positional
-                if (current_cmd.findSubcommand(arg)) |subcmd| {
-                    current_cmd = subcmd;
-                    self.current_command = subcmd;
-                    ctx.command_path.append(ctx.allocator, arg) catch return ParseError.OutOfMemory;
-                    // Track command chain for persistent hooks
-                    command_chain.append(self.allocator, subcmd) catch return ParseError.OutOfMemory;
-                } else {
-                    ctx.positionals.append(ctx.allocator, arg) catch return ParseError.OutOfMemory;
-                }
+            switch (outcome) {
+                .next => |next_i| i = next_i,
+                .help => return earlyResult(self.allocator, current_cmd, ctx, command_chain, true),
+                .version => return earlyResult(self.allocator, current_cmd, ctx, command_chain, false),
             }
-
-            i += 1;
         }
 
-        // Apply env defaults for resolved subcommand (if different from root)
-        if (current_cmd != self.root) {
-            try self.applyEnvDefaultsForCommand(&ctx, current_cmd);
-        }
-
-        // Check for required flags
-        try self.applyDefaultValues(&ctx, current_cmd);
-        try self.checkRequired(&ctx, current_cmd);
-
-        // Check flag groups
-        try self.checkFlagGroups(&ctx, current_cmd);
-
-        // Check positional argument validation
-        try self.checkArgs(&ctx, current_cmd);
+        try self.finalize(&ctx, current_cmd);
 
         return ParseResult{
             .command = current_cmd,
@@ -306,6 +208,174 @@ pub const Parser = struct {
             .command_chain = command_chain,
             .allocator = self.allocator,
         };
+    }
+
+    /// Build a ParseResult for an early `--help`/`--version` exit.
+    /// Matches historical behavior: help/version return before defaults
+    /// and validation run.
+    fn earlyResult(
+        allocator: Allocator,
+        cmd: *const Command,
+        ctx: Context,
+        chain: std.ArrayList(*const Command),
+        is_help: bool,
+    ) ParseResult {
+        return .{
+            .command = cmd,
+            .context = ctx,
+            .help_requested = is_help,
+            .version_requested = !is_help,
+            .command_chain = chain,
+            .allocator = allocator,
+        };
+    }
+
+    /// Consume one `--`-prefixed token: bare `--` (end of flags),
+    /// `--flag=value`, `--flag [value]`, the built-in `--help`/`--version`,
+    /// or a global flag.
+    fn handleLongToken(
+        self: *Self,
+        ctx: *Context,
+        cmd: *const Command,
+        chain: []const *const Command,
+        argv: []const []const u8,
+        i: usize,
+    ) ParseError!TokenOutcome {
+        const flag_part = argv[i][2..];
+
+        // Handle -- (end of flags): rest are positionals
+        if (flag_part.len == 0) {
+            for (argv[i + 1 ..]) |rest| {
+                ctx.positionals.append(ctx.allocator, rest) catch return ParseError.OutOfMemory;
+            }
+            return .{ .next = argv.len };
+        }
+
+        // Check for --flag=value format
+        if (mem.indexOf(u8, flag_part, "=")) |eq_pos| {
+            const name = flag_part[0..eq_pos];
+            const value = flag_part[eq_pos + 1 ..];
+            try self.handleFlagWithChain(ctx, cmd, chain, name, value);
+            return .{ .next = i + 1 };
+        }
+
+        // Check if it's a boolean flag or needs a value
+        if (self.findFlagInFullChain(cmd, chain, flag_part)) |flag| {
+            if (flag.ftype == .bool) {
+                try self.handleFlagWithChain(ctx, cmd, chain, flag_part, "true");
+                return .{ .next = i + 1 };
+            }
+            // Need next arg as value
+            if (i + 1 >= argv.len) {
+                return ParseError.MissingValue;
+            }
+            try self.handleFlagWithChain(ctx, cmd, chain, flag_part, argv[i + 1]);
+            return .{ .next = i + 2 };
+        }
+
+        // Check global flags
+        if (mem.eql(u8, flag_part, "help")) return .help;
+        if (mem.eql(u8, flag_part, "version")) return .version;
+
+        // Handle other global flags
+        try self.handleGlobalFlag(ctx, flag_part);
+        return .{ .next = i + 1 };
+    }
+
+    /// Consume one `-x`/`-xyz` short-flag token. Combined boolean short
+    /// flags are all applied; a non-boolean short flag in the last
+    /// position consumes the next argv entry as its value.
+    fn handleShortToken(
+        self: *Self,
+        ctx: *Context,
+        cmd: *const Command,
+        chain: []const *const Command,
+        argv: []const []const u8,
+        i: usize,
+    ) ParseError!TokenOutcome {
+        const flags = argv[i][1..];
+        var next = i + 1;
+        for (flags, 0..) |c, j| {
+            if (c == 'h') return .help;
+            if (c == 'V') return .version;
+
+            if (self.findFlagByShortInFullChain(cmd, chain, c)) |flag| {
+                if (flag.ftype == .bool) {
+                    try self.setFlagValue(ctx, flag.name, FlagValue{ .bool = true });
+                } else if (j == flags.len - 1) {
+                    // Last short flag, next arg is value
+                    if (i + 1 >= argv.len) {
+                        return ParseError.MissingValue;
+                    }
+                    try self.handleFlagWithChain(ctx, cmd, chain, flag.name, argv[i + 1]);
+                    next = i + 2;
+                }
+            } else {
+                try self.handleGlobalShortFlag(ctx, c);
+            }
+        }
+        return .{ .next = next };
+    }
+
+    /// Consume one non-flag token: a single `-` (stdin/stdout placeholder)
+    /// is recorded as a positional; anything else is resolved as a
+    /// subcommand or appended as a positional.
+    fn handlePlainToken(
+        self: *Self,
+        ctx: *Context,
+        command_chain: *std.ArrayList(*const Command),
+        current_cmd: **const Command,
+        arg: []const u8,
+        i: usize,
+    ) ParseError!TokenOutcome {
+        if (arg.len == 1 and arg[0] == '-') {
+            // Single dash means stdin/stdout
+            ctx.positionals.append(ctx.allocator, arg) catch return ParseError.OutOfMemory;
+            return .{ .next = i + 1 };
+        }
+        try self.resolveSubcommand(ctx, command_chain, current_cmd, arg);
+        return .{ .next = i + 1 };
+    }
+
+    /// Resolve a bare token against the current command's subcommands:
+    /// descend into a matching subcommand (updating the command chain and
+    /// command path) or record the token as a positional.
+    fn resolveSubcommand(
+        self: *Self,
+        ctx: *Context,
+        command_chain: *std.ArrayList(*const Command),
+        current_cmd: **const Command,
+        arg: []const u8,
+    ) ParseError!void {
+        if (current_cmd.*.findSubcommand(arg)) |subcmd| {
+            current_cmd.* = subcmd;
+            self.current_command = subcmd;
+            ctx.command_path.append(ctx.allocator, arg) catch return ParseError.OutOfMemory;
+            // Track command chain for persistent hooks
+            command_chain.append(self.allocator, subcmd) catch return ParseError.OutOfMemory;
+        } else {
+            ctx.positionals.append(ctx.allocator, arg) catch return ParseError.OutOfMemory;
+        }
+    }
+
+    /// Finalization phase: apply env defaults for the resolved subcommand
+    /// (if different from root), fill default values, then run
+    /// required/group/args validation.
+    fn finalize(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
+        // Apply env defaults for resolved subcommand (if different from root)
+        if (cmd != self.root) {
+            try env_defaults.applyEnvDefaultsForCommand(self, ctx, cmd);
+        }
+
+        // Check for required flags
+        try env_defaults.applyDefaultValues(self, ctx, cmd);
+        try self.checkRequired(ctx, cmd);
+
+        // Check flag groups
+        try self.checkFlagGroups(ctx, cmd);
+
+        // Check positional argument validation
+        try self.checkArgs(ctx, cmd);
     }
 
     /// Walk the full command chain for flag lookup.
@@ -406,7 +476,8 @@ pub const Parser = struct {
 
     /// Convert a raw string value to a typed `FlagValue` according to the
     /// flag's declared type. Returns `InvalidValue` if the conversion fails.
-    fn parseValue(self: *Self, ftype: FlagType, value: []const u8) ParseError!FlagValue {
+    /// Public for internal use by parser/env.zig; not part of the stable API.
+    pub fn parseValue(self: *Self, ftype: FlagType, value: []const u8) ParseError!FlagValue {
         return switch (ftype) {
             .bool => FlagValue{ .bool = mem.eql(u8, value, "true") or mem.eql(u8, value, "1") },
             .int => FlagValue{ .int = std.fmt.parseInt(i64, value, 10) catch return ParseError.InvalidValue },
@@ -480,114 +551,6 @@ pub const Parser = struct {
         }
 
         return null;
-    }
-
-    /// Populate context fields from environment variables (NO_COLOR,
-    /// TERM=dumb) and fill flag values whose specs declare an `env` name.
-    /// Processes both root command flags and the resolved current command's flags.
-    fn applyEnvDefaults(self: *Self, ctx: *Context) ParseError!void {
-        // Check NO_COLOR
-        if (self.getEnvVar("NO_COLOR")) |_| {
-            ctx.no_color = true;
-        }
-
-        // Check TERM=dumb
-        if (self.getEnvVar("TERM")) |term| {
-            if (mem.eql(u8, term, "dumb")) {
-                ctx.no_color = true;
-            }
-        }
-
-        // Apply environment variable flags for root command
-        try self.applyEnvDefaultsForCommand(ctx, self.root);
-    }
-
-    /// Apply environment variable defaults for a specific command's flags.
-    /// Called for the root command during initial parsing, and again for
-    /// the resolved subcommand after subcommand resolution.
-    fn applyEnvDefaultsForCommand(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
-        for (cmd.flags) |flag| {
-            if (flag.env) |env_name| {
-                // Check if secret - skip env for secrets
-                if (flag.secret == .from_file_or_stdin) continue;
-
-                // Skip if already set (CLI flag takes priority over env)
-                if (ctx.flags.get(flag.name) != null) continue;
-
-                if (self.getEnvVar(env_name)) |value| {
-                    const fval = self.parseValue(flag.ftype, value) catch {
-                        // Record the parse failure for error reporting
-                        if (self.env_parse_error_count < self.env_parse_errors.len) {
-                            self.env_parse_errors[self.env_parse_error_count] = .{
-                                .env_name = env_name,
-                                .flag_name = flag.name,
-                                .value = value,
-                                .expected_type = flag.ftype.format(),
-                            };
-                            self.env_parse_error_count += 1;
-                        } else {
-                            // Detail buffer is full: count the drop so the
-                            // total failure count is not lost (NQ-NEW-013).
-                            self.env_parse_errors_dropped += 1;
-                        }
-                        continue;
-                    };
-                    // Propagate allocation failure instead of silently
-                    // dropping the env value (GAP-0097).
-                    try self.setFlagValue(ctx, flag.name, fval);
-                }
-            }
-        }
-    }
-
-    /// Cross-platform environment variable lookup.
-    /// On POSIX, returns a borrowed pointer into the environment block (no allocation).
-    /// On Windows, uses a stack-based FixedBufferAllocator to check the variable
-    /// and returns null (env-based flag defaults are POSIX-focused).
-    /// Note: this duplicates the pattern from term/env.zig because the cli module
-    /// does not depend on the term module. Both implementations use the same
-    /// cross-platform strategy.
-    fn getEnvVar(_: *const Self, name: []const u8) ?[]const u8 {
-        if (comptime builtin.os.tag == .windows) {
-            // Windows does have environment variables; use FixedBufferAllocator
-            // to avoid page_allocator overhead, matching env.zig pattern.
-            var buf: [4096]u8 = undefined;
-            var fba = std.heap.FixedBufferAllocator.init(&buf);
-            const val = std.Io.Threaded.global_single_threaded.environ.process_environ.getAlloc(fba.allocator(), name) catch return null;
-            return val;
-        }
-        return std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix(name);
-    }
-
-    /// Apply default values to flags that were not set during parsing,
-    /// starting with the root command and then the current command.
-    fn applyDefaultValues(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
-        try self.applyDefaultsForCommand(ctx, self.root);
-        if (cmd != self.root) {
-            try self.applyDefaultsForCommand(ctx, cmd);
-        }
-    }
-
-    /// Apply default values from a single command's flag specifications.
-    /// Skips flags that already have a value or have a secret policy
-    /// (secrets must be provided via file/stdin, never via defaults).
-    fn applyDefaultsForCommand(self: *Self, ctx: *Context, cmd: *const Command) ParseError!void {
-        for (cmd.flags) |flag| {
-            // Never apply defaults to secret flags -- they must come from
-            // file or stdin, not from a hardcoded default value.
-            if (flag.secret == .from_file_or_stdin) continue;
-            if (flag.default_str) |def| {
-                if (ctx.getFlag(flag.name) != null) continue;
-                const fval = self.parseValue(flag.ftype, def) catch {
-                    // An unparseable default is a programmer error in the
-                    // command definition: fail loudly instead of silently
-                    // skipping (GAP-0097).
-                    self.invalid_default_flag = flag.name;
-                    return ParseError.InvalidValue;
-                };
-                try self.setFlagValue(ctx, flag.name, fval);
-            }
-        }
     }
 
     /// Verify that all flags marked as `required` have been provided.
@@ -685,90 +648,6 @@ pub const Parser = struct {
     }
 };
 
-/// Write a human-readable error message for the given ParseError to stderr,
-/// using contextual details stored on the Parser instance.
-fn formatParseError(parser: *const Parser, err: ParseError, stderr: anytype) !void {
-    switch (err) {
-        ParseError.UnknownFlag => try stderr.print("Error: Unknown flag\n\n", .{}),
-        ParseError.UnknownCommand => try stderr.print("Error: Unknown command\n\n", .{}),
-        ParseError.MissingValue => try stderr.print("Error: Missing value for flag\n\n", .{}),
-        ParseError.InvalidValue => {
-            if (parser.invalid_default_flag) |flag_name| {
-                try stderr.print("Error: Invalid default value for --{s}\n\n", .{flag_name});
-            } else if (parser.env_parse_error_count > 0) {
-                const env_err = parser.env_parse_errors[0];
-                try stderr.print("Error: Invalid value for --{s}: environment variable ${s} has value that cannot be parsed as {s}", .{
-                    env_err.flag_name, env_err.env_name, env_err.expected_type,
-                });
-                // Only the first error is rendered; count the remaining
-                // recorded errors plus any dropped beyond the buffer.
-                const more = (parser.env_parse_error_count - 1) + parser.env_parse_errors_dropped;
-                if (more > 0) {
-                    try stderr.print(" (+{d} more)", .{more});
-                }
-                try stderr.print("\n\n", .{});
-            } else {
-                try stderr.print("Error: Invalid value\n\n", .{});
-            }
-        },
-        ParseError.MissingRequired => {
-            if (parser.missing_required_flag) |flag_name| {
-                try stderr.print("Error: Missing required flag --{s}\n\n", .{flag_name});
-            } else {
-                try stderr.print("Error: Missing required flag\n\n", .{});
-            }
-        },
-        ParseError.SecretInFlagOrEnv => {
-            if (parser.secret_flag_name) |sname| {
-                try stderr.print("Error: Secret '{s}' cannot be passed via --flag or environment variable. Provide via stdin: echo $SECRET | myapp\n\n", .{sname});
-            } else {
-                try stderr.print("Error: Secret cannot be passed via --flag or environment variable. Provide via stdin: echo $SECRET | myapp\n\n", .{});
-            }
-        },
-        ParseError.MutuallyExclusiveFlags => {
-            if (parser.conflicting_flags) |flags| {
-                try stderr.print("Error: Flags --{s} and --{s} are mutually exclusive\n\n", .{ flags[0], flags[1] });
-            } else {
-                try stderr.print("Error: Mutually exclusive flags specified\n\n", .{});
-            }
-        },
-        ParseError.RequiredTogetherFlags => {
-            if (parser.missing_together_flags) |flags| {
-                try stderr.print("Error: Flags must be used together: ", .{});
-                for (flags, 0..) |f, idx| {
-                    if (idx > 0) try stderr.print(", ", .{});
-                    try stderr.print("--{s}", .{f});
-                }
-                try stderr.print("\n\n", .{});
-            } else {
-                try stderr.print("Error: Required flags must be used together\n\n", .{});
-            }
-        },
-        ParseError.OneRequiredFlags => {
-            if (parser.one_required_group) |flags| {
-                try stderr.print("Error: At least one of these flags is required: ", .{});
-                for (flags, 0..) |f, idx| {
-                    if (idx > 0) try stderr.print(", ", .{});
-                    try stderr.print("--{s}", .{f});
-                }
-                try stderr.print("\n\n", .{});
-            } else {
-                try stderr.print("Error: At least one flag from group is required\n\n", .{});
-            }
-        },
-        ParseError.InvalidArgs => {
-            if (parser.args_error) |args_err| {
-                var buf: [256]u8 = undefined;
-                const msg = args_err.format(&buf);
-                try stderr.print("Error: {s}\n\n", .{msg});
-            } else {
-                try stderr.print("Error: Invalid positional arguments\n\n", .{});
-            }
-        },
-        else => try stderr.print("Error: Parse error\n\n", .{}),
-    }
-}
-
 /// Execute the full hook lifecycle around a command dispatch:
 ///   persistent_pre_run (root to leaf) -> pre_run -> run -> post_run ->
 ///   persistent_post_run (leaf to root).
@@ -853,7 +732,7 @@ pub fn run(root: *const Command, argv: []const []const u8, allocator: Allocator)
         var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
         const stderr = &stderr_writer.interface;
         defer stderr.flush() catch {};
-        try formatParseError(&parser, err, stderr);
+        try format.formatParseError(&parser, err, stderr);
 
         // Show help for the current command on error
         if (parser.current_command) |cmd| {
@@ -878,1356 +757,4 @@ pub fn run(root: *const Command, argv: []const []const u8, allocator: Allocator)
     }
 
     return try executeHooks(&result);
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-test "Parser initialization" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    const parser = Parser.init(std.testing.allocator, &root, "1.0.0", "TEST_");
-    try std.testing.expectEqualStrings("1.0.0", parser.version);
-    try std.testing.expectEqualStrings("TEST_", parser.env_prefix);
-}
-
-test "Parse long flag with value" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "config",
-                .help = "Config file",
-                .ftype = .string,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--config", "test.toml" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.getString("config") != null);
-}
-
-test "Parse boolean flag" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "verbose",
-                .short = 'v',
-                .help = "Verbose output",
-                .ftype = .bool,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "-v" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.getBool("verbose"));
-}
-
-test "parser: help flag returns help_requested" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--help" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.help_requested);
-}
-
-test "parser: short help flag returns help_requested" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "-h" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.help_requested);
-}
-
-test "parser: version flag returns version_requested" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--version" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.version_requested);
-}
-
-test "parser: short version flag returns version_requested" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "-V" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.version_requested);
-}
-
-test "parser: flag with equals syntax" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "config",
-                .help = "Config file",
-                .ftype = .string,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--config=test.toml" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("test.toml", result.context.getString("config").?);
-}
-
-test "parser: integer flag" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "port",
-                .help = "Port number",
-                .ftype = .int,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--port", "8080" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(i64, 8080), result.context.getInt("port").?);
-}
-
-test "parser: float flag" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "rate",
-                .help = "Rate value",
-                .ftype = .float,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--rate", "3.14" });
-    defer result.deinit(std.testing.allocator);
-
-    // Float is stored in FlagValue, verify it was parsed
-    const flag_val = result.context.getFlag("rate");
-    try std.testing.expect(flag_val != null);
-}
-
-test "parser: subcommand parsing" {
-    const subcmd = Command{
-        .name = "run",
-        .summary = "Run command",
-    };
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .subcommands = &.{&subcmd},
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "run" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("run", result.command.name);
-}
-
-test "parser: positional arguments" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "arg1", "arg2", "arg3" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 3), result.context.positionals.items.len);
-    try std.testing.expectEqualStrings("arg1", result.context.positionals.items[0]);
-    try std.testing.expectEqualStrings("arg2", result.context.positionals.items[1]);
-    try std.testing.expectEqualStrings("arg3", result.context.positionals.items[2]);
-}
-
-test "parser: double dash ends flags" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--", "--not-a-flag", "-x" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 2), result.context.positionals.items.len);
-    try std.testing.expectEqualStrings("--not-a-flag", result.context.positionals.items[0]);
-    try std.testing.expectEqualStrings("-x", result.context.positionals.items[1]);
-}
-
-test "parser: global flags quiet" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--quiet" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.quiet);
-}
-
-test "parser: global flags short quiet" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "-q" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.quiet);
-}
-
-test "parser: global flags json" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--json" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.json);
-}
-
-test "parser: global flags plain" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--plain" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.plain);
-}
-
-test "parser: global flags no-color" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--no-color" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.no_color);
-}
-
-test "parser: global flags dry-run" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--dry-run" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.dry_run);
-}
-
-test "parser: global flags no-input" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--no-input" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.no_input);
-}
-
-test "parser: unknown flag returns error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "--unknown" });
-
-    try std.testing.expectError(ParseError.UnknownFlag, result);
-}
-
-test "parser: missing value returns error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "config",
-                .help = "Config file",
-                .ftype = .string,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "--config" });
-
-    try std.testing.expectError(ParseError.MissingValue, result);
-}
-
-test "parser: invalid integer returns error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "port",
-                .help = "Port number",
-                .ftype = .int,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "--port", "not-a-number" });
-
-    try std.testing.expectError(ParseError.InvalidValue, result);
-}
-
-test "parser: missing required flag returns error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "required-flag",
-                .help = "Required flag",
-                .ftype = .string,
-                .required = true,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{"test"});
-
-    try std.testing.expectError(ParseError.MissingRequired, result);
-}
-
-test "parser: multiple short flags combined" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "-qn" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.quiet);
-    try std.testing.expect(result.context.dry_run);
-}
-
-test "parser: single dash as positional" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "-" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), result.context.positionals.items.len);
-    try std.testing.expectEqualStrings("-", result.context.positionals.items[0]);
-}
-
-test "parser: empty args" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{});
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("test", result.command.name);
-}
-
-test "parser: string array flag single value" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "include",
-                .help = "Include paths",
-                .ftype = .string_array,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--include", "foo" });
-    defer result.deinit(std.testing.allocator);
-
-    const arr = result.context.getStringArray("include");
-    try std.testing.expect(arr != null);
-    try std.testing.expectEqual(@as(usize, 1), arr.?.len);
-    try std.testing.expectEqualStrings("foo", arr.?[0]);
-}
-
-test "parser: string array flag multiple values" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "include",
-                .help = "Include paths",
-                .ftype = .string_array,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--include", "foo", "--include", "bar", "--include", "baz" });
-    defer result.deinit(std.testing.allocator);
-
-    const arr = result.context.getStringArray("include");
-    try std.testing.expect(arr != null);
-    try std.testing.expectEqual(@as(usize, 3), arr.?.len);
-    try std.testing.expectEqualStrings("foo", arr.?[0]);
-    try std.testing.expectEqualStrings("bar", arr.?[1]);
-    try std.testing.expectEqualStrings("baz", arr.?[2]);
-}
-
-test "parser: string array flag comma-separated" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "include",
-                .help = "Include paths",
-                .ftype = .string_array,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--include", "foo,bar,baz" });
-    defer result.deinit(std.testing.allocator);
-
-    const arr = result.context.getStringArray("include");
-    try std.testing.expect(arr != null);
-    try std.testing.expectEqual(@as(usize, 3), arr.?.len);
-    try std.testing.expectEqualStrings("foo", arr.?[0]);
-    try std.testing.expectEqualStrings("bar", arr.?[1]);
-    try std.testing.expectEqualStrings("baz", arr.?[2]);
-}
-
-test "parser: string array flag mixed repeated and comma" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "include",
-                .help = "Include paths",
-                .ftype = .string_array,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--include", "a,b", "--include", "c" });
-    defer result.deinit(std.testing.allocator);
-
-    const arr = result.context.getStringArray("include");
-    try std.testing.expect(arr != null);
-    try std.testing.expectEqual(@as(usize, 3), arr.?.len);
-    try std.testing.expectEqualStrings("a", arr.?[0]);
-    try std.testing.expectEqualStrings("b", arr.?[1]);
-    try std.testing.expectEqualStrings("c", arr.?[2]);
-}
-
-test "parser: string array flag with equals syntax" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "include",
-                .help = "Include paths",
-                .ftype = .string_array,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--include=foo,bar" });
-    defer result.deinit(std.testing.allocator);
-
-    const arr = result.context.getStringArray("include");
-    try std.testing.expect(arr != null);
-    try std.testing.expectEqual(@as(usize, 2), arr.?.len);
-    try std.testing.expectEqualStrings("foo", arr.?[0]);
-    try std.testing.expectEqualStrings("bar", arr.?[1]);
-}
-
-// ============================================================================
-// Flag Group Tests
-// ============================================================================
-
-test "parser: mutually exclusive flags - valid (one set)" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{ .name = "json", .help = "JSON output", .ftype = .bool },
-            FlagSpec{ .name = "yaml", .help = "YAML output", .ftype = .bool },
-        },
-        .flag_groups = &.{
-            FlagGroup{ .group_type = .mutually_exclusive, .flags = &.{ "json", "yaml" } },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--json" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.getBool("json"));
-}
-
-test "parser: mutually exclusive flags - error (both set)" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{ .name = "json", .help = "JSON output", .ftype = .bool },
-            FlagSpec{ .name = "yaml", .help = "YAML output", .ftype = .bool },
-        },
-        .flag_groups = &.{
-            FlagGroup{ .group_type = .mutually_exclusive, .flags = &.{ "json", "yaml" } },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "--json", "--yaml" });
-
-    try std.testing.expectError(ParseError.MutuallyExclusiveFlags, result);
-}
-
-test "parser: required together flags - valid (all set)" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{ .name = "username", .help = "Username", .ftype = .string },
-            FlagSpec{ .name = "password", .help = "Password", .ftype = .string },
-        },
-        .flag_groups = &.{
-            FlagGroup{ .group_type = .required_together, .flags = &.{ "username", "password" } },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--username", "user", "--password", "pass" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("user", result.context.getString("username").?);
-    try std.testing.expectEqualStrings("pass", result.context.getString("password").?);
-}
-
-test "parser: required together flags - error (only one set)" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{ .name = "username", .help = "Username", .ftype = .string },
-            FlagSpec{ .name = "password", .help = "Password", .ftype = .string },
-        },
-        .flag_groups = &.{
-            FlagGroup{ .group_type = .required_together, .flags = &.{ "username", "password" } },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "--username", "user" });
-
-    try std.testing.expectError(ParseError.RequiredTogetherFlags, result);
-}
-
-test "parser: one required flags - valid (one set)" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{ .name = "token", .help = "Auth token", .ftype = .string },
-            FlagSpec{ .name = "username", .help = "Username", .ftype = .string },
-        },
-        .flag_groups = &.{
-            FlagGroup{ .group_type = .one_required, .flags = &.{ "token", "username" } },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--token", "abc123" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("abc123", result.context.getString("token").?);
-}
-
-test "parser: one required flags - error (none set)" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{ .name = "token", .help = "Auth token", .ftype = .string },
-            FlagSpec{ .name = "username", .help = "Username", .ftype = .string },
-        },
-        .flag_groups = &.{
-            FlagGroup{ .group_type = .one_required, .flags = &.{ "token", "username" } },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{"test"});
-
-    try std.testing.expectError(ParseError.OneRequiredFlags, result);
-}
-
-// ============================================================================
-// Argument Validator Tests
-// ============================================================================
-
-test "parser: args validator - exact args valid" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .exact = 2 },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "arg1", "arg2" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 2), result.context.positionals.items.len);
-}
-
-test "parser: args validator - exact args error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .exact = 2 },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "arg1" });
-
-    try std.testing.expectError(ParseError.InvalidArgs, result);
-}
-
-test "parser: args validator - no args valid" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .none = {} },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{"test"});
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 0), result.context.positionals.items.len);
-}
-
-test "parser: args validator - no args error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .none = {} },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "unexpected" });
-
-    try std.testing.expectError(ParseError.InvalidArgs, result);
-}
-
-test "parser: args validator - minimum args valid" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .minimum = 2 },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "arg1", "arg2", "arg3" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 3), result.context.positionals.items.len);
-}
-
-test "parser: args validator - minimum args error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .minimum = 2 },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "arg1" });
-
-    try std.testing.expectError(ParseError.InvalidArgs, result);
-}
-
-test "parser: args validator - maximum args valid" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .maximum = 2 },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "arg1" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), result.context.positionals.items.len);
-}
-
-test "parser: args validator - maximum args error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .maximum = 2 },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "arg1", "arg2", "arg3" });
-
-    try std.testing.expectError(ParseError.InvalidArgs, result);
-}
-
-test "parser: args validator - range valid" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .range = .{ .min = 1, .max = 3 } },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "arg1", "arg2" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 2), result.context.positionals.items.len);
-}
-
-test "parser: args validator - range error too few" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .range = .{ .min = 2, .max = 4 } },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "arg1" });
-
-    try std.testing.expectError(ParseError.InvalidArgs, result);
-}
-
-test "parser: args validator - only valid values" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .only_valid = &.{ "start", "stop", "restart" } },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "start" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("start", result.context.positionals.items[0]);
-}
-
-test "parser: args validator - only valid values error" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .args = .{ .only_valid = &.{ "start", "stop", "restart" } },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "invalid" });
-
-    try std.testing.expectError(ParseError.InvalidArgs, result);
-}
-
-// ============================================================================
-// Command Chain Tests (for persistent hooks)
-// ============================================================================
-
-test "parser: command chain includes root" {
-    const root = Command{
-        .name = "root",
-        .summary = "Root command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{"root"});
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), result.command_chain.items.len);
-    try std.testing.expectEqualStrings("root", result.command_chain.items[0].name);
-}
-
-test "parser: command chain includes subcommand" {
-    const subcmd = Command{
-        .name = "sub",
-        .summary = "Subcommand",
-    };
-    const root = Command{
-        .name = "root",
-        .summary = "Root command",
-        .subcommands = &.{&subcmd},
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "root", "sub" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 2), result.command_chain.items.len);
-    try std.testing.expectEqualStrings("root", result.command_chain.items[0].name);
-    try std.testing.expectEqualStrings("sub", result.command_chain.items[1].name);
-}
-
-test "parser: command chain includes nested subcommands" {
-    const leaf = Command{
-        .name = "leaf",
-        .summary = "Leaf command",
-    };
-    const middle = Command{
-        .name = "middle",
-        .summary = "Middle command",
-        .subcommands = &.{&leaf},
-    };
-    const root = Command{
-        .name = "root",
-        .summary = "Root command",
-        .subcommands = &.{&middle},
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "root", "middle", "leaf" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 3), result.command_chain.items.len);
-    try std.testing.expectEqualStrings("root", result.command_chain.items[0].name);
-    try std.testing.expectEqualStrings("middle", result.command_chain.items[1].name);
-    try std.testing.expectEqualStrings("leaf", result.command_chain.items[2].name);
-}
-
-// ============================================================================
-// Flag Inheritance Chain Tests (NQ-036)
-// ============================================================================
-
-test "parser: flag inheritance walks full 3-level chain" {
-    const leaf = Command{
-        .name = "leaf",
-        .summary = "Leaf command",
-    };
-    const middle = Command{
-        .name = "middle",
-        .summary = "Middle command",
-        .subcommands = &.{&leaf},
-        .flags = &.{
-            FlagSpec{ .name = "mid-flag", .help = "Middle flag", .ftype = .string },
-        },
-    };
-    const root = Command{
-        .name = "root",
-        .summary = "Root command",
-        .subcommands = &.{&middle},
-        .flags = &.{
-            FlagSpec{ .name = "root-flag", .help = "Root flag", .ftype = .bool },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-
-    // Leaf command should be able to access middle's flag through full chain
-    var result = try parser.parse(&.{ "root", "middle", "leaf", "--mid-flag", "hello", "--root-flag" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("leaf", result.command.name);
-    try std.testing.expectEqualStrings("hello", result.context.getString("mid-flag").?);
-    try std.testing.expect(result.context.getBool("root-flag"));
-}
-
-test "parser: flag inheritance - middle flag short from leaf" {
-    const leaf = Command{
-        .name = "leaf",
-        .summary = "Leaf command",
-    };
-    const middle = Command{
-        .name = "middle",
-        .summary = "Middle command",
-        .subcommands = &.{&leaf},
-        .flags = &.{
-            FlagSpec{ .name = "mid-flag", .short = 'm', .help = "Middle flag", .ftype = .bool },
-        },
-    };
-    const root = Command{
-        .name = "root",
-        .summary = "Root command",
-        .subcommands = &.{&middle},
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-
-    // Leaf command should be able to access middle's short flag
-    var result = try parser.parse(&.{ "root", "middle", "leaf", "-m" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("leaf", result.command.name);
-    try std.testing.expect(result.context.getBool("mid-flag"));
-}
-
-test "parser: leaf flag takes precedence over parent in chain" {
-    const leaf = Command{
-        .name = "leaf",
-        .summary = "Leaf command",
-        .flags = &.{
-            FlagSpec{ .name = "output", .help = "Leaf output", .ftype = .string },
-        },
-    };
-    const middle = Command{
-        .name = "middle",
-        .summary = "Middle command",
-        .subcommands = &.{&leaf},
-        .flags = &.{
-            FlagSpec{ .name = "output", .help = "Middle output", .ftype = .string },
-        },
-    };
-    const root = Command{
-        .name = "root",
-        .summary = "Root command",
-        .subcommands = &.{&middle},
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-
-    // Current command's flag takes priority
-    var result = try parser.parse(&.{ "root", "middle", "leaf", "--output", "leaf-value" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("leaf-value", result.context.getString("output").?);
-}
-
-// ============================================================================
-// run() Lifecycle Tests (NQ-035)
-// ============================================================================
-
-test "run: help flag sets help_requested" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--help" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.help_requested);
-    try std.testing.expect(!result.version_requested);
-}
-
-test "run: version flag sets version_requested" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .version = "1.0.0",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--version" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.version_requested);
-    try std.testing.expect(!result.help_requested);
-}
-
-test "run: unknown flag returns UnknownFlag" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{ "test", "--unknown-flag" });
-
-    try std.testing.expectError(ParseError.UnknownFlag, result);
-}
-
-test "run: missing required flag returns MissingRequired" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "required-flag",
-                .help = "Required flag",
-                .ftype = .string,
-                .required = true,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    const result = parser.parse(&.{"test"});
-
-    try std.testing.expectError(ParseError.MissingRequired, result);
-}
-
-test "run: quiet flag is parsed via run path" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--quiet" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.quiet);
-}
-
-test "run: json flag is parsed via run path" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--json" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.json);
-}
-
-test "run: no-color flag is parsed via run path" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--no-color" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.no_color);
-}
-
-test "run: command without run has isRunnable false" {
-    const sub = Command{
-        .name = "sub",
-        .summary = "Subcommand",
-    };
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .subcommands = &.{&sub},
-    };
-
-    try std.testing.expect(!root.isRunnable());
-    try std.testing.expect(root.hasSubcommands());
-}
-
-test "run: default version is used when none specified" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "0.0.0", "");
-    var result = try parser.parse(&.{ "test", "-V" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.version_requested);
-    try std.testing.expectEqualStrings("0.0.0", parser.version);
-}
-
-test "run: short help flag sets help_requested" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "-h" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.help_requested);
-}
-
-test "run: dry-run flag is parsed" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{ "test", "--dry-run" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.dry_run);
-}
-
-test "run: no-input flag is parsed" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-    };
-
-    var p = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try p.parse(&.{ "test", "--no-input" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expect(result.context.no_input);
-}
-
-test "parser: subcommand env defaults are applied" {
-    // Use HOME which is set on all POSIX test systems
-    if (comptime builtin.os.tag == .windows) return;
-
-    // Verify HOME is set so this test is meaningful
-    const home_val = std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix("HOME") orelse return;
-
-    const subcmd = Command{
-        .name = "sub",
-        .summary = "Subcommand",
-        .flags = &.{
-            .{
-                .name = "sub-flag",
-                .help = "A subcommand flag",
-                .ftype = .string,
-                .env = "HOME",
-            },
-        },
-    };
-
-    const root = Command{
-        .name = "test",
-        .summary = "Test",
-        .subcommands = &.{&subcmd},
-    };
-
-    var p = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try p.parse(&.{ "test", "sub" });
-    defer result.deinit(std.testing.allocator);
-
-    // The subcommand's flag should have been populated from the env var
-    const val = result.context.getString("sub-flag");
-    try std.testing.expect(val != null);
-    try std.testing.expectEqualStrings(home_val, val.?);
-}
-
-test "parser: root flag env still works (regression check)" {
-    if (comptime builtin.os.tag == .windows) return;
-
-    // Use HOME which is set on all POSIX test systems
-    const home_val = std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix("HOME") orelse return;
-
-    const root = Command{
-        .name = "test",
-        .summary = "Test",
-        .flags = &.{
-            .{
-                .name = "root-flag",
-                .help = "A root flag",
-                .ftype = .string,
-                .env = "HOME",
-            },
-        },
-    };
-
-    var p = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try p.parse(&.{"test"});
-    defer result.deinit(std.testing.allocator);
-
-    const val = result.context.getString("root-flag");
-    try std.testing.expect(val != null);
-    try std.testing.expectEqualStrings(home_val, val.?);
-}
-
-test "parser: subcommand env flag does not override CLI flag" {
-    // Verify CLI args take priority over env defaults for subcommand flags
-    if (comptime builtin.os.tag == .windows) return;
-
-    // Ensure HOME is set
-    _ = std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix("HOME") orelse return;
-
-    const subcmd = Command{
-        .name = "sub",
-        .summary = "Subcommand",
-        .flags = &.{
-            .{
-                .name = "sub-flag",
-                .help = "A subcommand flag",
-                .ftype = .string,
-                .env = "HOME",
-            },
-        },
-    };
-
-    const root = Command{
-        .name = "test",
-        .summary = "Test",
-        .subcommands = &.{&subcmd},
-    };
-
-    var p = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try p.parse(&.{ "test", "sub", "--sub-flag", "explicit_value" });
-    defer result.deinit(std.testing.allocator);
-
-    // CLI value should take priority over env var
-    const val = result.context.getString("sub-flag");
-    try std.testing.expect(val != null);
-    try std.testing.expectEqualStrings("explicit_value", val.?);
-}
-
-test "parser: invalid default_str surfaces InvalidValue with flag name" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "n",
-                .help = "A numeric flag",
-                .ftype = .int,
-                .default_str = "not-a-number",
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    try std.testing.expectError(ParseError.InvalidValue, parser.parse(&.{"test"}));
-    try std.testing.expect(parser.invalid_default_flag != null);
-    try std.testing.expectEqualStrings("n", parser.invalid_default_flag.?);
-}
-
-test "parser: error state is reset between parse calls" {
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{
-                .name = "name",
-                .help = "Required name",
-                .ftype = .string,
-                .required = true,
-            },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-
-    // First parse fails and records diagnostic state.
-    try std.testing.expectError(ParseError.MissingRequired, parser.parse(&.{"test"}));
-    try std.testing.expectEqualStrings("name", parser.missing_required_flag.?);
-
-    // Second parse with valid input must succeed and clear stale state.
-    var result = try parser.parse(&.{ "test", "--name", "ok" });
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 0), parser.env_parse_error_count);
-    try std.testing.expectEqual(@as(usize, 0), parser.env_parse_errors_dropped);
-    try std.testing.expect(parser.missing_required_flag == null);
-    try std.testing.expect(parser.invalid_default_flag == null);
-    try std.testing.expectEqualStrings("ok", result.context.getString("name").?);
-}
-
-test "parser: env parse errors beyond cap are counted not lost" {
-    if (comptime builtin.os.tag == .windows) return;
-
-    // PATH is set on all POSIX test systems and never parses as an integer.
-    const path_val = std.Io.Threaded.global_single_threaded.environ.process_environ.getPosix("PATH") orelse return;
-    if (std.fmt.parseInt(i64, path_val, 10)) |_| {
-        // Environment is too unusual to test against; skip.
-        return;
-    } else |_| {}
-
-    // 10 int flags all bound to PATH: each one fails to parse, exceeding
-    // the 8-entry env_parse_errors capacity by 2.
-    const root = Command{
-        .name = "test",
-        .summary = "Test command",
-        .flags = &.{
-            FlagSpec{ .name = "i0", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i1", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i2", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i3", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i4", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i5", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i6", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i7", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i8", .help = "h", .ftype = .int, .env = "PATH" },
-            FlagSpec{ .name = "i9", .help = "h", .ftype = .int, .env = "PATH" },
-        },
-    };
-
-    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
-    var result = try parser.parse(&.{"test"});
-    defer result.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 8), parser.env_parse_error_count);
-    try std.testing.expectEqual(@as(usize, 2), parser.env_parse_errors_dropped);
 }
