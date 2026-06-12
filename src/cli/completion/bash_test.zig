@@ -248,13 +248,16 @@ test "bash: hostile subcommand name cannot corrupt function defs, calls, or case
     // No generated bash function name may carry shell metacharacters from the
     // raw subcommand name (function-definition and call sites, CWE-78/94).
     try std.testing.expect(std.mem.indexOf(u8, out, "_app_evil\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "touch /tmp/PWNED") == null or
-        std.mem.indexOf(u8, out, "'evil\"; touch /tmp/PWNED #'") != null);
     // The sanitized identifier (non-[a-zA-Z0-9_] -> _) must appear for the def.
     try std.testing.expect(std.mem.indexOf(u8, out, "_app_evil") != null);
     // Case labels matching the typed word must be single-quoted so metachars
     // cannot break out of the case statement.
     try std.testing.expect(std.mem.indexOf(u8, out, "            evil\"; touch") == null);
+    // Both case-label sites (cmd-index loop + delegation) emit the quoted form.
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        std.mem.count(u8, out, "'evil\"; touch /tmp/PWNED #')"),
+    );
 }
 
 test "bash: hostile flag name cannot break out of the value-completion case" {
