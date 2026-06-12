@@ -1547,3 +1547,32 @@ None. No leaked secrets (gitleaks clean, working tree + 70-commit history) and n
 3. **NS-058** (Risk 24) -- one-line saturating-subtraction fix; removes a geometry-triggered DoS.
 4. **NS-061** (Risk 12) -- three quick completion-generator hardening fixes; extends existing patterns.
 5. **NS-060** (Risk 16) / **NS-062** (Risk 12) -- output-encoding correctness; close the NS-020 gap.
+
+## Convergence Status — 2026-06-12 (audit loop iterations 1–11)
+
+The iterative `/security:appsec-review` + `/codepros:audit` loop ran to
+convergence over 11 review rounds (HEAD `f0f07b4`):
+
+- Iterations 1–2 fixed the original codepros + appsec findings (NS-056..062,
+  NP-029..033, GAP-0091/0097/0099, the NQ-NEW-* set).
+- The refactor batch (#34/#46) split oversized files, decomposed `parse()`,
+  and replaced the three sanitizer mirrors with one first-class `sanitize`
+  module; a pre-commit hook enforces the 800-line guidance.
+- Convergence reviews 3–10 each found and closed a genuine, reproducible,
+  evidence-backed defect (finding rate 15 → 1 → 1 → 1 → 3 → 2 → 2 → 1),
+  trending from broad parser/generator defects to isolated lifecycle and
+  escaping-parity edge cases. The completion terminal-control-byte class
+  (CWE-150) is now closed comprehensively across all four generators
+  (names, help, summaries, completion values, regex labels, headers) with
+  invariant tests covering field metadata, not just `cmd.name`.
+- **Iteration 11** ran two independent confirmation passes (a security
+  review and a correctness review, separate methodologies) against the same
+  HEAD. Both reported **zero new actionable findings** under a strict bar
+  (concrete file:line + reachable trigger + real consequence) and
+  **CONFIRM CONVERGED**. 1129 unit + 34 integration tests pass;
+  `zig build check` for native and `x86_64-windows` is clean;
+  `pre-commit run --all-files` is green.
+
+Remaining open items are deliberate non-defects: GitLab #35 (CI catalog
+tag-pinning — accepted-risk policy, NS-001) and #12 (Zig registry
+publication — a v0.2.0 roadmap feature, not an implementation gap).
