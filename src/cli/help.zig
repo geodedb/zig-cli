@@ -678,9 +678,11 @@ fn printJsonFlag(w: anytype, flag: *const FlagSpec) !void {
     try writeJsonEscapedString(w, flag.help);
     try w.writeAll("\",");
     if (flag.short) |s| {
-        try w.print("\"short\":\"{c}\",", .{s});
+        try w.writeAll("\"short\":\"");
+        try writeJsonEscapedString(w, &[_]u8{s});
+        try w.writeAll("\",");
     } else {
-        try w.print("\"short\":null,", .{});
+        try w.writeAll("\"short\":null,");
     }
     try w.print("\"type\":\"{s}\",", .{flag.ftype.format()});
     try w.print("\"required\":{},", .{flag.required});
@@ -2288,4 +2290,58 @@ test "help: textutil mirror matches canonical control-byte policy" {
         const expected = (b < 0x20 and b != '\n' and b != '\t') or b == 0x7f;
         try std.testing.expectEqual(expected, textutil.isTerminalControl(b));
     }
+}
+
+test "help: json short flag with quote char is escaped" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const flag = FlagSpec{
+        .name = "delim",
+        .help = "Delimiter character",
+        .short = '"',
+        .ftype = .string,
+    };
+    try printJsonFlag(w, &flag);
+    const out = buf.written();
+    // "short" value must be JSON-escaped: "short":"\"" not "short":"""
+    try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"\\\"\"") != null);
+    // The raw double-quote must not appear as an unescaped JSON value
+    // (i.e., the sequence :"" must not appear in the output)
+    try std.testing.expect(mem.indexOf(u8, out, ":\"\"") == null);
+}
+
+test "help: json short flag with backslash is escaped" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const flag = FlagSpec{
+        .name = "sep",
+        .help = "Separator",
+        .short = '\\',
+        .ftype = .string,
+    };
+    try printJsonFlag(w, &flag);
+    const out = buf.written();
+    // "short" value must be JSON-escaped: "short":"\\" not "short":"\"
+    try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"\\\\\"") != null);
+}
+
+test "help: json short flag benign char renders verbatim" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const flag = FlagSpec{
+        .name = "verbose",
+        .help = "Verbose output",
+        .short = 'v',
+        .ftype = .bool,
+    };
+    try printJsonFlag(w, &flag);
+    const out = buf.written();
+    // Benign char must render unchanged: "short":"v"
+    try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"v\"") != null);
 }
