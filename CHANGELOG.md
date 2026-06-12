@@ -21,6 +21,9 @@ Audit hardening batch (2026-06 codepros audit iteration 1).
 - `prompt.freeSecret` helper that zeroes secret buffers before freeing
 - `Context.getBoolOpt` — returns `?bool` so callers can distinguish an absent bool flag from an explicit `false` (#138)
 
+### Documentation
+- Backfilled changelog entries for releases 0.1.2, 0.1.3, and 0.1.4 (#135)
+
 ## [0.1.4] - 2026-05-02
 
 Release alignment: re-pin sibling dependencies to their tagged releases

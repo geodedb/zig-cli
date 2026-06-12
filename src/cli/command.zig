@@ -234,7 +234,9 @@ pub const Context = struct {
         return false;
     }
 
-    /// Get a boolean flag value, or null when the flag was not provided.
+    /// Get a boolean flag value, or null when the flag has no value (not
+    /// provided on the CLI, via env, or via a default). A type mismatch
+    /// (the name resolves to a non-bool flag) is also treated as absent.
     /// `getBool` collapses "absent" to `false` for ergonomic everyday use;
     /// use this variant when callers must distinguish absent from false.
     pub fn getBoolOpt(self: *const Context, name: []const u8) ?bool {
