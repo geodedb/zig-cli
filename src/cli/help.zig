@@ -43,6 +43,37 @@ const Command = command.Command;
 const Context = command.Context;
 const FlagSpec = command.FlagSpec;
 
+/// Control-byte filtering for plain-text help output (NS-056 / CWE-150).
+///
+/// This mirrors `util.text.writeControlFiltered`. It is duplicated here
+/// because a source file may belong to only one Zig module: importing
+/// `src/util/text.zig` from the `cli` module breaks builds that link the
+/// `cli` and `util` modules together (integration tests, demo, benches)
+/// with "file exists in modules 'util' and 'cli'". Keep the predicate in
+/// sync with `src/util/text.zig`.
+const textutil = struct {
+    /// True for bytes that must be stripped to protect terminal state:
+    /// C0 controls (0x00-0x1F) except newline (0x0A) and tab (0x09), plus
+    /// DEL (0x7F). CR (0x0D) is stripped because it overwrites lines.
+    inline fn isTerminalControl(c: u8) bool {
+        return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
+    }
+
+    /// Write `text` to `w`, removing terminal control bytes. Removing ESC
+    /// (0x1B) neutralizes ANSI/OSC escape sequences; the remaining
+    /// printable bytes are kept.
+    fn writeControlFiltered(w: anytype, text: []const u8) !void {
+        var start: usize = 0;
+        for (text, 0..) |c, idx| {
+            if (isTerminalControl(c)) {
+                if (idx > start) try w.writeAll(text[start..idx]);
+                start = idx + 1;
+            }
+        }
+        if (start < text.len) try w.writeAll(text[start..]);
+    }
+};
+
 // ============================================================================
 // ANSI escape code constants
 // ============================================================================
@@ -195,34 +226,48 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
             }
         }
 
-        switch (section) {
-            .header => try printSectionHeader(w, use_color, cmd),
-            .usage => try printSectionUsage(w, cmd, template),
-            .examples => try printSectionExamples(w, cmd, template),
-            .description => try printSectionDescription(w, cmd, template),
-            .commands => try printSectionCommands(w, use_color, cmd, template),
-            .flags => try printSectionFlags(w, use_color, cmd, template),
-            .env_vars => try printSectionEnvVars(w, use_color, cmd, template),
-            .footer => try printSectionFooter(w, cmd, template),
-        }
+        try renderTextSection(w, use_color, cmd, template, section);
     }
 
     try ctx.stdout.writeAll(buf.written());
 }
 
+/// Render a single plain-text help section to `w`.
+/// All command metadata (names, summaries, help strings, examples, env var
+/// names, defaults) is filtered through `textutil.writeControlFiltered` to
+/// neutralize terminal escape/control bytes (CWE-150).
+fn renderTextSection(w: anytype, use_color: bool, cmd: *const Command, template: *const HelpTemplate, section: HelpSection) !void {
+    switch (section) {
+        .header => try printSectionHeader(w, use_color, cmd),
+        .usage => try printSectionUsage(w, cmd, template),
+        .examples => try printSectionExamples(w, cmd, template),
+        .description => try printSectionDescription(w, cmd, template),
+        .commands => try printSectionCommands(w, use_color, cmd, template),
+        .flags => try printSectionFlags(w, use_color, cmd, template),
+        .env_vars => try printSectionEnvVars(w, use_color, cmd, template),
+        .footer => try printSectionFooter(w, cmd, template),
+    }
+}
+
 /// Print header section (name and summary)
 fn printSectionHeader(w: anytype, use_color: bool, cmd: *const Command) !void {
     if (use_color) {
-        try w.print(ansi_bold ++ "{s}" ++ ansi_reset, .{cmd.name});
+        try w.writeAll(ansi_bold);
+        try textutil.writeControlFiltered(w, cmd.name);
+        try w.writeAll(ansi_reset);
     } else {
-        try w.print("{s}", .{cmd.name});
+        try textutil.writeControlFiltered(w, cmd.name);
     }
-    try w.print(" - {s}\n", .{cmd.summary});
+    try w.writeAll(" - ");
+    try textutil.writeControlFiltered(w, cmd.summary);
+    try w.writeAll("\n");
 }
 
 /// Print usage section
 fn printSectionUsage(w: anytype, cmd: *const Command, template: *const HelpTemplate) !void {
-    try w.print("\n{s}: {s} [flags]", .{ template.usage_header, cmd.name });
+    try w.print("\n{s}: ", .{template.usage_header});
+    try textutil.writeControlFiltered(w, cmd.name);
+    try w.writeAll(" [flags]");
     if (cmd.hasSubcommands()) {
         try w.print(" <command> [args]", .{});
     }
@@ -237,7 +282,8 @@ fn printSectionExamples(w: anytype, cmd: *const Command, template: *const HelpTe
     for (cmd.examples) |example| {
         // Write indent
         try w.splatByteAll(' ', template.indent);
-        try w.print("{s}\n", .{example});
+        try textutil.writeControlFiltered(w, example);
+        try w.writeAll("\n");
     }
 }
 
@@ -250,7 +296,8 @@ fn printSectionDescription(w: anytype, cmd: *const Command, template: *const Hel
     } else {
         try w.print("\n", .{});
     }
-    try w.print("{s}\n", .{cmd.long_help});
+    try textutil.writeControlFiltered(w, cmd.long_help);
+    try w.writeAll("\n");
 }
 
 /// Collect unique group names from a command's visible subcommands.
@@ -288,9 +335,13 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
     for (groups[0..group_count]) |group_name| {
         if (group_name.len > 0) {
             if (use_color) {
-                try w.print("\n" ++ ansi_bold ++ "{s}:" ++ ansi_reset ++ "\n", .{group_name});
+                try w.writeAll("\n" ++ ansi_bold);
+                try textutil.writeControlFiltered(w, group_name);
+                try w.writeAll(":" ++ ansi_reset ++ "\n");
             } else {
-                try w.print("\n{s}:\n", .{group_name});
+                try w.writeAll("\n");
+                try textutil.writeControlFiltered(w, group_name);
+                try w.writeAll(":\n");
             }
         } else {
             try w.print("\n{s}:\n", .{template.commands_header});
@@ -304,18 +355,24 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
             try w.splatByteAll(' ', template.indent);
 
             if (use_color) {
-                try w.print(ansi_cyan ++ "{s}" ++ ansi_reset, .{subcmd.name});
+                try w.writeAll(ansi_cyan);
+                try textutil.writeControlFiltered(w, subcmd.name);
+                try w.writeAll(ansi_reset);
             } else {
-                try w.print("{s}", .{subcmd.name});
+                try textutil.writeControlFiltered(w, subcmd.name);
             }
 
-            // Padding to align descriptions
+            // Padding to align descriptions. Computed from the raw name
+            // length: well-formed metadata contains no control bytes, so
+            // raw and filtered lengths match in practice; filtering above
+            // is the security boundary, alignment is cosmetic.
             const sub_name_len: usize = subcmd.name.len;
             const col_width: usize = @as(usize, template.name_column_width) - template.indent;
             const sub_min_len: usize = @min(sub_name_len, col_width);
             const sub_padding: usize = col_width - sub_min_len;
             try w.splatByteAll(' ', sub_padding);
-            try w.print("{s}\n", .{subcmd.summary});
+            try textutil.writeControlFiltered(w, subcmd.summary);
+            try w.writeAll("\n");
         }
     }
 }
@@ -392,19 +449,24 @@ fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, 
     try w.splatByteAll(' ', template.indent);
 
     if (use_color) {
-        try w.print(ansi_cyan ++ "{s}" ++ ansi_reset, .{name});
+        try w.writeAll(ansi_cyan);
+        try textutil.writeControlFiltered(w, name);
+        try w.writeAll(ansi_reset);
     } else {
-        try w.print("{s}", .{name});
+        try textutil.writeControlFiltered(w, name);
     }
 
-    // Padding to align descriptions
+    // Padding to align descriptions. Computed from the raw name length:
+    // well-formed metadata contains no control bytes, so raw and filtered
+    // lengths match in practice.
     const name_len: usize = name.len;
     const col_width: usize = @as(usize, template.name_column_width) - template.indent;
     const min_len: usize = @min(name_len, col_width);
     const pad: usize = col_width - min_len;
     try w.splatByteAll(' ', pad);
 
-    try w.print("{s}\n", .{description});
+    try textutil.writeControlFiltered(w, description);
+    try w.writeAll("\n");
 }
 
 /// Print a single flag with template settings
@@ -425,12 +487,17 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
 
     // Long flag
     if (use_color) {
-        try w.print(ansi_yellow ++ "--{s}" ++ ansi_reset, .{flag.name});
+        try w.writeAll(ansi_yellow ++ "--");
+        try textutil.writeControlFiltered(w, flag.name);
+        try w.writeAll(ansi_reset);
     } else {
-        try w.print("--{s}", .{flag.name});
+        try w.writeAll("--");
+        try textutil.writeControlFiltered(w, flag.name);
     }
 
-    // Padding
+    // Padding. Computed from the raw name length: well-formed metadata
+    // contains no control bytes, so raw and filtered lengths match in
+    // practice.
     const name_len: usize = flag.name.len;
     const col_width: usize = @as(usize, template.name_column_width) - template.indent - 6; // -6 for "  -X, "
     const min_len: usize = @min(name_len, col_width);
@@ -438,11 +505,13 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     try w.splatByteAll(' ', padding_amount);
 
     // Help text
-    try w.print("{s}", .{flag.help});
+    try textutil.writeControlFiltered(w, flag.help);
 
     // Default value
     if (flag.default_str) |def| {
-        try w.print(" [default: {s}]", .{def});
+        try w.writeAll(" [default: ");
+        try textutil.writeControlFiltered(w, def);
+        try w.writeAll("]");
     }
 
     // Required indicator
@@ -466,9 +535,13 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     // Environment variable indicator
     if (flag.env) |env_var| {
         if (use_color) {
-            try w.print(" " ++ ansi_cyan ++ "[${s}]" ++ ansi_reset, .{env_var});
+            try w.writeAll(" " ++ ansi_cyan ++ "[$");
+            try textutil.writeControlFiltered(w, env_var);
+            try w.writeAll("]" ++ ansi_reset);
         } else {
-            try w.print(" [${s}]", .{env_var});
+            try w.writeAll(" [$");
+            try textutil.writeControlFiltered(w, env_var);
+            try w.writeAll("]");
         }
     }
 
@@ -482,7 +555,9 @@ fn printSectionFooter(w: anytype, cmd: *const Command, template: *const HelpTemp
     if (template.footer_text) |footer| {
         try w.print("\n{s}\n", .{footer});
     } else {
-        try w.print("\nFor full help: {s} --help\n", .{cmd.name});
+        try w.writeAll("\nFor full help: ");
+        try textutil.writeControlFiltered(w, cmd.name);
+        try w.writeAll(" --help\n");
     }
 }
 
@@ -1833,4 +1908,113 @@ test "help: env section in template sections list renders correctly" {
     try std.testing.expect(mem.indexOf(u8, output, "ENVAPP_HOST") != null);
     try std.testing.expect(mem.indexOf(u8, output, "NO_COLOR") != null);
     try std.testing.expect(mem.indexOf(u8, output, "TERM") != null);
+}
+
+// ============================================================================
+// Control-Byte Filtering Tests (NS-056 / CWE-150)
+// ============================================================================
+
+test "help: text output strips terminal escape bytes from metadata" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const cmd = Command{
+        .name = "esc",
+        .summary = "s\x1b[2Jummary",
+        .flags = &.{
+            FlagSpec{
+                .name = "bad",
+                .help = "h\x1b]0;evil\x07elp",
+                .ftype = .bool,
+                .default_str = "d\x1befault",
+                .env = "EV\x1bIL_VAR",
+            },
+        },
+    };
+
+    const template = HelpTemplate.default;
+    for (template.sections) |section| {
+        try renderTextSection(w, false, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    try std.testing.expect(mem.indexOfScalar(u8, output, 0x1b) == null);
+    try std.testing.expect(mem.indexOfScalar(u8, output, 0x07) == null);
+    // Printable remainder survives (only the control bytes are removed)
+    try std.testing.expect(mem.indexOf(u8, output, "s[2Jummary") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "h]0;evilelp") != null);
+}
+
+test "help: text output strips escape bytes from examples, subcommands, long help, groups, env section" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const subcmd = Command{
+        .name = "su\x1b[1mb",
+        .summary = "sub \x1b[31msummary",
+        .group = "Gr\x1b[2Joup",
+    };
+    const cmd = Command{
+        .name = "esc",
+        .summary = "summary",
+        .long_help = "long\x1bc help text",
+        .examples = &.{"esc run \x1b[2J--force"},
+        .subcommands = &.{&subcmd},
+        .flags = &.{
+            FlagSpec{
+                .name = "token",
+                .help = "auth \x1b[9999Htoken",
+                .ftype = .string,
+                .env = "ESC_\x1b[2JTOKEN",
+            },
+        },
+    };
+
+    const template = HelpTemplate{
+        .sections = &.{ .header, .usage, .examples, .description, .commands, .flags, .env_vars, .footer },
+        .show_env_section = true,
+    };
+    for (template.sections) |section| {
+        try renderTextSection(w, false, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    try std.testing.expect(mem.indexOfScalar(u8, output, 0x1b) == null);
+    // Printable content survives
+    try std.testing.expect(mem.indexOf(u8, output, "long") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "--force") != null);
+    try std.testing.expect(mem.indexOf(u8, output, "sub ") != null);
+}
+
+test "help: colored text output strips escape bytes from metadata but keeps styling" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const cmd = Command{
+        .name = "e\x1b[2Jsc",
+        .summary = "summary",
+        .flags = &.{
+            FlagSpec{
+                .name = "ba\x1b[31md",
+                .help = "help",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const template = HelpTemplate.default;
+    for (template.sections) |section| {
+        try renderTextSection(w, true, &cmd, &template, section);
+    }
+
+    const output = buf.written();
+    // Framework styling is present...
+    try std.testing.expect(mem.indexOf(u8, output, ansi_bold) != null);
+    // ...but injected escape sequences from metadata are neutralized
+    // (the ESC byte is stripped; the printable remainder is harmless)
+    try std.testing.expect(mem.indexOf(u8, output, "\x1b[2J") == null);
+    try std.testing.expect(mem.indexOf(u8, output, "\x1b[31m") == null);
 }
