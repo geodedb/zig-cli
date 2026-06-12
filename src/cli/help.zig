@@ -49,6 +49,7 @@ const command = @import("command.zig");
 const Command = command.Command;
 const Context = command.Context;
 
+const common = @import("help/common.zig");
 const json = @import("help/json.zig");
 const text = @import("help/text.zig");
 
@@ -214,27 +215,10 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
 /// **Limit:** At most 32 unique groups are tracked. Commands with more
 /// than 32 groups will have excess groups silently omitted from output.
 ///
-/// Shared by the text renderer (`help/text.zig`) and the Markdown generator
-/// (`help/markdown.zig`).
+/// Canonical implementation lives in `help/common.zig`; re-exported here
+/// for callers that import `help.zig` directly.
 // Internal to the help subsystem; pub for cross-file use within the module.
-pub fn collectUniqueGroups(subcommands: []const *const Command, groups: *[32][]const u8) usize {
-    var count: usize = 0;
-    for (subcommands) |subcmd| {
-        if (subcmd.hidden) continue;
-        var found = false;
-        for (groups[0..count]) |g| {
-            if (mem.eql(u8, g, subcmd.group)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found and count < groups.len) {
-            groups[count] = subcmd.group;
-            count += 1;
-        }
-    }
-    return count;
-}
+pub const collectUniqueGroups = common.collectUniqueGroups;
 
 /// Print version information.
 /// Write errors (e.g., broken pipe) are silently ignored for CLI robustness.
@@ -270,7 +254,8 @@ fn printVersionImpl(cmd: *const Command, ctx: *Context) !void {
 // ============================================================================
 
 test {
-    // Pull in tests from the format-specific renderer files.
+    // Pull in tests from the format-specific renderer files and shared helpers.
+    _ = common;
     _ = json;
     _ = text;
     _ = @import("help/man.zig");

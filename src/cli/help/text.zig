@@ -14,12 +14,11 @@ const command = @import("../command.zig");
 const Command = command.Command;
 const FlagSpec = command.FlagSpec;
 
-// Shared template types and group collection live in help.zig (circular
-// file imports within a module are legal in Zig).
+// Template types live in help.zig; group-collection helper lives in common.zig.
 const help = @import("../help.zig");
 const HelpSection = help.HelpSection;
 const HelpTemplate = help.HelpTemplate;
-const collectUniqueGroups = help.collectUniqueGroups;
+const collectUniqueGroups = @import("common.zig").collectUniqueGroups;
 
 /// Control-byte filtering for plain-text help output (NS-056 / CWE-150).
 /// Provided by the first-class `sanitize` module (single source of truth).

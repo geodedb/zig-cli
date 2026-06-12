@@ -14,10 +14,8 @@ const command = @import("../command.zig");
 const Command = command.Command;
 const FlagSpec = command.FlagSpec;
 
-// Shared with the text renderer; lives in help.zig (circular file imports
-// within a module are legal in Zig).
-const help = @import("../help.zig");
-const collectUniqueGroups = help.collectUniqueGroups;
+// Group-collection helper lives in common.zig (shared within the help subsystem).
+const collectUniqueGroups = @import("common.zig").collectUniqueGroups;
 
 /// Generate Markdown documentation for a command tree
 pub fn generateMarkdown(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
