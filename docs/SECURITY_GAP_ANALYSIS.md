@@ -57,6 +57,8 @@ echoed runtime argv. The NS-056 entry below has been corrected accordingly.
 
 **0 open findings remain** after iteration 2.
 
+**Iteration-4 note (2026-06-12, NS-060 hardening):** fence-escape indent corrected to 4 spaces — CommonMark closing fences may be indented up to 3 spaces, so the previous single-space prefix in `writeFenceSafe` (`src/cli/help/markdown.zig`) was still bypassable; fence-delimiter lines now always render with >= 4 spaces of indentation (convergence review iter-3 finding 12).
+
 ## 2026-06-11 UPDATE -- codepros:audit iteration 1
 
 A four-phase audit (scan + independent appsec review + adversarial security review) was

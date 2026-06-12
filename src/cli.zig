@@ -86,6 +86,7 @@ test {
     _ = @import("cli/help/json.zig");
     _ = @import("cli/help/man.zig");
     _ = @import("cli/help/markdown.zig");
+    _ = @import("cli/help/markdown_test.zig");
     _ = @import("cli/help/text.zig");
     _ = completion.bash;
     _ = @import("cli/completion/bash_test.zig");
