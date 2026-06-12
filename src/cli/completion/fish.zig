@@ -54,6 +54,8 @@ pub fn escapeFishSingleQuote(allocator: std.mem.Allocator, s: []const u8) ![]con
 pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
+    // esc_alloc MUST be arena-backed: escaper and condition-builder results
+    // are never individually freed.
     const esc_alloc = arena.allocator();
 
     var buf: std.Io.Writer.Allocating = .init(allocator);
@@ -81,8 +83,7 @@ pub fn generate(cmd: *const Command, allocator: std.mem.Allocator) ![]const u8 {
 /// name so every `complete -c 'NAME'` emission is safe.
 fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []const u8, path: []const []const u8, esc_alloc: std.mem.Allocator) !void {
     // Build condition for this command level
-    var condition_buf: [512]u8 = undefined;
-    const condition = buildCondition(&condition_buf, path, cmd, esc_alloc);
+    const condition = try buildCondition(path, cmd, esc_alloc);
 
     // Section header
     if (path.len == 0) {
@@ -156,8 +157,7 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
         }
 
         // Build condition for showing subcommands at this level
-        var subcmd_condition_buf: [512]u8 = undefined;
-        const subcmd_condition = buildSubcommandCondition(&subcmd_condition_buf, path, cmd, esc_alloc);
+        const subcmd_condition = try buildSubcommandCondition(path, cmd, esc_alloc);
 
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
@@ -197,66 +197,74 @@ fn generateCommandCompletions(w: anytype, cmd: *const Command, root_name: []cons
 
 /// Build the fish condition for flag completions at a command level.
 /// Path elements and subcommand names are escaped for use in single-quoted contexts.
-fn buildCondition(buf: []u8, path: []const []const u8, cmd: *const Command, esc_alloc: std.mem.Allocator) []const u8 {
+/// The result is allocated from `esc_alloc`, which MUST be arena-backed
+/// (results are never individually freed); allocation makes the condition
+/// length unbounded — a fixed buffer here used to silently truncate long
+/// conditions to "", dropping the -n guard entirely.
+fn buildCondition(path: []const []const u8, cmd: *const Command, esc_alloc: std.mem.Allocator) ![]const u8 {
     if (path.len == 0) {
         return "";
     }
 
     // Condition: must have seen all commands in path, and not yet any of the subcommands
-    var w = std.Io.Writer.fixed(buf);
+    var aw: std.Io.Writer.Allocating = .init(esc_alloc);
+    const w = &aw.writer;
 
     // Must have seen all parent commands
-    w.print("__fish_seen_subcommand_from", .{}) catch return "";
+    try w.print("__fish_seen_subcommand_from", .{});
     for (path) |p| {
-        const esc_p = escapeFishSingleQuote(esc_alloc, p) catch return "";
-        w.print(" {s}", .{esc_p}) catch return "";
+        const esc_p = try escapeFishSingleQuote(esc_alloc, p);
+        try w.print(" {s}", .{esc_p});
     }
 
     // Must not have started any subcommand yet
     if (cmd.subcommands.len > 0) {
-        w.print("; and not __fish_seen_subcommand_from", .{}) catch return "";
+        try w.print("; and not __fish_seen_subcommand_from", .{});
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                const esc_name = escapeFishSingleQuote(esc_alloc, subcmd.name) catch return "";
-                w.print(" {s}", .{esc_name}) catch return "";
+                const esc_name = try escapeFishSingleQuote(esc_alloc, subcmd.name);
+                try w.print(" {s}", .{esc_name});
             }
         }
     }
 
-    return w.buffered();
+    return aw.toOwnedSlice();
 }
 
 /// Build the fish condition for showing subcommands at a command level.
 /// Path elements and subcommand names are escaped for use in single-quoted contexts.
-fn buildSubcommandCondition(buf: []u8, path: []const []const u8, cmd: *const Command, esc_alloc: std.mem.Allocator) []const u8 {
+/// The result is allocated from `esc_alloc`, which MUST be arena-backed
+/// (results are never individually freed); see buildCondition for why a
+/// fixed buffer is not used.
+fn buildSubcommandCondition(path: []const []const u8, cmd: *const Command, esc_alloc: std.mem.Allocator) ![]const u8 {
     if (path.len == 0) {
         // Root level: use __fish_use_subcommand
-        const result = std.fmt.bufPrint(buf, "__fish_use_subcommand", .{}) catch return "";
-        return result;
+        return "__fish_use_subcommand";
     }
 
     // Nested level: must have seen parent commands, not yet any subcommands
-    var w = std.Io.Writer.fixed(buf);
+    var aw: std.Io.Writer.Allocating = .init(esc_alloc);
+    const w = &aw.writer;
 
     // Must have seen all parent commands
-    w.print("__fish_seen_subcommand_from", .{}) catch return "";
+    try w.print("__fish_seen_subcommand_from", .{});
     for (path) |p| {
-        const esc_p = escapeFishSingleQuote(esc_alloc, p) catch return "";
-        w.print(" {s}", .{esc_p}) catch return "";
+        const esc_p = try escapeFishSingleQuote(esc_alloc, p);
+        try w.print(" {s}", .{esc_p});
     }
 
     // Must not have started any subcommand yet
     if (cmd.subcommands.len > 0) {
-        w.print("; and not __fish_seen_subcommand_from", .{}) catch return "";
+        try w.print("; and not __fish_seen_subcommand_from", .{});
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                const esc_name = escapeFishSingleQuote(esc_alloc, subcmd.name) catch return "";
-                w.print(" {s}", .{esc_name}) catch return "";
+                const esc_name = try escapeFishSingleQuote(esc_alloc, subcmd.name);
+                try w.print(" {s}", .{esc_name});
             }
         }
     }
 
-    return w.buffered();
+    return aw.toOwnedSlice();
 }
 
 // ============================================================================
@@ -558,6 +566,58 @@ test "fish: nesting deeper than 16 levels is capped, never OOB (F-06)" {
     const script = try generate(&cmds[0], std.testing.allocator);
     defer std.testing.allocator.free(script);
     try std.testing.expect(script.len > 0);
+}
+
+test "fish: condition longer than 512 bytes is not truncated to empty" {
+    // 40 subcommands with 20-char names at one level make the buildCondition
+    // string (~915 bytes) exceed the old 512-byte stack buffer, which used to
+    // `catch return ""` — silently dropping the -n guard so flag completions
+    // fired at every depth.
+    var names: [40][20]u8 = undefined;
+    var leaves: [40]Command = undefined;
+    var ptrs: [40]*const Command = undefined;
+    for (0..40) |i| {
+        _ = std.fmt.bufPrint(&names[i], "subcommand-number-{d:0>2}", .{i}) catch unreachable;
+        leaves[i] = Command{ .name = &names[i], .summary = "Leaf command" };
+        ptrs[i] = &leaves[i];
+    }
+    const mid = Command{
+        .name = "container",
+        .summary = "Mid level",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "level-flag",
+                .help = "Flag at deep level",
+                .ftype = .bool,
+            },
+        },
+        .subcommands = &ptrs,
+    };
+    const root = Command{
+        .name = "app",
+        .summary = "Application",
+        .subcommands = &.{&mid},
+    };
+
+    const script = try generate(&root, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // Locate the complete line for the deep-level flag.
+    const flag_idx = std.mem.indexOf(u8, script, "-l 'level-flag'").?;
+    const line_start = if (std.mem.lastIndexOfScalar(u8, script[0..flag_idx], '\n')) |n| n + 1 else 0;
+    const rel_end = std.mem.indexOfScalarPos(u8, script, flag_idx, '\n').?;
+    const flag_line = script[line_start..rel_end];
+
+    // The -n guard must be present (old code emitted no -n at all here).
+    try std.testing.expect(std.mem.indexOf(u8, flag_line, " -n '") != null);
+    try std.testing.expect(std.mem.indexOf(u8, flag_line, "__fish_seen_subcommand_from container") != null);
+    try std.testing.expect(std.mem.indexOf(u8, flag_line, "; and not __fish_seen_subcommand_from") != null);
+    try std.testing.expect(std.mem.indexOf(u8, flag_line, "subcommand-number-39") != null);
+
+    // And the condition itself genuinely exceeds the old 512-byte buffer.
+    const n_start = std.mem.indexOf(u8, flag_line, " -n '").? + " -n '".len;
+    const n_end = std.mem.indexOfScalarPos(u8, flag_line, n_start, '\'').?;
+    try std.testing.expect(n_end - n_start > 512);
 }
 
 // ============================================================================
