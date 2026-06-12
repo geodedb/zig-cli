@@ -157,6 +157,38 @@ pub fn splitWhitespace(text: []const u8, allocator: std.mem.Allocator) ![]const 
     return words.toOwnedSlice(allocator);
 }
 
+/// Write `text` to `w`, removing bytes that can alter terminal state:
+/// C0 controls (0x00-0x08, 0x0B-0x1F), DEL (0x7F). Newline (0x0A) and
+/// tab (0x09) are preserved. Removing ESC (0x1B) neutralizes ANSI/OSC
+/// escape sequences (CWE-150); the remaining printable bytes are kept.
+pub fn writeControlFiltered(w: anytype, text: []const u8) !void {
+    var start: usize = 0;
+    for (text, 0..) |c, idx| {
+        const is_control = (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
+        if (is_control) {
+            if (idx > start) try w.writeAll(text[start..idx]);
+            start = idx + 1;
+        }
+    }
+    if (start < text.len) try w.writeAll(text[start..]);
+}
+
+/// Allocating variant of `writeControlFiltered`. Caller owns the result.
+pub fn stripControlChars(text: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    var start: usize = 0;
+    for (text, 0..) |c, idx| {
+        const is_control = (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
+        if (is_control) {
+            if (idx > start) try result.appendSlice(allocator, text[start..idx]);
+            start = idx + 1;
+        }
+    }
+    if (start < text.len) try result.appendSlice(allocator, text[start..]);
+    return result.toOwnedSlice(allocator);
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -181,4 +213,24 @@ test "toUpper" {
     defer std.testing.allocator.free(upper);
 
     try std.testing.expectEqualStrings("HELLO", upper);
+}
+
+test "writeControlFiltered strips ESC and C0 controls, keeps \\n and \\t" {
+    var buf: [128]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try writeControlFiltered(&w, "a\x1b[2Jb\x07c\nd\te\x7ff");
+    try std.testing.expectEqualStrings("a[2Jbc\nd\tef", w.buffered());
+}
+
+test "writeControlFiltered passes plain text through unchanged" {
+    var buf: [64]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try writeControlFiltered(&w, "hello world");
+    try std.testing.expectEqualStrings("hello world", w.buffered());
+}
+
+test "stripControlChars allocating variant" {
+    const out = try stripControlChars("x\x1b]0;evil\x07y", std.testing.allocator);
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("x]0;evily", out);
 }
