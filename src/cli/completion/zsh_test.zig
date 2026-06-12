@@ -362,6 +362,83 @@ test "zsh: dashed root name sanitized in identifiers, compdef keeps real name (F
 }
 
 // ============================================================================
+// Short-flag byte guard (F7-01 / CWE-78): non-alphanumeric shorts render
+// the long-only optspec form, never a half-emitted `(-" --name)` combo.
+// ============================================================================
+
+test "zsh: printable-but-non-alphanumeric short flag renders long-only optspec (F7-01)" {
+    // A `"` short flag is printable, so the old isPrint guard emitted it raw
+    // into the combined `'(-" --name)'{-",--name}'[...]'` optspec — an
+    // unbalanced, injectable spec. isAlphanumeric routes it to the long-only
+    // form `'--name[...]'`.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "name",
+                .short = '"',
+                .help = "hostile short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // No `-"` anywhere (neither the exclusion list nor the brace expansion).
+    try std.testing.expect(std.mem.indexOf(u8, script, "-\"") == null);
+    // The long-only optspec form is emitted exactly.
+    try std.testing.expect(std.mem.indexOf(u8, script, "'--name[hostile short]'") != null);
+    // The combined short+long form must NOT appear.
+    try std.testing.expect(std.mem.indexOf(u8, script, "{-\"") == null);
+}
+
+test "zsh: non-alphanumeric short on value flag renders long-only optspec with value spec (F7-01)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "name",
+                .short = ';',
+                .help = "hostile short",
+                .ftype = .string,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, ';') == null);
+    // Long-only value optspec form.
+    try std.testing.expect(std.mem.indexOf(u8, script, "'--name[hostile short]:value:'") != null);
+}
+
+test "zsh: alphanumeric short still renders combined optspec (F7-01 positive)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "name",
+                .short = 'v',
+                .help = "ok short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // The combined short+long optspec must render for an alphanumeric short.
+    try std.testing.expect(std.mem.indexOf(u8, script, "'(-v --name)'{-v,--name}'[ok short]'") != null);
+}
+
+// ============================================================================
 // Gap B: flag name escaping in zsh optspec NAME position (NS-061, #38)
 // ============================================================================
 

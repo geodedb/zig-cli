@@ -181,8 +181,12 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     for (command.global_flags) |*gflag| {
         const esc_ghelp = try escapeZshSingleQuote(esc_alloc, gflag.help);
         const esc_gname = try escapeZshOptspecName(esc_alloc, gflag.name);
-        // Only printable ASCII short bytes may be emitted raw (R2-02 / CWE-150)
-        const gshort: ?u8 = if (gflag.short) |s| (if (std.ascii.isPrint(s)) s else null) else null;
+        // A short flag is conventionally a single alphanumeric character.
+        // Treating a non-alphanumeric short as "no short flag" routes it to the
+        // long-only optspec branch below (`'--name[...]'`) instead of emitting a
+        // half-formed `'(-" --name)'{-",--name}'[...]'` combined spec
+        // (F7-01 / CWE-78/94).
+        const gshort: ?u8 = if (gflag.short) |s| (if (std.ascii.isAlphanumeric(s)) s else null) else null;
         if (gshort) |s| {
             if (gflag.ftype == .bool) {
                 try w.print("    '(-{c} --{s})'{{-{c},--{s}}}'[{s}]'\n", .{
@@ -370,8 +374,12 @@ fn writeZshFlag(w: anytype, flag: *const FlagSpec, esc_alloc: std.mem.Allocator)
     // Known limitation: a `[` in a long flag name combined with a short flag
     // emits the name inside `{-s,--name}` brace expansion, which strips the
     // backslash escape and degrades the optspec. Accepted as pathological.
-    // Only printable ASCII short bytes may be emitted raw (R2-02 / CWE-150).
-    const short: ?u8 = if (flag.short) |s| (if (std.ascii.isPrint(s)) s else null) else null;
+    // A short flag is conventionally a single alphanumeric character; a
+    // non-alphanumeric short is treated as "no short flag" and routed to the
+    // long-only optspec branch below, so a printable metacharacter never
+    // reaches the combined `'(-c --name)'{-c,--name}'[...]'` spec
+    // (F7-01 / CWE-78/94).
+    const short: ?u8 = if (flag.short) |s| (if (std.ascii.isAlphanumeric(s)) s else null) else null;
     if (short) |s| {
         if (flag.ftype == .bool) {
             try w.print("        '(-{c} --{s})'{{-{c},--{s}}}'[{s}{s}]'\n", .{

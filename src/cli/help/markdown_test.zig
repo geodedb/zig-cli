@@ -123,6 +123,52 @@ test "help: generateMarkdown non-printable short flag byte is not emitted (R2-02
     try std.testing.expect(mem.indexOf(u8, md, "`--evil`") != null);
 }
 
+test "help: generateMarkdown printable-but-non-alphanumeric short flag is dropped (F7-01)" {
+    // A backtick short flag is printable; the old isPrint guard emitted
+    // `` `-`` `` which could open a stray code span. isAlphanumeric drops it;
+    // only the long form `--name` is shown, which is correct.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "name",
+                .short = '`',
+                .help = "hostile short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    // The `-`` ` short-flag rendering must not appear.
+    try std.testing.expect(mem.indexOf(u8, md, "`-`") == null);
+    // The long form is still rendered.
+    try std.testing.expect(mem.indexOf(u8, md, "`--name`") != null);
+}
+
+test "help: generateMarkdown alphanumeric short flag still renders (F7-01 positive)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "verbose",
+                .short = 'v',
+                .help = "Verbose",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    try std.testing.expect(mem.indexOf(u8, md, "`-v`,") != null);
+}
+
 test "help: generateMarkdown with subcommands" {
     const subcmd1 = Command{
         .name = "start",

@@ -211,6 +211,83 @@ test "bash: non-printable short flag byte is not emitted (R2-02)" {
     try std.testing.expect(std.mem.indexOf(u8, script, "--evil") != null);
 }
 
+test "bash: printable-but-non-alphanumeric short flag byte is dropped (F7-01)" {
+    // A double-quote short flag would make the double-quoted flags list and
+    // the value-completion case label unsourceable / injectable (CWE-78/94).
+    // It is printable, so the old isPrint guard let it through; isAlphanumeric
+    // drops it. The long form must still render.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "name",
+                .short = '"',
+                .help = "hostile short",
+                .ftype = .string,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // The raw `-"` token must not appear anywhere (flags list or case label).
+    try std.testing.expect(std.mem.indexOf(u8, script, "-\"") == null);
+    // The flags-list and case-label lines must not contain a stray double quote
+    // that would unbalance the surrounding double-quoted string.
+    try std.testing.expect(std.mem.indexOf(u8, script, " -\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "|'-\"'") == null);
+    // The long form is still emitted and the value-completion case label is the
+    // valid long-only form.
+    try std.testing.expect(std.mem.indexOf(u8, script, "--name") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "'--name')") != null);
+}
+
+test "bash: backtick short flag byte is dropped (F7-01)" {
+    // A backtick short flag enables command substitution inside the
+    // double-quoted flags list.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "name",
+                .short = '`',
+                .help = "hostile short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    try std.testing.expect(std.mem.indexOfScalar(u8, script, '`') == null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "--name") != null);
+}
+
+test "bash: alphanumeric short flag still renders (F7-01 positive)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            command.FlagSpec{
+                .name = "verbose",
+                .short = 'v',
+                .help = "Verbose",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // The short token must still be present in the command flags list.
+    try std.testing.expect(std.mem.indexOf(u8, script, " -v") != null);
+}
+
 test "bash: hostile subcommand name cannot break out of the commands list" {
     const sub = Command{
         .name = "a\"; echo PWNED #",

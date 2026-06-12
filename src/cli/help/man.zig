@@ -120,8 +120,11 @@ pub fn generateMan(cmd: *const Command, allocator: std.mem.Allocator) ![]const u
     for (cmd.flags) |*flag| {
         try w.writeAll(".TP\n");
         if (flag.short) |s| {
-            // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
-            if (std.ascii.isPrint(s)) try w.print("\\fB\\-{c}\\fR, ", .{s});
+            // A short flag is conventionally a single alphanumeric character.
+            // Restricting to alphanumeric keeps the last raw `{c}` metadata
+            // emission consistent with the shell generators (F7-01); if skipped,
+            // the entry shows only the long form (`\-\-name`), which is correct.
+            if (std.ascii.isAlphanumeric(s)) try w.print("\\fB\\-{c}\\fR, ", .{s});
         }
         try w.writeAll("\\fB\\-\\-");
         try writeRoffEscaped(w, flag.name);
@@ -329,6 +332,52 @@ test "help: generateMan with flags" {
     try std.testing.expect(mem.indexOf(u8, man, "\\fB\\-\\-output\\fR") != null);
     try std.testing.expect(mem.indexOf(u8, man, "\\fB\\-\\-verbose\\fR") != null);
     try std.testing.expect(mem.indexOf(u8, man, "Output file path") != null);
+}
+
+test "help: generateMan printable-but-non-alphanumeric short flag is dropped (F7-01)" {
+    // A backtick short flag is printable; the old isPrint guard rendered it as
+    // `\fB\-`\fR, `. isAlphanumeric drops it; only the long form is shown.
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "name",
+                .short = '`',
+                .help = "hostile short",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const man = try generateMan(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(man);
+
+    // No short-flag roff fragment and no stray backtick.
+    try std.testing.expect(mem.indexOfScalar(u8, man, '`') == null);
+    try std.testing.expect(mem.indexOf(u8, man, "\\fB\\-`\\fR") == null);
+    // The long form is still rendered.
+    try std.testing.expect(mem.indexOf(u8, man, "\\fB\\-\\-name\\fR") != null);
+}
+
+test "help: generateMan alphanumeric short flag still renders (F7-01 positive)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "output",
+                .short = 'o',
+                .help = "Output",
+                .ftype = .path,
+            },
+        },
+    };
+
+    const man = try generateMan(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(man);
+
+    try std.testing.expect(mem.indexOf(u8, man, "\\fB\\-o\\fR, ") != null);
 }
 
 test "help: generateMan options show required/default/env/deprecated (iter-3 finding 13)" {

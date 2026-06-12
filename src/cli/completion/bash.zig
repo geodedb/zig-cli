@@ -164,8 +164,12 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
         const esc_gname = try escapeBashDoubleQuote(esc_alloc, gflag.name);
         try w.print("--{s}", .{esc_gname});
         if (gflag.short) |s| {
-            // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
-            if (std.ascii.isPrint(s)) try w.print(" -{c}", .{s});
+            // A short flag is conventionally a single alphanumeric character.
+            // Restricting to alphanumeric drops printable shell metacharacters
+            // (", `, ', ;, $, (, |) that would otherwise be emitted raw into
+            // this double-quoted list (F7-01 / CWE-78/94). Skipping is safe:
+            // it just omits the short token from the space-separated list.
+            if (std.ascii.isAlphanumeric(s)) try w.print(" -{c}", .{s});
         }
     }
     try w.writeAll("\"\n\n");
@@ -251,8 +255,9 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
         const esc_name = try escapeBashDoubleQuote(esc_alloc, flag.name);
         try w.print(" --{s}", .{esc_name});
         if (flag.short) |s| {
-            // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
-            if (std.ascii.isPrint(s)) try w.print(" -{c}", .{s});
+            // Alphanumeric-only short flag (F7-01 / CWE-78/94): drops printable
+            // shell metacharacters that would corrupt this double-quoted list.
+            if (std.ascii.isAlphanumeric(s)) try w.print(" -{c}", .{s});
         }
     }
     try w.writeAll("\"\n");
@@ -332,8 +337,9 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
             const esc_flag_case = try escapeBashSingleQuote(esc_alloc, flag.name);
             try w.print("        '--{s}'", .{esc_flag_case});
             if (flag.short) |s| {
-                // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
-                if (std.ascii.isPrint(s)) try w.print("|'-{c}'", .{s});
+                // Alphanumeric-only short flag (F7-01 / CWE-78/94). If skipped,
+                // the case label is just `'--name')`, which is valid.
+                if (std.ascii.isAlphanumeric(s)) try w.print("|'-{c}'", .{s});
             }
             try w.writeAll(")\n");
             if (flag.ftype == .path) {
