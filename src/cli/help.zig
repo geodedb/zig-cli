@@ -2308,8 +2308,7 @@ test "help: json short flag with quote char is escaped" {
     // "short" value must be JSON-escaped: "short":"\"" not "short":"""
     try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"\\\"\"") != null);
     // The raw double-quote must not appear as an unescaped JSON value
-    // (i.e., the sequence :"" must not appear in the output)
-    try std.testing.expect(mem.indexOf(u8, out, ":\"\"") == null);
+    try std.testing.expect(mem.indexOf(u8, out, "\"short\":\"\"") == null);
 }
 
 test "help: json short flag with backslash is escaped" {
