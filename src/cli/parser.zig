@@ -226,8 +226,8 @@ pub const Parser = struct {
     }
 
     /// Build a ParseResult for an early `--help`/`--version` exit.
-    /// Matches historical behavior: help/version return before defaults
-    /// and validation run.
+    /// Help/version return before env defaults, default values, and
+    /// validation run: the returned context carries CLI-set flags only.
     fn earlyResult(
         allocator: Allocator,
         cmd: *const Command,

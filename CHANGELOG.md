@@ -18,6 +18,7 @@ Audit hardening batches (2026-06 codepros audit iterations 1-4).
 - Custom flag validators are enforced for environment values (recorded + skipped on rejection) and `default_str` (hard `InvalidValue`)
 - Bool short flags enforce secret policy and custom validators, matching long-flag behavior; global flags accept `--name=true|false`; `MissingValue` errors name the offending flag
 - Mid-chain commands now receive env defaults and `default_str` defaults; `InvalidValue` diagnostics name the env variable only when the error actually came from the environment
+- `--help`/`--version` early exits return before env-bound flag defaults are applied: the returned context carries CLI-set flags only
 - man pages show `(required)`, `(default: …)`, `(env: $…)`, `(deprecated)` on flags; markdown shows `**(deprecated)**`; JSON flag objects gain a `deprecated` field
 - man and markdown generators strip terminal control bytes (NS-056 defense-in-depth)
 
