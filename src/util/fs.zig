@@ -68,6 +68,11 @@ pub fn readFile(path: []const u8, allocator: std.mem.Allocator, max_size: usize)
 /// Security: temp file is created with mode 0o600 (owner read/write only).
 /// Data integrity: fsync is called before close to ensure data reaches disk
 /// before the rename makes it visible.
+///
+/// SECURITY NOTE: The temp file and rename are resolved via cwd-relative
+/// paths on each call. Only target directories you control; a hostile
+/// writable parent directory permits parent-dir TOCTOU swaps between
+/// create and rename.
 pub fn writeFileAtomic(path: []const u8, content: []const u8) FsError!void {
     const dir = cwd();
 
@@ -151,6 +156,13 @@ pub fn redactPath(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
     return try allocator.dupe(u8, path);
 }
 
+/// SECURITY NOTE: This is a best-effort DENYLIST of obviously sensitive
+/// paths, NOT a security boundary. It performs no canonicalization and
+/// does not resolve symlinks: `/etc//shadow`, traversal via cwd, or a
+/// symlink to a sensitive file all PASS this check. Callers needing a
+/// real guarantee must canonicalize (`realpathAlloc`) and validate
+/// against an allowlisted root directory.
+///
 /// Check if a path is safe to read (not in sensitive locations)
 pub fn isSafePath(path: []const u8) bool {
     // Block path traversal attempts

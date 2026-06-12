@@ -32,10 +32,11 @@ pub fn wordWrap(text: []const u8, width: usize, allocator: std.mem.Allocator) ![
                     continue;
                 }
             }
-            // No space found, break at width
+            // No space found, break at width; reset last_space for state symmetry
             try result.appendSlice(allocator, text[line_start..i]);
             try result.append(allocator, '\n');
             line_start = i;
+            last_space = null;
         }
     }
 
@@ -292,4 +293,12 @@ test "stripControlChars all-control input" {
     const out = try stripControlChars("\x01\x02\x03", std.testing.allocator);
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("", out);
+}
+
+test "wordWrap no-space break resets state" {
+    // 10 'a's force two hard breaks (at i=4 and i=8), then " bb" wraps using
+    // the space. Expected: "aaaa\naaaa\naa\nbb"
+    const out = try wordWrap("aaaaaaaaaa bb", 4, std.testing.allocator);
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("aaaa\naaaa\naa\nbb", out);
 }

@@ -70,7 +70,7 @@ pub const version = @import("build_options").version;
 // Convenience Re-exports
 // ============================================================================
 
-// CLI types
+// CLI types — command tree, flag specs, parsing, and shell-completion helpers
 pub const Command = cli.Command;
 pub const Context = cli.Context;
 pub const FlagSpec = cli.FlagSpec;
@@ -81,29 +81,29 @@ pub const run = cli.run;
 pub const generateCompletions = cli.generateCompletions;
 pub const generateMan = cli.generateMan;
 
-// Config types
+// Config types — multi-format loader (TOML/JSON/YAML) with XDG compliance
 pub const Loader = config.Loader;
 pub const LoadOptions = config.LoadOptions;
 pub const Source = config.Source;
 pub const load = config.load;
 
-// Terminal types
+// Terminal types — color rendering, spinners, and progress bars
 pub const Color = term.Color;
 pub const Progress = term.Progress;
 pub const ProgressBar = term.ProgressBar;
 
-// Utility types
+// Utility types — fuzzy suggestions and process exit codes
 pub const suggestClosest = util.suggestClosest;
 pub const ExitCode = util.ExitCode;
 
-// Signal handling
+// Signal handling — flag-and-poll pattern; callbacks run in normal context
 pub const Signal = signal.Signal;
 pub const installSignalHandlers = signal.install;
 pub const wasInterrupted = signal.wasInterrupted;
 pub const shouldShutdown = signal.shouldShutdown;
 pub const onCleanup = signal.onCleanup;
 
-// Interactive prompts
+// Interactive prompts — text, password, confirmation, single/multi-select
 pub const PromptError = prompt.PromptError;
 pub const InputConfig = prompt.InputConfig;
 pub const promptInput = prompt.input;

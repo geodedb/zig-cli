@@ -147,12 +147,12 @@ pub fn pollSignals() bool {
     return true;
 }
 
-/// Register a cleanup callback to be called on signal.
+/// Register a cleanup callback to be invoked when a signal is received.
 /// Returns error if max callbacks reached (limit: 16).
 ///
-/// **WARNING:** The callback MUST be async-signal-safe. See `CleanupFn`
-/// documentation for the full list of restrictions. Violating these
-/// constraints leads to undefined behavior (deadlocks, corruption).
+/// Callbacks run in NORMAL execution context from `pollSignals()`, NOT
+/// inside a signal handler. They may freely allocate memory, acquire
+/// locks, and perform buffered I/O. See `CleanupFn` for details.
 pub fn onCleanup(callback: CleanupFn) !void {
     mutex.lock();
     defer mutex.unlock();

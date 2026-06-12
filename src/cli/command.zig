@@ -41,8 +41,11 @@ pub const FlagType = enum {
 ///    rejects `$APP_TOKEN` from the environment (returns `SecretInFlagOrEnv`).
 /// 3. Provide the secret via file (`--token-file /path/to/token`) or via
 ///    stdin (`echo $SECRET | myapp login`).
-/// 4. On `Context.deinit()`, string flag values (including secrets) are
-///    zeroed from the HashMap to reduce in-memory exposure.
+/// 4. On `Context.deinit()`, string flag value *references* are cleared
+///    from the flag map. The referenced bytes live in OS-owned argv/environ
+///    memory and CANNOT be scrubbed by this library; OS-level exposure of
+///    argv (e.g. /proc/<pid>/cmdline) is inherent. This is why secret
+///    values must never be passed via flags or env in the first place.
 ///
 /// **Example:**
 /// ```
@@ -185,17 +188,18 @@ pub const Context = struct {
     }
 
     /// Deinitialize the context.
-    /// String flag values are zeroed before deallocation as a defense-in-depth
-    /// measure to prevent secret values from lingering in freed heap memory.
+    /// String flag value references are dropped from the map. NOTE: the
+    /// underlying bytes are argv/environ-backed and are NOT zeroed — they
+    /// cannot be scrubbed from library code. See `SecretPolicy` docs.
     pub fn deinit(self: *Context) void {
-        // Clean up flag values: zero strings, free arrays
+        // Clean up flag values: clear string references, free arrays
         var iter = self.flags.valueIterator();
         while (iter.next()) |val| {
             switch (val.*) {
                 .string => {
-                    // Zero the slice metadata (pointer + length) so that
-                    // freed HashMap memory does not retain references to
-                    // potentially secret values.
+                    // Clear the slice reference from the HashMap so that
+                    // freed HashMap memory does not retain the pointer.
+                    // The backing bytes (argv/environ) are NOT zeroed.
                     val.* = FlagValue{ .string = "" };
                 },
                 .string_array => |*arr| arr.deinit(self.allocator),

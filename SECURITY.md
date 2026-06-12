@@ -47,6 +47,19 @@ This project implements the following security measures:
 - SPDX license identifiers in all source files
 - Apache-2.0 license
 
+## Command metadata trust model
+
+Command and flag metadata (`name`, `summary`, `help`, `examples`, ...) is
+normally authored by the application developer at compile time and is
+treated as trusted for layout purposes. As defense in depth, all help,
+table, progress, and error output strips terminal control bytes
+(C0 controls except `\n`/`\t`, and DEL), so escape-sequence injection
+(CWE-150) is neutralized even when metadata originates from untrusted
+sources (plugin manifests, registries). Markdown, roff, JSON, and shell
+completion generators apply context-specific escaping. If you render
+untrusted strings through other output paths, sanitize them with
+`util.text.stripControlChars`.
+
 ## Security Updates
 
 Security updates will be released as patch versions. Subscribe to releases to be notified.
