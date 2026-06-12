@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const sanitize = @import("sanitize.zig");
 
 /// Column alignment options
 pub const Alignment = enum {
@@ -239,28 +240,33 @@ pub const Table = struct {
         }
     }
 
+    /// Write cell/header content padded to `width`. Content is
+    /// control-filtered so cell data cannot inject ANSI/OSC escape
+    /// sequences (NS-056 / CWE-150). Width math intentionally stays
+    /// byte-based: precise alignment of malicious content is not a goal,
+    /// and UTF-8-aware widths are handled in a later task.
     fn writeAligned(self: *Self, writer: anytype, text: []const u8, width: usize, alignment: Alignment) !void {
         _ = self;
         if (text.len >= width) {
-            try writer.writeAll(text[0..width]);
+            try sanitize.writeControlFiltered(writer, text[0..width]);
             return;
         }
 
         const space = width - text.len;
         switch (alignment) {
             .left => {
-                try writer.writeAll(text);
+                try sanitize.writeControlFiltered(writer, text);
                 try writer.splatByteAll(' ', space);
             },
             .right => {
                 try writer.splatByteAll(' ', space);
-                try writer.writeAll(text);
+                try sanitize.writeControlFiltered(writer, text);
             },
             .center => {
                 const left_pad = space / 2;
                 const right_pad = space - left_pad;
                 try writer.splatByteAll(' ', left_pad);
-                try writer.writeAll(text);
+                try sanitize.writeControlFiltered(writer, text);
                 try writer.splatByteAll(' ', right_pad);
             },
         }
@@ -519,6 +525,49 @@ test "table: auto column width from content" {
     // Column widths should be updated based on content
     try std.testing.expect(table.column_widths.items[0] >= 5);
     try std.testing.expect(table.column_widths.items[1] >= 19);
+}
+
+test "table: cells are control-filtered" {
+    var table = Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    try table.addColumn(.{ .header = "h" });
+    try table.addRow(&.{"a\x1b[2Jb"});
+
+    const output = try table.render();
+    defer std.testing.allocator.free(output);
+
+    // Default config has use_color=false, so any ESC byte in the output
+    // must have come from injected cell content.
+    try std.testing.expect(std.mem.indexOfScalar(u8, output, 0x1b) == null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "a[2Jb") != null);
+}
+
+test "table: headers are control-filtered" {
+    var table = Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    try table.addColumn(.{ .header = "h\x1b[31me\x07ad" });
+    try table.addRow(&.{"x"});
+
+    const output = try table.render();
+    defer std.testing.allocator.free(output);
+
+    try std.testing.expect(std.mem.indexOfScalar(u8, output, 0x1b) == null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, output, 0x07) == null);
+}
+
+test "table: truncated cell is control-filtered" {
+    var table = Table.init(std.testing.allocator);
+    defer table.deinit();
+
+    try table.addColumn(.{ .header = "h", .max_width = 4 });
+    try table.addRow(&.{"a\x1b[2Jblongtail"});
+
+    const output = try table.render();
+    defer std.testing.allocator.free(output);
+
+    try std.testing.expect(std.mem.indexOfScalar(u8, output, 0x1b) == null);
 }
 
 test "table: multiple rows" {

@@ -9,6 +9,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const tty = @import("tty.zig");
 const env = @import("env.zig");
+const sanitize = @import("sanitize.zig");
 
 /// ANSI color codes
 pub const Color = enum(u8) {
@@ -86,21 +87,27 @@ pub const ColorContext = struct {
         return text;
     }
 
-    /// Write colored text to writer
+    /// Write colored text to writer. `text` is control-filtered so caller
+    /// data cannot inject ANSI/OSC escape sequences (NS-056 / CWE-150).
     pub fn writeColored(self: Self, writer: anytype, text: []const u8, color: Color) !void {
         if (self.enabled) {
-            try writer.print("\x1b[{d}m{s}\x1b[0m", .{ @intFromEnum(color), text });
+            try writer.print("\x1b[{d}m", .{@intFromEnum(color)});
+            try sanitize.writeControlFiltered(writer, text);
+            try writer.writeAll("\x1b[0m");
         } else {
-            try writer.print("{s}", .{text});
+            try sanitize.writeControlFiltered(writer, text);
         }
     }
 
-    /// Write styled text to writer
+    /// Write styled text to writer. `text` is control-filtered so caller
+    /// data cannot inject ANSI/OSC escape sequences (NS-056 / CWE-150).
     pub fn writeStyled(self: Self, writer: anytype, text: []const u8, style: Style) !void {
         if (self.enabled) {
-            try writer.print("\x1b[{d}m{s}\x1b[0m", .{ @intFromEnum(style), text });
+            try writer.print("\x1b[{d}m", .{@intFromEnum(style)});
+            try sanitize.writeControlFiltered(writer, text);
+            try writer.writeAll("\x1b[0m");
         } else {
-            try writer.print("{s}", .{text});
+            try sanitize.writeControlFiltered(writer, text);
         }
     }
 };
@@ -174,6 +181,38 @@ pub fn stripAnsi(text: []const u8, allocator: std.mem.Allocator) ![]const u8 {
 test "colorCode returns valid sequence" {
     try std.testing.expectEqualStrings("\x1b[31m", colorCode(.red));
     try std.testing.expectEqualStrings("\x1b[32m", colorCode(.green));
+}
+
+test "writeColored strips control bytes from text (enabled)" {
+    var buf: [128]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ctx = ColorContext{ .enabled = true };
+    try ctx.writeColored(&w, "a\x1b[31mb", .red);
+    try std.testing.expectEqualStrings("\x1b[31ma[31mb\x1b[0m", w.buffered());
+}
+
+test "writeColored strips control bytes from text (disabled)" {
+    var buf: [128]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ctx = ColorContext{ .enabled = false };
+    try ctx.writeColored(&w, "a\x1b[31mb\rc", .red);
+    try std.testing.expectEqualStrings("a[31mbc", w.buffered());
+}
+
+test "writeStyled strips control bytes from text (enabled)" {
+    var buf: [128]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ctx = ColorContext{ .enabled = true };
+    try ctx.writeStyled(&w, "x\x1b]0;evil\x07y", .bold);
+    try std.testing.expectEqualStrings("\x1b[1mx]0;evily\x1b[0m", w.buffered());
+}
+
+test "writeStyled strips control bytes from text (disabled)" {
+    var buf: [128]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ctx = ColorContext{ .enabled = false };
+    try ctx.writeStyled(&w, "x\x1b]0;evil\x07y", .bold);
+    try std.testing.expectEqualStrings("x]0;evily", w.buffered());
 }
 
 test "stripAnsi removes sequences" {

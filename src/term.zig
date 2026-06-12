@@ -55,4 +55,5 @@ test {
     _ = pager;
     _ = progress;
     _ = table;
+    _ = @import("term/sanitize.zig");
 }

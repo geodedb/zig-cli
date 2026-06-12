@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const tty = @import("tty.zig");
+const sanitize = @import("sanitize.zig");
 
 inline fn io() std.Io {
     return std.Io.Threaded.global_single_threaded.io();
@@ -123,13 +124,18 @@ pub const Progress = struct {
         stderrPrint("\r\x1b[K\x1b[?25h", .{}) catch {};
     }
 
-    /// Stop with a completion message
+    /// Stop with a completion message. The message is control-filtered so
+    /// caller data cannot inject ANSI/OSC escape sequences (NS-056 / CWE-150).
     pub fn stopWithMessage(self: *Self, message: []const u8) void {
+        var mbuf: [256]u8 = undefined;
+        var mw = std.Io.Writer.fixed(&mbuf);
+        // Truncation of >256-byte messages is acceptable for a single line.
+        sanitize.writeControlFiltered(&mw, message) catch {};
         if (self.enabled) {
             // Clear line, show message, show cursor
-            stderrPrint("\r\x1b[K{s}\n\x1b[?25h", .{message}) catch {};
+            stderrPrint("\r\x1b[K{s}\n\x1b[?25h", .{mw.buffered()}) catch {};
         } else {
-            stderrPrint("{s}\n", .{message}) catch {};
+            stderrPrint("{s}\n", .{mw.buffered()}) catch {};
         }
     }
 
@@ -137,8 +143,16 @@ pub const Progress = struct {
         const frames = self.spinner_style.frames();
         const frame = frames[self.frame_index];
 
+        // Control-filter the message so caller data cannot inject ANSI/OSC
+        // escape sequences (NS-056 / CWE-150).
+        var mbuf: [256]u8 = undefined;
+        var mw = std.Io.Writer.fixed(&mbuf);
+        // Truncation of >256-byte messages is acceptable for a single
+        // spinner line.
+        sanitize.writeControlFiltered(&mw, self.message) catch {};
+
         // Clear line and write progress
-        try stderrPrint("\r\x1b[K{s} {s}", .{ frame, self.message });
+        try stderrPrint("\r\x1b[K{s} {s}", .{ frame, mw.buffered() });
     }
 };
 
@@ -237,11 +251,18 @@ pub const ProgressBar = struct {
 
         const empty = self.width - filled;
 
+        // Control-filter the message so caller data cannot inject ANSI/OSC
+        // escape sequences (NS-056 / CWE-150).
+        var mbuf: [256]u8 = undefined;
+        var mw = std.Io.Writer.fixed(&mbuf);
+        // Truncation of >256-byte messages is acceptable for a single line.
+        sanitize.writeControlFiltered(&mw, self.message) catch {};
+
         var wbuf: [4096]u8 = undefined;
         var fw = std.Io.File.stderr().writer(io(), &wbuf);
         const w = &fw.interface;
 
-        try w.print("\r{s} [", .{self.message});
+        try w.print("\r{s} [", .{mw.buffered()});
 
         try w.splatByteAll('=', filled);
         try w.splatByteAll(' ', empty);
