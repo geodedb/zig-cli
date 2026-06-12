@@ -4,6 +4,42 @@
 
 Last updated: 2026-06-12
 
+## Closed (audit iteration 2 refactor merge -- 2026-06-12)
+
+### GAP-0096: help.zig, parser.zig, command.zig exceed 800-line file-size guidance [RESOLVED]
+
+- **Issue:** [#34](https://gitlab.com/devnw/zig/cli/-/issues/34) (closed)
+- **Category:** Code Quality
+- **Severity:** Low
+- **Resolution:** The refactor merge split the three oversized files along
+  existing seams with public APIs preserved via re-exports. Every tracked `.zig`
+  file is now <= 800 lines, and a `check-zig-file-size` pre-commit hook enforces
+  the limit going forward. `parse()` was decomposed into named phase helpers
+  (issue #46, closed).
+- **Evidence:**
+  - `bash scripts/check_file_size.sh $(git ls-files '*.zig')` -> exit 0 (no violations).
+  - Largest files post-split: `src/cli/completion/bash.zig` 768, `src/cli/parser.zig` 759 (was 2096), `src/cli/parser_test.zig` 747, `src/cli/command.zig` 738 (was 1261); `src/cli/help.zig` (was 1836) split into `src/cli/help/{markdown,man,json,text,common}.zig` (largest 692).
+  - Pre-commit gate: `.pre-commit-config.yaml` hook `check-zig-file-size` -> `entry: scripts/check_file_size.sh`, `files: \.zig$`; `scripts/check_file_size.sh` enforces `LIMIT=800`.
+  - `parse()` at `src/cli/parser.zig:165-211` = 47 lines (issue #46 required < 80).
+  - Merge `3e2d804`; pre-commit gate commit `5c5022e`.
+- **Resolved date:** 2026-06-12
+
+### GAP-0084: GitLab issue hygiene -- resolved issues still open [RESOLVED]
+
+- **Issue:** [#61](https://gitlab.com/devnw/zig/cli/-/issues/61) (closed)
+- **Category:** Project Management
+- **Severity:** Low
+- **Resolution:** The one item that kept GAP-0084 open -- #46 (parse()
+  decomposition), which was genuinely unimplemented in iteration 1 -- is now
+  implemented and closed. The remaining previously stale-open issues
+  (#29, #31, #32, #38, #43) are all closed, and the GAP-0084 tracking issue #61
+  is closed. The only issues that remain open are #35 (CI catalog tag pinning --
+  a deliberate accepted-risk policy item, NS-001 Won't-Do) and #12 (registry
+  publication -- v0.2.0 roadmap, GAP-0083); neither is a tracker-hygiene defect.
+  The issue tracker now reflects actual project state.
+- **Evidence:** #61, #46, #29, #31, #32, #38, #43 all `state: closed` (verified via `glab issue view`); `glab issue list` returns exactly 2 open issues (#35, #12); merge `3e2d804` (closed #46/#34 via the refactor).
+- **Resolved date:** 2026-06-12
+
 ## Closed (audit iteration 1 fix merge -- 2026-06-12)
 
 ### GAP-0097: Residual silent `catch continue` in parser env/default resolution [RESOLVED]

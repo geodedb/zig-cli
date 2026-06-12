@@ -43,7 +43,7 @@ zig-cli
 
 ## Core Components
 
-### Command (`src/command.zig`)
+### Command (`src/cli/command.zig`)
 
 Defines the command structure:
 
@@ -70,7 +70,7 @@ pub const Command = struct {
 };
 ```
 
-### Parser (`src/parser.zig`)
+### Parser (`src/cli/parser.zig`)
 
 Handles argument parsing with support for:
 
@@ -81,7 +81,7 @@ Handles argument parsing with support for:
 - Subcommand dispatch
 - `--` separator for raw arguments
 
-### Context (`src/command.zig`)
+### Context (`src/cli/context.zig`)
 
 Stores parsed values and provides typed access:
 
