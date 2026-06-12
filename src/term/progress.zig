@@ -74,9 +74,8 @@ pub const Progress = struct {
         };
 
         if (self.enabled) {
-            // Hide cursor
-            stderrPrint("\x1b[?25l", .{}) catch {};
-            self.render() catch {};
+            // NP-031: hide-cursor + first frame batched into one write
+            self.renderWithPrefix("\x1b[?25l") catch {};
         }
 
         return self;
@@ -92,8 +91,8 @@ pub const Progress = struct {
         };
 
         if (self.enabled) {
-            stderrPrint("\x1b[?25l", .{}) catch {};
-            self.render() catch {};
+            // NP-031: hide-cursor + first frame batched into one write
+            self.renderWithPrefix("\x1b[?25l") catch {};
         }
 
         return self;
@@ -140,6 +139,12 @@ pub const Progress = struct {
     }
 
     fn render(self: *Self) !void {
+        return self.renderWithPrefix("");
+    }
+
+    /// Render the spinner line; `prefix` is emitted in the same single write
+    /// (used to batch the hide-cursor sequence with the first render).
+    fn renderWithPrefix(self: *Self, prefix: []const u8) !void {
         const frames = self.spinner_style.frames();
         const frame = frames[self.frame_index];
 
@@ -152,9 +157,15 @@ pub const Progress = struct {
         sanitize.writeControlFiltered(&mw, self.message) catch {};
 
         // Clear line and write progress
-        try stderrPrint("\r\x1b[K{s} {s}", .{ frame, mw.buffered() });
+        try stderrPrint("{s}\r\x1b[K{s} {s}", .{ prefix, frame, mw.buffered() });
     }
 };
+
+/// Compute the bar width for a terminal of `term_width` columns.
+/// Saturating: never underflows on narrow terminals; minimum 1 column.
+fn barWidthForTerminal(term_width: u16) u16 {
+    return @max(@min(term_width -| 20, 50), 1);
+}
 
 /// Thread-safe progress bar.
 ///
@@ -190,7 +201,7 @@ pub const ProgressBar = struct {
         return .{
             .total = total,
             .current = std.atomic.Value(usize).init(0),
-            .width = @min(term_info.width - 20, 50),
+            .width = barWidthForTerminal(term_info.width),
             .enabled = term_info.is_tty,
             .message = message,
             .render_mutex = .{},
@@ -423,4 +434,11 @@ test "progress: Progress stopWithMessage when disabled" {
     var progress = Progress.startIfTty(false, "Loading...");
     // Should not crash when disabled
     progress.stopWithMessage("Done!");
+}
+
+test "ProgressBar width computation does not underflow on narrow terminals" {
+    try std.testing.expect(barWidthForTerminal(10) >= 1);
+    try std.testing.expect(barWidthForTerminal(0) >= 1);
+    try std.testing.expectEqual(@as(u16, 50), barWidthForTerminal(200));
+    try std.testing.expectEqual(@as(u16, 20), barWidthForTerminal(40));
 }
