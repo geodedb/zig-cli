@@ -280,8 +280,11 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
         try w.writeAll("        case \"${COMP_WORDS[i]}\" in\n");
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
-                const esc_case = try escapeBashCasePattern(esc_alloc, subcmd.name);
-                try w.print("            {s})\n", .{esc_case});
+                // Single-quote the case label so the real typed name matches
+                // literally and shell metacharacters cannot break out of the
+                // case statement (CWE-78).
+                const esc_case = try escapeBashSingleQuote(esc_alloc, subcmd.name);
+                try w.print("            '{s}')\n", .{esc_case});
                 try w.writeAll("                cmd_idx=$i\n");
                 try w.writeAll("                break\n");
                 try w.writeAll("                ;;\n");
@@ -295,14 +298,21 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
         try w.writeAll("        case \"${COMP_WORDS[cmd_idx]}\" in\n");
         for (cmd.subcommands) |subcmd| {
             if (!subcmd.hidden) {
+                // Function identifiers must use the sanitized name so the
+                // call here matches the sanitized definition and no shell
+                // metacharacter from the raw name reaches an identifier
+                // position (CWE-78/94).
+                const safe_sub = try sanitizeBashIdentifier(esc_alloc, subcmd.name);
                 var subpath_buf: [256]u8 = undefined;
                 const subpath = if (path.len > 0)
-                    std.fmt.bufPrint(&subpath_buf, "{s}_{s}", .{ path, subcmd.name }) catch path
+                    std.fmt.bufPrint(&subpath_buf, "{s}_{s}", .{ path, safe_sub }) catch path
                 else
-                    std.fmt.bufPrint(&subpath_buf, "{s}", .{subcmd.name}) catch "";
+                    std.fmt.bufPrint(&subpath_buf, "{s}", .{safe_sub}) catch "";
 
-                const esc_case2 = try escapeBashCasePattern(esc_alloc, subcmd.name);
-                try w.print("            {s})\n", .{esc_case2});
+                // Single-quote the case label so the real typed name matches
+                // literally (CWE-78).
+                const esc_case2 = try escapeBashSingleQuote(esc_alloc, subcmd.name);
+                try w.print("            '{s}')\n", .{esc_case2});
                 try w.print("                _{s}_{s}\n", .{ root_name, subpath });
                 try w.writeAll("                return\n");
                 try w.writeAll("                ;;\n");
@@ -317,11 +327,13 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
     try w.writeAll("    case $prev in\n");
     for (cmd.flags) |*flag| {
         if (flag.ftype != .bool) {
-            const esc_flag_case = try escapeBashCasePattern(esc_alloc, flag.name);
-            try w.print("        --{s}", .{esc_flag_case});
+            // Single-quote the case label so a flag name with shell
+            // metacharacters matches literally and cannot break out (CWE-78).
+            const esc_flag_case = try escapeBashSingleQuote(esc_alloc, flag.name);
+            try w.print("        '--{s}'", .{esc_flag_case});
             if (flag.short) |s| {
                 // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
-                if (std.ascii.isPrint(s)) try w.print("|-{c}", .{s});
+                if (std.ascii.isPrint(s)) try w.print("|'-{c}'", .{s});
             }
             try w.writeAll(")\n");
             if (flag.ftype == .path) {
@@ -370,11 +382,14 @@ fn generateCommandFunction(w: anytype, cmd: *const Command, root_name: []const u
     // Recursively generate functions for subcommands
     for (cmd.subcommands) |subcmd| {
         if (!subcmd.hidden) {
+            // Sanitize each path component: it composes the function name
+            // emitted by the recursive call (must stay [a-zA-Z0-9_]).
+            const safe_sub = try sanitizeBashIdentifier(esc_alloc, subcmd.name);
             var subpath_buf: [256]u8 = undefined;
             const subpath = if (path.len > 0)
-                std.fmt.bufPrint(&subpath_buf, "{s}_{s}", .{ path, subcmd.name }) catch path
+                std.fmt.bufPrint(&subpath_buf, "{s}_{s}", .{ path, safe_sub }) catch path
             else
-                std.fmt.bufPrint(&subpath_buf, "{s}", .{subcmd.name}) catch "";
+                std.fmt.bufPrint(&subpath_buf, "{s}", .{safe_sub}) catch "";
 
             try generateCommandFunction(w, subcmd, root_name, subpath, enable_active_help, esc_alloc);
         }

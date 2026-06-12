@@ -230,3 +230,50 @@ test "bash: hostile subcommand name cannot break out of the commands list" {
     try std.testing.expect(std.mem.indexOf(u8, out, "local commands=\"a\"; echo PWNED") == null);
     try std.testing.expect(std.mem.indexOf(u8, out, "local commands=\"a\\\";") != null);
 }
+
+test "bash: hostile subcommand name cannot corrupt function defs, calls, or case labels" {
+    const sub = Command{
+        .name = "evil\"; touch /tmp/PWNED #",
+        .summary = "Hostile",
+    };
+    const cmd = Command{
+        .name = "app",
+        .summary = "App",
+        .subcommands = &.{&sub},
+    };
+
+    const out = try bash.generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(out);
+
+    // No generated bash function name may carry shell metacharacters from the
+    // raw subcommand name (function-definition and call sites, CWE-78/94).
+    try std.testing.expect(std.mem.indexOf(u8, out, "_app_evil\"") == null);
+    // The sanitized identifier (non-[a-zA-Z0-9_] -> _) must appear for the def.
+    try std.testing.expect(std.mem.indexOf(u8, out, "_app_evil") != null);
+    // Case labels matching the typed word must be single-quoted so metachars
+    // cannot break out of the case statement.
+    try std.testing.expect(std.mem.indexOf(u8, out, "            evil\"; touch") == null);
+    // Both case-label sites (cmd-index loop + delegation) emit the quoted form.
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        std.mem.count(u8, out, "'evil\"; touch /tmp/PWNED #')"),
+    );
+}
+
+test "bash: hostile flag name cannot break out of the value-completion case" {
+    const cmd = Command{
+        .name = "app",
+        .summary = "App",
+        .flags = &.{
+            .{ .name = "out\"; touch /tmp/PWNED #", .help = "h", .ftype = .string },
+        },
+    };
+
+    const out = try bash.generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(out);
+
+    // No unquoted breakout: the metacharacter-laden name appears only inside
+    // a single-quoted case label.
+    try std.testing.expect(std.mem.indexOf(u8, out, "        --out\"; touch") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "'--out\"; touch /tmp/PWNED #'") != null);
+}

@@ -810,6 +810,7 @@ with 0 memory leaks on 2026-03-24.
 - **Issue:** [#38](https://gitlab.com/devnw/zig/cli/-/issues/38)
 - **Resolution:** All 7 original injection points now covered by escape functions implemented as part of GAP-0011 closure.
 - **Iteration-5 correction (2026-06-12):** the original "all string interpolation sites in all 4 completion generators" claim was over-broad — the bash `local commands="..."` candidate list still interpolated `subcmd.name` raw (the registration line, flags list, and case patterns were covered). Fixed by escaping the candidate list via `escapeBashDoubleQuote` with a hostile-name regression test (iteration-5 convergence review finding).
+- **Iteration-6 correction (2026-06-12):** the bash generator also interpolated `subcmd.name` raw into function-definition/call identifiers and emitted subcommand and flag-name `case` labels unquoted — `sanitizeBashIdentifier` had been applied only to the root command name. Fixed by sanitizing every subcommand path component (function identifiers) and single-quoting all runtime-matched `case` labels (subcommand and flag names), mirroring the zsh generator; two hostile-name regression tests added. The bash generator now matches zsh/fish/powershell for all interpolation contexts.
 - **Resolved:** 2026-03-24
 
 ---
