@@ -135,14 +135,15 @@ pub const Table = struct {
 
             var cell_width = cell.len;
 
-            // Apply max width constraint (hard cap; wins over min_width).
-            if (col.max_width > 0 and cell_width > col.max_width) {
-                cell_width = col.max_width;
-            }
             // Apply min width constraint unconditionally so a column whose
             // cells are all shorter than min_width still reaches min_width.
             if (col.min_width > 0 and cell_width < col.min_width) {
                 cell_width = col.min_width;
+            }
+            // Apply max width constraint last (hard cap; wins over min_width,
+            // matching addColumn's seed precedence).
+            if (col.max_width > 0 and cell_width > col.max_width) {
+                cell_width = col.max_width;
             }
             if (cell_width > current_width) {
                 self.column_widths.items[i] = cell_width;
@@ -605,6 +606,15 @@ test "table: min_width honored with no rows (addColumn seed)" {
     defer t.deinit();
     try t.addColumn(.{ .header = "h", .min_width = 10 });
     try std.testing.expectEqual(@as(usize, 10), t.column_widths.items[0]);
+}
+
+test "table: max_width wins over a conflicting larger min_width" {
+    var t = Table.init(std.testing.allocator);
+    defer t.deinit();
+    try t.addColumn(.{ .header = "h", .min_width = 10, .max_width = 5 });
+    try std.testing.expectEqual(@as(usize, 5), t.column_widths.items[0]);
+    try t.addRow(&.{"ab"});
+    try std.testing.expectEqual(@as(usize, 5), t.column_widths.items[0]);
 }
 
 test "table: ascii border line is exactly correct width" {
