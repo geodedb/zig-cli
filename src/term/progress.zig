@@ -15,7 +15,7 @@
 
 const std = @import("std");
 const tty = @import("tty.zig");
-const sanitize = @import("sanitize.zig");
+const sanitize = @import("sanitize");
 
 inline fn io() std.Io {
     return std.Io.Threaded.global_single_threaded.io();

@@ -17,7 +17,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const sanitize = @import("sanitize.zig");
+const sanitize = @import("sanitize");
 
 /// Column alignment options
 pub const Alignment = enum {

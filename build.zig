@@ -51,6 +51,17 @@ pub fn build(b: *std.Build) void {
     // - config: Configuration loading with XDG, precedence, secrets (from external lib)
     // - term: Terminal utilities (TTY, color, pager, progress)
     // - util: Common utilities (errors, suggestions, text, fs)
+    // - sanitize: Terminal control-byte sanitizer shared by cli/term/util.
+    //   A first-class module (not a plain src/ file) because a source file
+    //   may belong to only one module, and cli/term/util are linked
+    //   together in integration builds.
+
+    // Sanitize Module (shared single source of truth, see src/sanitize.zig)
+    const sanitize_mod = b.addModule("sanitize", .{
+        .root_source_file = b.path("src/sanitize.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     // CLI Module
     const cli_mod = b.addModule("cli", .{
@@ -58,6 +69,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    cli_mod.addImport("sanitize", sanitize_mod);
 
     // Config Module (wrapper around external config library)
     const config_mod = b.addModule("config", .{
@@ -73,6 +85,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    term_mod.addImport("sanitize", sanitize_mod);
 
     // Utility Module
     const util_mod = b.addModule("util", .{
@@ -80,6 +93,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    util_mod.addImport("sanitize", sanitize_mod);
 
     // Parallel Module: optional thread-pool-based parallelism
     const parallel_mod: ?*std.Build.Module = if (enable_tp) blk: {
@@ -102,18 +116,31 @@ pub fn build(b: *std.Build) void {
     if (ext_config_mod) |m| zig_cli_mod.addImport("config", m);
     if (tp_mod) |tm| zig_cli_mod.addImport("thread_pool", tm);
     zig_cli_mod.addImport("build_options", build_options_mod);
+    zig_cli_mod.addImport("sanitize", sanitize_mod);
 
     // ========================================================================
     // Unit Tests
     // ========================================================================
 
-    // CLI module tests
-    const cli_tests = b.addTest(.{
+    // Sanitize module tests
+    const sanitize_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/cli.zig"),
+            .root_source_file = b.path("src/sanitize.zig"),
             .target = target,
             .optimize = optimize,
         }),
+    });
+    const run_sanitize_tests = b.addRunArtifact(sanitize_tests);
+
+    // CLI module tests
+    const cli_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    cli_tests_mod.addImport("sanitize", sanitize_mod);
+    const cli_tests = b.addTest(.{
+        .root_module = cli_tests_mod,
     });
     const run_cli_tests = b.addRunArtifact(cli_tests);
 
@@ -130,22 +157,26 @@ pub fn build(b: *std.Build) void {
     const run_config_tests = b.addRunArtifact(config_tests);
 
     // Term module tests
+    const term_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/term.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    term_tests_mod.addImport("sanitize", sanitize_mod);
     const term_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/term.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = term_tests_mod,
     });
     const run_term_tests = b.addRunArtifact(term_tests);
 
     // Util module tests
+    const util_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/util.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    util_tests_mod.addImport("sanitize", sanitize_mod);
     const util_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/util.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = util_tests_mod,
     });
     const run_util_tests = b.addRunArtifact(util_tests);
 
@@ -172,6 +203,7 @@ pub fn build(b: *std.Build) void {
     if (ext_config_mod) |m| root_tests_mod.addImport("config", m);
     if (tp_mod) |tm| root_tests_mod.addImport("thread_pool", tm);
     root_tests_mod.addImport("build_options", build_options_mod);
+    root_tests_mod.addImport("sanitize", sanitize_mod);
     const root_tests = b.addTest(.{
         .root_module = root_tests_mod,
     });
@@ -179,6 +211,7 @@ pub fn build(b: *std.Build) void {
 
     // Test step: runs all unit tests
     const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_sanitize_tests.step);
     test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_config_tests.step);
     test_step.dependOn(&run_term_tests.step);
@@ -225,6 +258,7 @@ pub fn build(b: *std.Build) void {
     // b.createModule() calls identical to the test section above.
 
     const check_step = b.step("check", "Check for compilation errors (for IDE integration)");
+    check_step.dependOn(&sanitize_tests.step);
     check_step.dependOn(&cli_tests.step);
     check_step.dependOn(&config_tests.step);
     check_step.dependOn(&term_tests.step);

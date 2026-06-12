@@ -44,37 +44,8 @@ const Context = command.Context;
 const FlagSpec = command.FlagSpec;
 
 /// Control-byte filtering for plain-text help output (NS-056 / CWE-150).
-///
-/// This mirrors `util.text.writeControlFiltered`. It is duplicated here
-/// because a source file may belong to only one Zig module: importing
-/// `src/util/text.zig` from the `cli` module breaks builds that link the
-/// `cli` and `util` modules together (integration tests, demo, benches)
-/// with "file exists in modules 'util' and 'cli'". Keep the predicate in
-/// sync with `src/util/text.zig`.
-const textutil = struct {
-    /// True for bytes that must be stripped to protect terminal state:
-    /// C0 controls (0x00-0x1F) except newline (0x0A) and tab (0x09), plus
-    /// DEL (0x7F). CR (0x0D) is included in the stripped set because a bare
-    /// carriage return moves the cursor to column 0, allowing subsequent
-    /// output to overwrite the current terminal line.
-    inline fn isTerminalControl(c: u8) bool {
-        return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7f;
-    }
-
-    /// Write `text` to `w`, removing terminal control bytes. Removing ESC
-    /// (0x1B) neutralizes ANSI/OSC escape sequences; the remaining
-    /// printable bytes are kept.
-    fn writeControlFiltered(w: anytype, text: []const u8) !void {
-        var start: usize = 0;
-        for (text, 0..) |c, idx| {
-            if (isTerminalControl(c)) {
-                if (idx > start) try w.writeAll(text[start..idx]);
-                start = idx + 1;
-            }
-        }
-        if (start < text.len) try w.writeAll(text[start..]);
-    }
-};
+/// Provided by the first-class `sanitize` module (single source of truth).
+const sanitize = @import("sanitize");
 
 // ============================================================================
 // ANSI escape code constants
@@ -236,7 +207,7 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
 
 /// Render a single plain-text help section to `w`.
 /// All Command-struct metadata (names, summaries, help strings, examples, env
-/// var names, defaults) is filtered through `textutil.writeControlFiltered` to
+/// var names, defaults) is filtered through `sanitize.writeControlFiltered` to
 /// neutralize terminal escape/control bytes (CWE-150).
 /// HelpTemplate fields (section headers, footer_text) are developer
 /// configuration and are emitted as-is.
@@ -257,20 +228,20 @@ fn renderTextSection(w: anytype, use_color: bool, cmd: *const Command, template:
 fn printSectionHeader(w: anytype, use_color: bool, cmd: *const Command) !void {
     if (use_color) {
         try w.writeAll(ansi_bold);
-        try textutil.writeControlFiltered(w, cmd.name);
+        try sanitize.writeControlFiltered(w, cmd.name);
         try w.writeAll(ansi_reset);
     } else {
-        try textutil.writeControlFiltered(w, cmd.name);
+        try sanitize.writeControlFiltered(w, cmd.name);
     }
     try w.writeAll(" - ");
-    try textutil.writeControlFiltered(w, cmd.summary);
+    try sanitize.writeControlFiltered(w, cmd.summary);
     try w.writeAll("\n");
 }
 
 /// Print usage section
 fn printSectionUsage(w: anytype, cmd: *const Command, template: *const HelpTemplate) !void {
     try w.print("\n{s}: ", .{template.usage_header});
-    try textutil.writeControlFiltered(w, cmd.name);
+    try sanitize.writeControlFiltered(w, cmd.name);
     try w.writeAll(" [flags]");
     if (cmd.hasSubcommands()) {
         try w.print(" <command> [args]", .{});
@@ -286,7 +257,7 @@ fn printSectionExamples(w: anytype, cmd: *const Command, template: *const HelpTe
     for (cmd.examples) |example| {
         // Write indent
         try w.splatByteAll(' ', template.indent);
-        try textutil.writeControlFiltered(w, example);
+        try sanitize.writeControlFiltered(w, example);
         try w.writeAll("\n");
     }
 }
@@ -300,7 +271,7 @@ fn printSectionDescription(w: anytype, cmd: *const Command, template: *const Hel
     } else {
         try w.print("\n", .{});
     }
-    try textutil.writeControlFiltered(w, cmd.long_help);
+    try sanitize.writeControlFiltered(w, cmd.long_help);
     try w.writeAll("\n");
 }
 
@@ -340,11 +311,11 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
         if (group_name.len > 0) {
             if (use_color) {
                 try w.writeAll("\n" ++ ansi_bold);
-                try textutil.writeControlFiltered(w, group_name);
+                try sanitize.writeControlFiltered(w, group_name);
                 try w.writeAll(":" ++ ansi_reset ++ "\n");
             } else {
                 try w.writeAll("\n");
-                try textutil.writeControlFiltered(w, group_name);
+                try sanitize.writeControlFiltered(w, group_name);
                 try w.writeAll(":\n");
             }
         } else {
@@ -360,10 +331,10 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
 
             if (use_color) {
                 try w.writeAll(ansi_cyan);
-                try textutil.writeControlFiltered(w, subcmd.name);
+                try sanitize.writeControlFiltered(w, subcmd.name);
                 try w.writeAll(ansi_reset);
             } else {
-                try textutil.writeControlFiltered(w, subcmd.name);
+                try sanitize.writeControlFiltered(w, subcmd.name);
             }
 
             // Padding to align descriptions. Computed from the raw name
@@ -375,7 +346,7 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
             const sub_min_len: usize = @min(sub_name_len, col_width);
             const sub_padding: usize = col_width - sub_min_len;
             try w.splatByteAll(' ', sub_padding);
-            try textutil.writeControlFiltered(w, subcmd.summary);
+            try sanitize.writeControlFiltered(w, subcmd.summary);
             try w.writeAll("\n");
         }
     }
@@ -454,10 +425,10 @@ fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, 
 
     if (use_color) {
         try w.writeAll(ansi_cyan);
-        try textutil.writeControlFiltered(w, name);
+        try sanitize.writeControlFiltered(w, name);
         try w.writeAll(ansi_reset);
     } else {
-        try textutil.writeControlFiltered(w, name);
+        try sanitize.writeControlFiltered(w, name);
     }
 
     // Padding to align descriptions. Computed from the raw name length:
@@ -469,7 +440,7 @@ fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, 
     const pad: usize = col_width - min_len;
     try w.splatByteAll(' ', pad);
 
-    try textutil.writeControlFiltered(w, description);
+    try sanitize.writeControlFiltered(w, description);
     try w.writeAll("\n");
 }
 
@@ -497,11 +468,11 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     // Long flag
     if (use_color) {
         try w.writeAll(ansi_yellow ++ "--");
-        try textutil.writeControlFiltered(w, flag.name);
+        try sanitize.writeControlFiltered(w, flag.name);
         try w.writeAll(ansi_reset);
     } else {
         try w.writeAll("--");
-        try textutil.writeControlFiltered(w, flag.name);
+        try sanitize.writeControlFiltered(w, flag.name);
     }
 
     // Padding. Computed from the raw name length: well-formed metadata
@@ -514,12 +485,12 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     try w.splatByteAll(' ', padding_amount);
 
     // Help text
-    try textutil.writeControlFiltered(w, flag.help);
+    try sanitize.writeControlFiltered(w, flag.help);
 
     // Default value
     if (flag.default_str) |def| {
         try w.writeAll(" [default: ");
-        try textutil.writeControlFiltered(w, def);
+        try sanitize.writeControlFiltered(w, def);
         try w.writeAll("]");
     }
 
@@ -545,11 +516,11 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     if (flag.env) |env_var| {
         if (use_color) {
             try w.writeAll(" " ++ ansi_cyan ++ "[$");
-            try textutil.writeControlFiltered(w, env_var);
+            try sanitize.writeControlFiltered(w, env_var);
             try w.writeAll("]" ++ ansi_reset);
         } else {
             try w.writeAll(" [$");
-            try textutil.writeControlFiltered(w, env_var);
+            try sanitize.writeControlFiltered(w, env_var);
             try w.writeAll("]");
         }
     }
@@ -565,7 +536,7 @@ fn printSectionFooter(w: anytype, cmd: *const Command, template: *const HelpTemp
         try w.print("\n{s}\n", .{footer});
     } else {
         try w.writeAll("\nFor full help: ");
-        try textutil.writeControlFiltered(w, cmd.name);
+        try sanitize.writeControlFiltered(w, cmd.name);
         try w.writeAll(" --help\n");
     }
 }
@@ -2280,16 +2251,6 @@ test "help: short flag with control byte is not emitted (CWE-150)" {
 
     const output = buf.written();
     try std.testing.expect(mem.indexOfScalar(u8, output, 0x1b) == null);
-}
-
-test "help: textutil mirror matches canonical control-byte policy" {
-    // canonical policy: strip <0x20 except \n,\t; strip 0x7f
-    var c: u16 = 0;
-    while (c <= 0xff) : (c += 1) {
-        const b: u8 = @intCast(c);
-        const expected = (b < 0x20 and b != '\n' and b != '\t') or b == 0x7f;
-        try std.testing.expectEqual(expected, textutil.isTerminalControl(b));
-    }
 }
 
 test "help: json short flag with quote char is escaped" {
