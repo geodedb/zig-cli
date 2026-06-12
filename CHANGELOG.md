@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Audit hardening batch (2026-06 codepros audit iteration 1).
+
+### Changed
+- Invalid flag `default_str` values now return `ParseError.InvalidValue` instead of being silently skipped
+- Windows `password()` returns `NotInteractive` when echo suppression is unavailable (GetConsoleMode/SetConsoleMode failure) instead of reading the password with echo enabled
+- Pager falls back to direct output on spawn/exec/write failure instead of erroring
+- Terminal control bytes are stripped from help, error, table, and progress output (CWE-150)
+- Markdown generator escapes headings, prose, and fences contextually; table cells render embedded newlines as `<br>`
+- Library version is single-sourced from `build.zig.zon` via build options; `root.version` can no longer drift from the package manifest (#106)
+
+### Added
+- `prompt.freeSecret` helper that zeroes secret buffers before freeing
+- `Context.getBoolOpt` — returns `?bool` so callers can distinguish an absent bool flag from an explicit `false` (#138)
+
+## [0.1.4] - 2026-05-02
+
+Release alignment: re-pin sibling dependencies to their tagged releases
+(config 0.1.4, thread-pool 0.2.4). No library code changes.
+
+### Changed
+- Dependency pins updated to tagged sibling releases
+
+## [0.1.3] - 2026-05-02
+
+Release alignment: re-pin sibling dependencies to their tagged releases.
+No library code changes.
+
+### Changed
+- Dependency pins updated to tagged sibling releases
+
+## [0.1.2] - 2026-05-02
+
+Zig 0.16.0 migration and parallelism rework.
+
+### Changed
+- Migrated the codebase to Zig 0.16.0 (`std.io` → `std.Io`, `fs.File` → `Io.File`, removed-stdlib Windows wrappers replaced with direct externs; CI `ZIG_VERSION` bumped to 0.16.0)
+- Replaced the `spice` parallelism dependency with `thread-pool`; parallel module is now conditional on the `thread-pool` build option
+- `config` dependency consumed by URL so remote consumers can fetch it
+- Transitive dependencies made optional to avoid diamond-dependency conflicts in parent builds
+- Sibling dependency pins converged repeatedly to aligned HEADs
+- Replaced `std.posix.getenv` with cross-platform alternatives for Windows support
+
+### Added
+- `parallel` module exported from the public root API
+- Scale benchmark suite with baseline tracking and JSON output
+- Diamond-dependency detector with pre-commit hook
+- Parallel execution support for CLI operations (GAP-0089)
+
+### Fixed
+- ProgressBar made thread-safe (GAP-0086)
+- Signal handler reworked to flag-and-poll pattern (GAP-0087)
+- 72 audit gaps closed across security hardening, performance optimization, cross-platform fixes, quality, and documentation
+- Gitleaks configuration: removed overly-broad private-key-file rule, allowlisted test path literals
+
+### CI
+- Linux jobs routed to company-tagged runners
+- `.pre-commit-config.yaml` standardized from geode upstream
+
 ## [0.1.1] - 2026-03-25
 
 Audit hardening release: security, performance, quality, and documentation fixes
@@ -129,5 +187,9 @@ Initial open source release under Apache-2.0 license.
 - Automatic path redaction for sensitive files in error messages
 - Strict secret handling with file/stdin-only input
 
-[Unreleased]: https://gitlab.com/devnw/zig/cli/-/compare/v0.1.0...HEAD
+[Unreleased]: https://gitlab.com/devnw/zig/cli/-/compare/v0.1.4...HEAD
+[0.1.4]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.4
+[0.1.3]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.3
+[0.1.2]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.2
+[0.1.1]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.1
 [0.1.0]: https://gitlab.com/devnw/zig/cli/-/releases/v0.1.0

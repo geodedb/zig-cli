@@ -3,6 +3,9 @@
 
 const std = @import("std");
 
+/// Package manifest, imported so the version is single-sourced (#106).
+const manifest = @import("build.zig.zon");
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -35,6 +38,8 @@ pub fn build(b: *std.Build) void {
     // Build options (enable_tp flag for scale-bench and parallel module)
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_tp", enable_tp);
+    // Single-source the library version from build.zig.zon (#106 / NQ-053).
+    build_options.addOption([]const u8, "version", manifest.version);
     const build_options_mod = build_options.createModule();
 
     // ========================================================================
@@ -96,6 +101,7 @@ pub fn build(b: *std.Build) void {
     });
     if (ext_config_mod) |m| zig_cli_mod.addImport("config", m);
     if (tp_mod) |tm| zig_cli_mod.addImport("thread_pool", tm);
+    zig_cli_mod.addImport("build_options", build_options_mod);
 
     // ========================================================================
     // Unit Tests
@@ -165,6 +171,7 @@ pub fn build(b: *std.Build) void {
     });
     if (ext_config_mod) |m| root_tests_mod.addImport("config", m);
     if (tp_mod) |tm| root_tests_mod.addImport("thread_pool", tm);
+    root_tests_mod.addImport("build_options", build_options_mod);
     const root_tests = b.addTest(.{
         .root_module = root_tests_mod,
     });

@@ -234,6 +234,19 @@ pub const Context = struct {
         return false;
     }
 
+    /// Get a boolean flag value, or null when the flag was not provided.
+    /// `getBool` collapses "absent" to `false` for ergonomic everyday use;
+    /// use this variant when callers must distinguish absent from false.
+    pub fn getBoolOpt(self: *const Context, name: []const u8) ?bool {
+        if (self.getFlag(name)) |v| {
+            return switch (v) {
+                .bool => |b| b,
+                else => null,
+            };
+        }
+        return null;
+    }
+
     /// Get an integer flag value
     pub fn getInt(self: *const Context, name: []const u8) ?i64 {
         if (self.getFlag(name)) |v| {
@@ -935,6 +948,37 @@ test "Context getBool returns false for non-bool flag" {
 
     try ctx.flags.put("flag", FlagValue{ .string = "true" });
     try std.testing.expect(!ctx.getBool("flag"));
+}
+
+test "Context getBoolOpt distinguishes explicit false from absent" {
+    var ctx = Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    try ctx.flags.put("verbose", FlagValue{ .bool = false });
+    try std.testing.expectEqual(@as(?bool, false), ctx.getBoolOpt("verbose"));
+}
+
+test "Context getBoolOpt returns null for missing flag" {
+    var ctx = Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    try std.testing.expectEqual(@as(?bool, null), ctx.getBoolOpt("missing"));
+}
+
+test "Context getBoolOpt returns null for non-bool flag" {
+    var ctx = Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    try ctx.flags.put("flag", FlagValue{ .string = "true" });
+    try std.testing.expectEqual(@as(?bool, null), ctx.getBoolOpt("flag"));
+}
+
+test "Context getBoolOpt returns true when flag set true" {
+    var ctx = Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    try ctx.flags.put("verbose", FlagValue{ .bool = true });
+    try std.testing.expectEqual(@as(?bool, true), ctx.getBoolOpt("verbose"));
 }
 
 test "Context getInt returns integer value" {

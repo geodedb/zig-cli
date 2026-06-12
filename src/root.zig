@@ -63,8 +63,8 @@ pub const util = @import("util.zig");
 pub const signal = @import("signal.zig");
 pub const prompt = @import("prompt.zig");
 
-/// Library version
-pub const version = "0.1.1";
+/// Library version (single-sourced from build.zig.zon via build options)
+pub const version = @import("build_options").version;
 
 // ============================================================================
 // Convenience Re-exports
@@ -125,6 +125,10 @@ test {
     _ = util;
     _ = signal;
     _ = prompt;
+}
+
+test "version is a semantic version" {
+    _ = try std.SemanticVersion.parse(version);
 }
 
 test "parallel: forEach is exposed via root and works end-to-end" {
