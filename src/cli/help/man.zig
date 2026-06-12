@@ -106,7 +106,8 @@ pub fn generateMan(cmd: *const Command, allocator: std.mem.Allocator) ![]const u
     for (cmd.flags) |*flag| {
         try w.writeAll(".TP\n");
         if (flag.short) |s| {
-            try w.print("\\fB\\-{c}\\fR, ", .{s});
+            // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
+            if (std.ascii.isPrint(s)) try w.print("\\fB\\-{c}\\fR, ", .{s});
         }
         try w.writeAll("\\fB\\-\\-");
         try writeRoffEscaped(w, flag.name);

@@ -48,6 +48,22 @@ pub fn writeControlFiltered(w: anytype, text: []const u8) !void {
     if (start < text.len) try w.writeAll(text[start..]);
 }
 
+/// Single-line variant of `writeControlFiltered` for contexts where the
+/// value must not be able to terminate the current line (generated-script
+/// `#` comment headers, directives): applies the `isTerminalControl`
+/// policy AND strips newline bytes, so an embedded `\n` cannot inject a
+/// live script line (CWE-116).
+pub fn writeLineFiltered(w: anytype, text: []const u8) !void {
+    var start: usize = 0;
+    for (text, 0..) |c, idx| {
+        if (isTerminalControl(c) or c == '\n') {
+            if (idx > start) try w.writeAll(text[start..idx]);
+            start = idx + 1;
+        }
+    }
+    if (start < text.len) try w.writeAll(text[start..]);
+}
+
 /// Allocating variant of `writeControlFiltered`. Caller owns the result.
 pub fn stripControlChars(text: []const u8, allocator: std.mem.Allocator) ![]const u8 {
     var result: std.ArrayList(u8) = .empty;
@@ -92,6 +108,13 @@ test "writeControlFiltered strips ESC and C0 controls, keeps \\n and \\t" {
     var w = std.Io.Writer.fixed(&buf);
     try writeControlFiltered(&w, "a\x1b[2Jb\x07c\nd\te\x7ff\rg");
     try std.testing.expectEqualStrings("a[2Jbc\nd\tefg", w.buffered());
+}
+
+test "writeLineFiltered strips newlines in addition to control bytes" {
+    var buf: [64]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try writeLineFiltered(&w, "a\necho injected\x1b[2J\tb");
+    try std.testing.expectEqualStrings("aecho injected[2J\tb", w.buffered());
 }
 
 test "writeControlFiltered passes plain text through unchanged" {

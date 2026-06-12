@@ -19,7 +19,7 @@ A comprehensive command-line interface and configuration library for Zig, provid
 - **Automatic help generation** with examples-first approach
 - **Shell completion generation** (bash, zsh, fish, PowerShell)
 - **Man page generation** in roff format
-- **Error messages with typo suggestions** using Levenshtein distance
+- **Typo-suggestion helpers** (Levenshtein distance) for building "did you mean" error messages
 - **Signal handling** (SIGINT, SIGTERM) with cleanup callbacks
 - **Pre/post-run hooks** for command lifecycle management
 - **Default flag values** applied when unspecified

@@ -14,7 +14,7 @@
 //! - Automatic help generation with examples-first approach
 //! - Shell completion generation (bash, zsh, fish, PowerShell)
 //! - Man page generation
-//! - Error messages with typo suggestions
+//! - Typo-suggestion helpers (`suggestClosest`) for error messages
 //!
 //! ### Config Features
 //! - Multiple format support (TOML, JSON, YAML)

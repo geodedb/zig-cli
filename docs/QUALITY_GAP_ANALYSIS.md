@@ -12,16 +12,16 @@ Last updated: 2026-06-12
 | Critical | 0 | 1 | 0 |
 | High | 0 | 14 | 1 |
 | Medium | 0 | 40 | 3 |
-| Low | 1 | 36 | 6 |
-| **Total** | **1** | **91** | **10** |
+| Low | 0 | 36 | 7 |
+| **Total** | **0** | **91** | **11** |
 
-**1 open finding** after the audit-iteration-1 fix merge (188bf5a, 2026-06-12). The 21 Phase 4 findings (NQ-NEW-001..021) were addressed: **20 Closed**, **1 open** (NQ-NEW-014, generator duplication, deferred to a refactor — tracked under [#140](https://gitlab.com/devnw/zig/cli/-/issues/140)).
+**0 open findings** as of 2026-06-12 (iteration 2). The 21 Phase 4 findings (NQ-NEW-001..021) are fully dispositioned: **20 Closed**, **1 Won't Do** (NQ-NEW-014, generator duplication — rationale below; [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) closed). The iteration-2 re-review items (NQ-I2-001..008) are all dispositioned in their own section below (fixed, adjudicated-keep, not-an-issue, or closed by the dedicated `docs(api)` sync commit).
 
 **Cross-domain (owned by the security tracker, NOT counted here):** NQ-NEW-007/008-injection-scope (markdown injection = security F-03/NS-060, issue #131 — now Closed), NQ-NEW-010 (deinit secret-zeroing doc = security F-02/NS-016 — now Closed), NQ-NEW-015 (Windows password echo on GetConsoleMode failure = security NS-059, issue #130 — now Closed).
 
-**Sole open item:** NQ-NEW-014 ([#140](https://gitlab.com/devnw/zig/cli/-/issues/140)) — completion-generator duplication across bash/zsh/fish/powershell. Deferred to a structural refactor; no functional or security impact.
+**NQ-NEW-014 — Won't Do (2026-06-12, [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) closed):** completion-generator duplication across bash/zsh/fish/powershell. Rationale: the four generators emit four different shell languages — a tree-walk per format is inherently context-specific (the same rationale as the intentionally-distinct per-format escapers, NS-060); the genuinely duplicated logic (the sanitizer policy) was centralized in `src/sanitize.zig` during the refactor merge (3e2d804); further unification would add coupling without functional or security benefit.
 
-20 of 21 Phase 4 findings closed in the 188bf5a merge. 929/929 unit + integration tests pass; `pre-commit run --all-files` green; `zig fmt`/`check` clean.
+20 of 21 Phase 4 findings closed in the 188bf5a merge; NQ-NEW-014 dispositioned Won't Do. 948/948 unit + 34/34 integration tests pass; `pre-commit run --all-files` green; `zig fmt`/`check` clean.
 
 ---
 
@@ -29,7 +29,7 @@ Last updated: 2026-06-12
 
 ### Phase 4 codepros:audit Iteration (found 2026-06-11, mostly fixed 2026-06-12)
 
-PriorityScore = Impact(1-5) x Likelihood(1-5) x 4. Grouped issues are ranked by their top sub-finding. 20 of 21 closed in the 188bf5a merge; only NQ-NEW-014 (generator duplication) remains open, deferred to a refactor under [#140](https://gitlab.com/devnw/zig/cli/-/issues/140).
+PriorityScore = Impact(1-5) x Likelihood(1-5) x 4. Grouped issues are ranked by their top sub-finding. 20 of 21 closed in the 188bf5a merge; NQ-NEW-014 (generator duplication) dispositioned **Won't Do** on 2026-06-12 ([#140](https://gitlab.com/devnw/zig/cli/-/issues/140) closed — see Summary for rationale).
 
 | Rank | ID(s) | Severity | PriorityScore | Category | Finding | Component | Fix commit / Evidence | Issue | Status |
 |------|-------|----------|---------------|----------|---------|-----------|----------------------|-------|--------|
@@ -41,7 +41,7 @@ PriorityScore = Impact(1-5) x Likelihood(1-5) x 4. Grouped issues are ranked by 
 | 6 | NQ-NEW-012 | Low | 24 | api-contract | getBool returns bool while sibling accessors return ?T | command.zig | `aca86b4`: `getBoolOpt() ?bool` added (command.zig:246); default-false documented | [#138](https://gitlab.com/devnw/zig/cli/-/issues/138) | **Closed** |
 | 7 | NQ-NEW-016 | Low | 24 | architecture | parallel pool_started guard non-atomic -> initPool/deinitPool race | parallel.zig | `f723199`: `pool_started: std.atomic.Value(bool)` with acquire/release (parallel.zig:72,80,87,97) | [#139](https://gitlab.com/devnw/zig/cli/-/issues/139) | **Closed** |
 | 8a | NQ-NEW-011/009/013 | Low | 24 | maintainability | parser reuse reset, JSON short-flag escape, env[8] cap doc | parser.zig, help.zig | `d595798` (reset error state per parse), `26fa7c6`/`3978b13` (JSON short-flag escape), env-cap documented | [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) | **Closed** |
-| 8b | NQ-NEW-014 | Low | 24 | maintainability | completion-generator duplication across 4 files | bash/zsh/fish/powershell.zig | Deferred to structural refactor; no functional/security impact | [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) | **Open (deferred)** |
+| 8b | NQ-NEW-014 | Low | 24 | maintainability | completion-generator duplication across 4 files | bash/zsh/fish/powershell.zig | Four generators emit four shell languages; per-format walks are context-specific (cf. NS-060 escapers); shared sanitizer policy centralized in `src/sanitize.zig` | [#140](https://gitlab.com/devnw/zig/cli/-/issues/140) | **Won't Do** |
 | 9 | NQ-NEW-021 | Low | 24 | tests | Missing adversarial/edge tests (parser reuse, escaping, getBool) | cli test blocks | `3978b13` + audit batch: parser-reuse, fence-breakout, JSON short, getBoolOpt tests added (#142 closed) | [#142](https://gitlab.com/devnw/zig/cli/-/issues/142) | **Closed** |
 | 10 | NQ-NEW-004 | Low | 24 | docs | Makefile says Zig 0.15.2; minimum is 0.16.0 (REGRESSION of NQ-061) | Makefile:185 | Makefile now "Zig 0.16.0 or compatible" | [#94](https://gitlab.com/devnw/zig/cli/-/issues/94) | **Closed** |
 | 11 | NQ-NEW-019/020/018 | Low | 12 | docs | Public-API doc gaps (tty.zig, root.zig aliases) + misleading onCleanup doc | tty.zig, root.zig, signal.zig | `928f603`,`6b061c4`,`a4ab5cd`: doc comments added (tty.zig 26 `///`); onCleanup contract corrected | [#141](https://gitlab.com/devnw/zig/cli/-/issues/141) | **Closed** |
@@ -68,7 +68,29 @@ PriorityScore = Impact(1-5) x Likelihood(1-5) x 4. Grouped issues are ranked by 
 
 - **Quick wins (< 1 day) -- DONE:** #134 (markdownlint/pre-commit green), #135 (CHANGELOG backfilled), #94 (Makefile 0.16.0), #106 (root.zig version single-sourced from build.zig.zon at comptime, closing the NQ-053/NQ-061 regression class), #141 (doc comments).
 - **Medium (1-5 days) -- DONE:** #136 (markdown newline -> `<br>`), #137 (pager content-loss + direct-output fallback), #138 (getBoolOpt), #139 (atomic pool guard), #142 (adversarial tests), #140 NQ-NEW-011/009/013 (parser reuse reset, JSON short escape, env-cap doc).
-- **Deferred (remaining open):** #140 NQ-NEW-014 -- shared format-generator walk across the 4 completion generators to structurally prevent missed-escaping regressions. Deferred to a dedicated refactor.
+- **Won't Do (2026-06-12):** #140 NQ-NEW-014 -- a shared format-generator walk across the 4 completion generators was evaluated during the refactor batch and rejected: each generator emits a different shell language, so the tree-walk is inherently context-specific (same rationale as the intentionally-distinct escapers, NS-060). The genuinely duplicated logic -- the sanitizer policy -- was centralized in `src/sanitize.zig`. Further unification would add coupling without functional or security benefit.
+
+### Iteration 2 -- post-refactor quality re-review (2026-06-12, NQ-I2-001..008)
+
+A second quality review was run against the refactor merge `3e2d804` (re-export
+layering, doc accuracy vs. the new layout, API.md spot-check, CHANGELOG, NQ-NEW-014
+closure verdict). All automated gates were green (948/948 unit, 34/34 integration,
+pre-commit incl. the 800-line file-size hook). Dispositions:
+
+| ID | Severity | Category | Finding | Disposition |
+|----|----------|----------|---------|-------------|
+| NQ-I2-001 | Low | readability | `help.writeRoffEscaped` re-export flagged as dead public surface | **Adjudicated KEEP** -- the re-export is public API at its historical path (`help.zig`), preserved deliberately by the split for API stability; not dead code |
+| NQ-I2-002 | Low | readability | Dead `help.collectUniqueGroups` re-export with contradictory doc comment | **Closed** (`58c9598`) -- re-export removed; the symbol is internal-only in `help/common.zig` |
+| NQ-I2-003 | Low | readability | Inconsistent import style for help renderer siblings (`man`/`markdown` imported inline) | **Closed** (`58c9598`) -- all five renderers bound to top-level `const` aliases |
+| NQ-I2-004 | Low | docs | ARCHITECTURE.md attributed `Context` to `command.zig` after the move to `context.zig` | **Closed** (this commit) -- ARCHITECTURE.md refreshed; Context section confirms `src/cli/context.zig` and the command.zig re-export pattern |
+| NQ-I2-005 | Low | docs | ARCHITECTURE.md module map omitted the `help/`, `parser/`, `prompt/select.zig`, `context.zig`, `sanitize.zig` split | **Closed** (this commit) -- module map rewritten to the current tree, incl. the sanitize named-module pattern and the 800-line pre-commit gate |
+| NQ-I2-006 | Low | docs | `### Completions (src/completions.zig)` cited a file that never existed | **Closed** (this commit) -- corrected to `src/cli/completion/{bash,zsh,fish,powershell}.zig`, exposed via `cli.generateCompletions` |
+| NQ-I2-007 | Low | docs | CHANGELOG sanitize/file-split bullet citing #140 suspected mis-attribution | **Not an issue** -- #140 was the duplication/dedup tracker and is closed; the sanitizer-mirror consolidation into `src/sanitize.zig` is dedup work legitimately referenced under it |
+| NQ-I2-008 | Low | api-contract | `docs/API.md` content drift from the actual public surface (PRE-EXISTING; predates the refactor -- FlagSpec defaults, Context/run/ParseError signatures, fabricated `progress.Spinner`, Table API, import paths, fabricated `cli.validate` module) | **Closed** (`docs(api)` sync commit, 2026-06-12) -- every documented symbol/signature/default re-verified against `root.zig`/`cli.zig`/`term.zig` source. Review-detail correction: `util.fs.isSafePath` DOES exist (`fs.zig:168`); the doc reference was kept with the advisory-denylist caveat |
+
+The iteration-2 appsec re-review findings (N-01..N-04, R2-01/R2-02) are owned by the
+security tracker (`docs/SECURITY_GAP_ANALYSIS.md`, `docs/APPSEC_REVIEW_2026-06-12.md`);
+all were fixed in `58c9598`/`b9b8514` or by doc correction.
 
 ---
 

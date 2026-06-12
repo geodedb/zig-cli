@@ -51,6 +51,8 @@ const Context = command.Context;
 
 const common = @import("help/common.zig");
 const json = @import("help/json.zig");
+const man = @import("help/man.zig");
+const markdown = @import("help/markdown.zig");
 const text = @import("help/text.zig");
 
 // ============================================================================
@@ -60,11 +62,11 @@ const text = @import("help/text.zig");
 /// JSON string escaping (shared with version printing). See `help/json.zig`.
 pub const writeJsonEscapedString = json.writeJsonEscapedString;
 /// Man page (roff) generation. See `help/man.zig`.
-pub const generateMan = @import("help/man.zig").generateMan;
+pub const generateMan = man.generateMan;
 /// Roff escaping for man page output. See `help/man.zig`.
-pub const writeRoffEscaped = @import("help/man.zig").writeRoffEscaped;
+pub const writeRoffEscaped = man.writeRoffEscaped;
 /// Markdown documentation generation. See `help/markdown.zig`.
-pub const generateMarkdown = @import("help/markdown.zig").generateMarkdown;
+pub const generateMarkdown = markdown.generateMarkdown;
 
 /// Help section types for template ordering
 pub const HelpSection = enum {
@@ -209,17 +211,6 @@ fn printTextHelpWithTemplate(cmd: *const Command, ctx: *Context, template: *cons
     try ctx.stdout.writeAll(buf.written());
 }
 
-/// Collect unique group names from a command's visible subcommands.
-/// Returns the number of unique groups found.
-///
-/// **Limit:** At most 32 unique groups are tracked. Commands with more
-/// than 32 groups will have excess groups silently omitted from output.
-///
-/// Canonical implementation lives in `help/common.zig`; re-exported here
-/// for callers that import `help.zig` directly.
-// Internal to the help subsystem; pub for cross-file use within the module.
-pub const collectUniqueGroups = common.collectUniqueGroups;
-
 /// Print version information.
 /// Write errors (e.g., broken pipe) are silently ignored for CLI robustness.
 pub fn printVersion(cmd: *const Command, ctx: *Context) void {
@@ -257,9 +248,9 @@ test {
     // Pull in tests from the format-specific renderer files and shared helpers.
     _ = common;
     _ = json;
+    _ = man;
+    _ = markdown;
     _ = text;
-    _ = @import("help/man.zig");
-    _ = @import("help/markdown.zig");
 }
 
 test "help: HelpTemplate presets exist" {

@@ -86,6 +86,7 @@ test {
     _ = @import("cli/help/markdown.zig");
     _ = @import("cli/help/text.zig");
     _ = completion.bash;
+    _ = @import("cli/completion/bash_test.zig");
     _ = completion.zsh;
     _ = @import("cli/completion/zsh_test.zig");
     _ = completion.fish;
