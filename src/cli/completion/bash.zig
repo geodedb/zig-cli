@@ -447,10 +447,17 @@ test "bash: global flags emitted once, referenced per function" {
     try std.testing.expect(std.mem.indexOfPos(u8, out, first + 1, "_app_global_flags=") == null);
 
     // Every completion function must reference it via the local alias
-    try std.testing.expect(std.mem.indexOf(u8, out, "local global_flags=\"${_app_global_flags}\"") != null);
+    // (one function for the root, one for the subcommand)
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        std.mem.count(u8, out, "local global_flags=\"${_app_global_flags}\""),
+    );
 
     // The alias must still be composed into flags=
     try std.testing.expect(std.mem.indexOf(u8, out, "local flags=\"$global_flags") != null);
+
+    // The definition must precede the first completion function
+    try std.testing.expect(first < std.mem.indexOf(u8, out, "_app_main() {").?);
 }
 
 test "bash: completion includes global flags" {
@@ -756,4 +763,6 @@ test "bash: cmd.name with hyphens produces valid function names" {
     try std.testing.expect(std.mem.indexOf(u8, script, "_my_app()") != null);
     // But complete registration should use the original name
     try std.testing.expect(std.mem.indexOf(u8, script, "complete -F _my_app my-app") != null);
+    // The shared global-flags variable must also use the sanitized name
+    try std.testing.expect(std.mem.indexOf(u8, script, "_my_app_global_flags=") != null);
 }
