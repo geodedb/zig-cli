@@ -87,6 +87,7 @@ test {
     _ = @import("cli/help/text.zig");
     _ = completion.bash;
     _ = completion.zsh;
+    _ = @import("cli/completion/zsh_test.zig");
     _ = completion.fish;
     _ = completion.powershell;
 }
