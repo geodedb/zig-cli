@@ -152,8 +152,10 @@ fn printSectionCommands(w: anytype, use_color: bool, cmd: *const Command, templa
             // length: well-formed metadata contains no control bytes, so
             // raw and filtered lengths match in practice; filtering above
             // is the security boundary, alignment is cosmetic.
+            // Saturating: a dev template may set indent > name_column_width
+            // (R2-01); degrade to zero-width alignment instead of underflow.
             const sub_name_len: usize = subcmd.name.len;
-            const col_width: usize = @as(usize, template.name_column_width) - template.indent;
+            const col_width: usize = @as(usize, template.name_column_width) -| template.indent;
             const sub_min_len: usize = @min(sub_name_len, col_width);
             const sub_padding: usize = col_width - sub_min_len;
             try w.splatByteAll(' ', sub_padding);
@@ -245,8 +247,9 @@ fn printEnvVarEntry(w: anytype, use_color: bool, template: *const HelpTemplate, 
     // Padding to align descriptions. Computed from the raw name length:
     // well-formed metadata contains no control bytes, so raw and filtered
     // lengths match in practice.
+    // Saturating: a dev template may set indent > name_column_width (R2-01).
     const name_len: usize = name.len;
-    const col_width: usize = @as(usize, template.name_column_width) - template.indent;
+    const col_width: usize = @as(usize, template.name_column_width) -| template.indent;
     const min_len: usize = @min(name_len, col_width);
     const pad: usize = col_width - min_len;
     try w.splatByteAll(' ', pad);
@@ -289,8 +292,10 @@ fn printFlagWithTemplate(w: anytype, use_color: bool, template: *const HelpTempl
     // Padding. Computed from the raw name length: well-formed metadata
     // contains no control bytes, so raw and filtered lengths match in
     // practice.
+    // Saturating: a dev template may set name_column_width < indent + 6
+    // (R2-01); degrade to zero-width alignment instead of underflow.
     const name_len: usize = flag.name.len;
-    const col_width: usize = @as(usize, template.name_column_width) - template.indent - 6; // -6 for "  -X, "
+    const col_width: usize = @as(usize, template.name_column_width) -| template.indent -| 6; // -6 for "  -X, "
     const min_len: usize = @min(name_len, col_width);
     const padding_amount: usize = if (col_width > min_len) col_width - min_len else 0;
     try w.splatByteAll(' ', padding_amount);
@@ -635,6 +640,41 @@ test "help: colored text output strips escape bytes from metadata but keeps styl
     // (the ESC byte is stripped; the printable remainder is harmless)
     try std.testing.expect(mem.indexOf(u8, output, "\x1b[2J") == null);
     try std.testing.expect(mem.indexOf(u8, output, "\x1b[31m") == null);
+}
+
+test "help: pathological template column widths do not panic (R2-01)" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const subcmd = Command{ .name = "subcommand", .summary = "Sub summary" };
+    const cmd = Command{
+        .name = "app",
+        .summary = "test",
+        .subcommands = &.{&subcmd},
+        .flags = &.{
+            FlagSpec{
+                .name = "config",
+                .short = 'c',
+                .help = "Config file",
+                .ftype = .string,
+                .env = "APP_CONFIG",
+            },
+        },
+    };
+
+    // indent greater than name_column_width used to underflow the usize
+    // column math (debug panic). Must render, degraded but safe.
+    const template = HelpTemplate{
+        .sections = &.{ .header, .usage, .commands, .flags, .env_vars, .footer },
+        .show_env_section = true,
+        .indent = 30,
+        .name_column_width = 1,
+    };
+    for (template.sections) |section| {
+        try renderTextSection(w, false, &cmd, &template, section);
+    }
+    try std.testing.expect(mem.indexOf(u8, buf.written(), "--config") != null);
 }
 
 test "help: short flag with control byte is not emitted (CWE-150)" {

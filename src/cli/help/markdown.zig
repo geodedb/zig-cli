@@ -175,7 +175,8 @@ fn generateMarkdownCommand(w: anytype, cmd: *const Command, depth: usize) !void 
         for (cmd.flags) |*flag| {
             try w.print("| ", .{});
             if (flag.short) |s| {
-                try w.print("`-{c}`, ", .{s});
+                // Only printable ASCII may be emitted raw (R2-02 / CWE-150)
+                if (std.ascii.isPrint(s)) try w.print("`-{c}`, ", .{s});
             }
             try w.writeAll("`--");
             try writeMarkdownEscaped(w, flag.name);
@@ -324,6 +325,27 @@ test "help: generateMarkdown with options table" {
     try std.testing.expect(mem.indexOf(u8, md, "`-c`") != null);
     try std.testing.expect(mem.indexOf(u8, md, "`--config`") != null);
     try std.testing.expect(mem.indexOf(u8, md, "**(required)**") != null);
+}
+
+test "help: generateMarkdown non-printable short flag byte is not emitted (R2-02)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "evil",
+                .short = 0x1b, // ESC — a non-printable byte
+                .help = "should not emit ESC",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const md = try generateMarkdown(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(md);
+
+    try std.testing.expect(mem.indexOfScalar(u8, md, 0x1b) == null);
+    try std.testing.expect(mem.indexOf(u8, md, "`--evil`") != null);
 }
 
 test "help: generateMarkdown with subcommands" {

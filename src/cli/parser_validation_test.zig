@@ -308,6 +308,31 @@ test "parser: args validator - only valid values error" {
     try std.testing.expectError(ParseError.InvalidArgs, result);
 }
 
+test "parser: only_valid error message filters control bytes end-to-end (N-01)" {
+    // Full pipeline: parse a hostile positional, render the diagnostic via
+    // formatParseError, and assert the ESC byte never reaches the output
+    // (CWE-150) while the message stays informative.
+    const format = @import("parser/format.zig");
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .args = .{ .only_valid = &.{ "start", "stop" } },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "\x1b[2Jx" });
+    try std.testing.expectError(ParseError.InvalidArgs, result);
+
+    var buf: [512]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try format.formatParseError(&parser, ParseError.InvalidArgs, &w);
+    const msg = w.buffered();
+
+    try std.testing.expect(std.mem.indexOfScalar(u8, msg, 0x1b) == null);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "invalid argument") != null);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "[2Jx") != null);
+}
+
 // ============================================================================
 // Command Chain Tests (for persistent hooks)
 // ============================================================================

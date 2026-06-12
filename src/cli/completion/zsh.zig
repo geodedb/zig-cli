@@ -179,7 +179,9 @@ pub fn generateWithActiveHelp(cmd: *const Command, allocator: std.mem.Allocator,
     for (command.global_flags) |*gflag| {
         const esc_ghelp = try escapeZshSingleQuote(esc_alloc, gflag.help);
         const esc_gname = try escapeZshOptspecName(esc_alloc, gflag.name);
-        if (gflag.short) |s| {
+        // Only printable ASCII short bytes may be emitted raw (R2-02 / CWE-150)
+        const gshort: ?u8 = if (gflag.short) |s| (if (std.ascii.isPrint(s)) s else null) else null;
+        if (gshort) |s| {
             if (gflag.ftype == .bool) {
                 try w.print("    '(-{c} --{s})'{{-{c},--{s}}}'[{s}]'\n", .{
                     s, esc_gname, s, esc_gname, esc_ghelp,
@@ -366,7 +368,9 @@ fn writeZshFlag(w: anytype, flag: *const FlagSpec, esc_alloc: std.mem.Allocator)
     // Known limitation: a `[` in a long flag name combined with a short flag
     // emits the name inside `{-s,--name}` brace expansion, which strips the
     // backslash escape and degrades the optspec. Accepted as pathological.
-    if (flag.short) |s| {
+    // Only printable ASCII short bytes may be emitted raw (R2-02 / CWE-150).
+    const short: ?u8 = if (flag.short) |s| (if (std.ascii.isPrint(s)) s else null) else null;
+    if (short) |s| {
         if (flag.ftype == .bool) {
             try w.print("        '(-{c} --{s})'{{-{c},--{s}}}'[{s}{s}]'\n", .{
                 s, esc_fname, s, esc_fname, esc_help, required_suffix,

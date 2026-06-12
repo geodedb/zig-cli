@@ -7,6 +7,7 @@
 //! nested subcommands, flags, and lifecycle hooks.
 
 const std = @import("std");
+const sanitize = @import("sanitize");
 
 const context_mod = @import("context.zig");
 pub const Context = context_mod.Context;
@@ -66,8 +67,25 @@ pub const ArgsErrorDetails = union(enum) {
             .minimum_args => |m| std.fmt.bufPrint(buf, "expected at least {d} argument(s), got {d}", .{ m.min, m.got }) catch "too few arguments",
             .maximum_args => |m| std.fmt.bufPrint(buf, "expected at most {d} argument(s), got {d}", .{ m.max, m.got }) catch "too many arguments",
             .range_args => |r| std.fmt.bufPrint(buf, "expected {d}-{d} arguments, got {d}", .{ r.min, r.max, r.got }) catch "wrong argument count",
-            .invalid_arg => |a| std.fmt.bufPrint(buf, "invalid argument: '{s}'", .{a}) catch "invalid argument",
+            .invalid_arg => |a| formatInvalidArg(a, buf),
         };
+    }
+
+    /// Render the `.invalid_arg` message. The positional is runtime argv
+    /// (attacker-controlled), so terminal control bytes are dropped before
+    /// it is echoed into the error message (N-01 / CWE-150). Pre-filters
+    /// into a fixed stack buffer, then bufPrints the clean slice; bufPrint
+    /// failure (overlong arg) keeps the original truncation fallback.
+    fn formatInvalidArg(arg: []const u8, buf: []u8) []const u8 {
+        var clean: [256]u8 = undefined;
+        var n: usize = 0;
+        for (arg) |c| {
+            if (sanitize.isTerminalControl(c)) continue;
+            if (n >= clean.len) break;
+            clean[n] = c;
+            n += 1;
+        }
+        return std.fmt.bufPrint(buf, "invalid argument: '{s}'", .{clean[0..n]}) catch "invalid argument";
     }
 };
 
@@ -684,6 +702,27 @@ test "ArgsErrorDetails format invalid_arg" {
     var buf: [256]u8 = undefined;
     const msg = details.format(&buf);
     try std.testing.expectEqualStrings("invalid argument: 'badval'", msg);
+}
+
+test "ArgsErrorDetails format invalid_arg filters terminal control bytes (N-01)" {
+    // .only_valid captures the raw positional; the format layer must drop
+    // control bytes (ESC here) before echoing it (CWE-150).
+    const v = ArgsValidator{ .only_valid = &.{ "start", "stop" } };
+    const details = v.getErrorDetails(&.{"\x1b[2Jx"});
+    try std.testing.expect(details != null);
+    var buf: [256]u8 = undefined;
+    const msg = details.?.format(&buf);
+    try std.testing.expect(std.mem.indexOfScalar(u8, msg, 0x1b) == null);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "invalid argument") != null);
+    try std.testing.expectEqualStrings("invalid argument: '[2Jx'", msg);
+}
+
+test "ArgsErrorDetails format invalid_arg overlong falls back to static message" {
+    const long = "x" ** 300;
+    const details = ArgsErrorDetails{ .invalid_arg = long };
+    var buf: [256]u8 = undefined;
+    const msg = details.format(&buf);
+    try std.testing.expectEqualStrings("invalid argument", msg);
 }
 
 // ============================================================================
