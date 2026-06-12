@@ -219,12 +219,18 @@ pub fn escapePowerShellString(allocator: std.mem.Allocator, s: []const u8) ![]co
 
 /// Escape special regex metacharacters for PowerShell regex patterns.
 /// Escapes: \, ., ^, $, *, +, ?, (, ), {, }, [, ], |
-/// Fast path: if no metacharacters, returns `s` directly (no allocation).
+/// Also doubles single quotes (' -> ''): the escaped pattern is always
+/// interpolated into a SINGLE-QUOTED PowerShell string (the `switch -Regex`
+/// case labels), so a bare quote would terminate the string and inject
+/// script (CWE-94). A doubled quote is a literal ' to PowerShell and a
+/// plain character to the regex engine.
+/// Fast path: if no metacharacters or quotes, returns `s` directly
+/// (no allocation).
 pub fn escapeRegex(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
     var needs_escape = false;
     for (s) |c| {
         switch (c) {
-            '\\', '.', '^', '$', '*', '+', '?', '(', ')', '{', '}', '[', ']', '|' => {
+            '\\', '.', '^', '$', '*', '+', '?', '(', ')', '{', '}', '[', ']', '|', '\'' => {
                 needs_escape = true;
                 break;
             },
@@ -240,6 +246,10 @@ pub fn escapeRegex(allocator: std.mem.Allocator, s: []const u8) ![]const u8 {
             '\\', '.', '^', '$', '*', '+', '?', '(', ')', '{', '}', '[', ']', '|' => {
                 list.append(allocator, '\\') catch return error.OutOfMemory;
                 list.append(allocator, c) catch return error.OutOfMemory;
+            },
+            '\'' => {
+                list.append(allocator, '\'') catch return error.OutOfMemory;
+                list.append(allocator, '\'') catch return error.OutOfMemory;
             },
             else => {
                 list.append(allocator, c) catch return error.OutOfMemory;
@@ -525,6 +535,40 @@ test "powershell: escapeRegex with backslash" {
 test "powershell: escapeRegex empty string" {
     const result = try escapeRegex(std.testing.allocator, "");
     try std.testing.expectEqualStrings("", result);
+}
+
+test "powershell: regex case label doubles single quotes (iter-3 finding 11)" {
+    const subcmd = Command{
+        .name = "it's",
+        .summary = "Apostrophe subcommand",
+    };
+    const cmd = Command{
+        .name = "app",
+        .summary = "Application",
+        .subcommands = &.{&subcmd},
+    };
+
+    const script = try generate(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(script);
+
+    // The case label is a single-quoted PS string: the quote must be doubled
+    // so the name cannot break out of the string (CWE-94).
+    try std.testing.expect(std.mem.indexOf(u8, script, "'^it''s$'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script, "'^it's$'") == null);
+}
+
+test "powershell: escapeRegex doubles single quote for single-quoted contexts" {
+    const result = try escapeRegex(std.testing.allocator, "it's");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("it''s", result);
+}
+
+test "powershell: escapeRegex benign name is byte-identical" {
+    const input: []const u8 = "deploy";
+    const result = try escapeRegex(std.testing.allocator, input);
+    // Fast path: no metacharacters and no quotes returns the same slice.
+    try std.testing.expectEqualStrings(input, result);
+    try std.testing.expect(result.ptr == input.ptr);
 }
 
 test "powershell: escapePowerShellString strips NUL bytes" {

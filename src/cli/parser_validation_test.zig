@@ -336,6 +336,8 @@ test "parser: only_valid error message filters control bytes end-to-end (N-01)" 
 // ============================================================================
 // Command Chain Tests (for persistent hooks)
 // ============================================================================
+// Chain-wide validation tests (iter3 findings 4, 6) live in
+// parser_chain_test.zig to keep this file within the size budget.
 
 test "parser: command chain includes root" {
     const root = Command{
@@ -492,4 +494,224 @@ test "parser: leaf flag takes precedence over parent in chain" {
     defer result.deinit(std.testing.allocator);
 
     try std.testing.expectEqualStrings("leaf-value", result.context.getString("output").?);
+}
+
+// ============================================================================
+// Token-Handling Defect Tests (convergence review iter-3 findings 1,7,9,10)
+// ============================================================================
+
+fn rejectTrueValidator(value: []const u8) bool {
+    return !std.mem.eql(u8, value, "true");
+}
+
+test "parser: non-bool short flag mid-cluster returns MissingValue" {
+    // Finding 1: `-ov file.txt` (o=string, v=bool) used to silently drop
+    // -o because only the LAST cluster position may consume a value.
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{ .name = "output", .short = 'o', .help = "Output file", .ftype = .string },
+            FlagSpec{ .name = "verbose", .short = 'v', .help = "Verbose", .ftype = .bool },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "-ov", "file.txt" });
+
+    try std.testing.expectError(ParseError.MissingValue, result);
+    // The diagnostic names the flag whose value was missing.
+    try std.testing.expectEqualStrings("output", parser.missing_value_flag.?);
+}
+
+test "parser: bool-first short cluster with trailing value flag still works" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{ .name = "output", .short = 'o', .help = "Output file", .ftype = .string },
+            FlagSpec{ .name = "verbose", .short = 'v', .help = "Verbose", .ftype = .bool },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "-vo", "file.txt" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.context.getBool("verbose"));
+    try std.testing.expectEqualStrings("file.txt", result.context.getString("output").?);
+}
+
+test "parser: secret bool flag rejected via short form" {
+    // Finding 7: bool short flags used to bypass the secret-policy check
+    // that the long form enforces.
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{
+                .name = "danger",
+                .short = 'd',
+                .help = "Secret toggle",
+                .ftype = .bool,
+                .secret = .from_file_or_stdin,
+            },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "-d" });
+
+    try std.testing.expectError(ParseError.SecretInFlagOrEnv, result);
+}
+
+test "parser: secret bool flag rejected via long form" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{
+                .name = "danger",
+                .short = 'd',
+                .help = "Secret toggle",
+                .ftype = .bool,
+                .secret = .from_file_or_stdin,
+            },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "--danger" });
+
+    try std.testing.expectError(ParseError.SecretInFlagOrEnv, result);
+}
+
+test "parser: bool short flag runs custom validator" {
+    // Finding 7: bool short flags used to bypass flag.validate.
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{
+                .name = "verbose",
+                .short = 'v',
+                .help = "Verbose",
+                .ftype = .bool,
+                .validator = &rejectTrueValidator,
+            },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "-v" });
+
+    try std.testing.expectError(ParseError.InvalidValue, result);
+}
+
+test "parser: global flag accepts equals syntax with true" {
+    // Finding 9: `--quiet=true` used to fail with UnknownFlag because the
+    // `=` branch never fell through to the global-flag check.
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--quiet=true" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.context.quiet);
+}
+
+test "parser: global flag equals false leaves flag unset" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--quiet=false" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(!result.context.quiet);
+}
+
+test "parser: global flag equals invalid value returns InvalidValue" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "--quiet=banana" });
+
+    try std.testing.expectError(ParseError.InvalidValue, result);
+}
+
+test "parser: help via equals syntax returns help_requested" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    var result = try parser.parse(&.{ "test", "--help=true" });
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.help_requested);
+}
+
+test "parser: bool flag with garbage explicit value returns InvalidValue" {
+    // Finding 10: anything other than "true" used to silently parse as
+    // false; bool values are now strictly "true"/"false".
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{ .name = "verbose", .help = "Verbose", .ftype = .bool },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "--verbose=ture" });
+
+    try std.testing.expectError(ParseError.InvalidValue, result);
+}
+
+test "parser: bool flag explicit true and false values parse" {
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{ .name = "verbose", .help = "Verbose", .ftype = .bool },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    {
+        var result = try parser.parse(&.{ "test", "--verbose=true" });
+        defer result.deinit(std.testing.allocator);
+        try std.testing.expect(result.context.getBool("verbose"));
+    }
+    {
+        var result = try parser.parse(&.{ "test", "--verbose=false" });
+        defer result.deinit(std.testing.allocator);
+        try std.testing.expect(!result.context.getBool("verbose"));
+    }
+}
+
+test "parser: bool flag numeric value is no longer accepted" {
+    // Behavior change with finding 10: "1" was previously truthy.
+    const root = Command{
+        .name = "test",
+        .summary = "Test command",
+        .flags = &.{
+            FlagSpec{ .name = "verbose", .help = "Verbose", .ftype = .bool },
+        },
+    };
+
+    var parser = Parser.init(std.testing.allocator, &root, "1.0.0", "");
+    const result = parser.parse(&.{ "test", "--verbose=1" });
+
+    try std.testing.expectError(ParseError.InvalidValue, result);
 }

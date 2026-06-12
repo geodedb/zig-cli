@@ -21,12 +21,22 @@ pub fn formatParseError(parser: *const Parser, err: ParseError, stderr: anytype)
     switch (err) {
         ParseError.UnknownFlag => try stderr.print("Error: Unknown flag\n\n", .{}),
         ParseError.UnknownCommand => try stderr.print("Error: Unknown command\n\n", .{}),
-        ParseError.MissingValue => try stderr.print("Error: Missing value for flag\n\n", .{}),
+        ParseError.MissingValue => {
+            if (parser.missing_value_flag) |flag_name| {
+                try stderr.print("Error: Missing value for flag --{s}\n\n", .{flag_name});
+            } else {
+                try stderr.print("Error: Missing value for flag\n\n", .{});
+            }
+        },
         ParseError.InvalidValue => {
             if (parser.invalid_default_flag) |flag_name| {
                 try stderr.print("Error: Invalid default value for --{s}\n\n", .{flag_name});
-            } else if (parser.env_parse_error_count > 0) {
-                const env_err = parser.env_parse_errors[0];
+            } else if (parser.invalid_value_env_index) |env_idx| {
+                // Render the env diagnostic only when the InvalidValue
+                // actually originated from env promotion in checkRequired;
+                // a CLI-supplied bad value must not be hijacked by an
+                // unrelated env failure (iter3 finding 6).
+                const env_err = parser.env_parse_errors[env_idx];
                 try stderr.print("Error: Invalid value for --{s}: environment variable ${s} has value that cannot be parsed as {s}", .{
                     env_err.flag_name, env_err.env_name, env_err.expected_type,
                 });

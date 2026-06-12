@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Audit hardening batch (2026-06 codepros audit iteration 1).
+Audit hardening batches (2026-06 codepros audit iterations 1-4).
+
+### Changed (parser semantics, iteration 4)
+- **Breaking:** a value-taking short flag in any non-final cluster position is now an error (`MissingValue`) instead of being silently dropped (e.g. `-ov file.txt` where `-o` takes a value)
+- **Breaking:** bool flag values are strictly `true`/`false`; any other value (including `1`/`0`) is `InvalidValue` instead of silently false — applies to `--flag=value`, env-bound values, and `default_str`
+- **Breaking:** subcommand resolution stops at the first positional (Cobra semantics): `prog svc myname start` now resolves to `svc` with positionals `["myname","start"]` instead of silently executing `start`
+- Required flags and flag-group constraints are validated across the full resolved command chain, not just the leaf; positional rules remain leaf-only
+- CLI values fully replace env-seeded repeatable (`string_array`) flag values; env-bound flag defaults run after argv for every command in the chain, so flags > env > default holds chain-wide
+- Custom flag validators are enforced for environment values (recorded + skipped on rejection) and `default_str` (hard `InvalidValue`)
+- Bool short flags enforce secret policy and custom validators, matching long-flag behavior; global flags accept `--name=true|false`; `MissingValue` errors name the offending flag
+- Mid-chain commands now receive env defaults and `default_str` defaults; `InvalidValue` diagnostics name the env variable only when the error actually came from the environment
+- `--help`/`--version` early exits return before env-bound flag defaults are applied: the returned context carries CLI-set flags only
+- man pages show `(required)`, `(default: …)`, `(env: $…)`, `(deprecated)` on flags; markdown shows `**(deprecated)**`; JSON flag objects gain a `deprecated` field
+- man and markdown generators strip terminal control bytes (NS-056 defense-in-depth)
+
+### Fixed (iteration 4)
+- PowerShell completion doubles single quotes inside regex case labels — apostrophes in subcommand names cannot break out of the single-quoted pattern (CWE-94)
+- Markdown fence guard indents embedded ``` lines by 4 spaces (one space was bypassable: CommonMark closing fences may be indented up to 3 spaces)
+- JSON help output is always valid RFC 8259 UTF-8 — invalid bytes are replaced with U+FFFD
+- `.only_valid` argument errors, completion-script headers, and the bash `complete -F` registration target are control-filtered/escaped (iteration-2/3 findings N-01, N-03, N-04)
 
 ### Changed
 - Invalid flag `default_str` values now return `ParseError.InvalidValue` instead of being silently skipped

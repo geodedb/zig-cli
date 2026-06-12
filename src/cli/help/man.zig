@@ -9,6 +9,7 @@
 const std = @import("std");
 const mem = std.mem;
 
+const sanitize = @import("sanitize");
 const command = @import("../command.zig");
 const Command = command.Command;
 const FlagSpec = command.FlagSpec;
@@ -17,6 +18,10 @@ const FlagSpec = command.FlagSpec;
 /// Escapes: `\` -> `\\`, `-` -> `\-`, leading `.` -> `\&.`, leading `'` -> `\&'`.
 /// After newlines, `.` and `'` at the start of a new line are also escaped
 /// to prevent roff command injection.
+/// Terminal control bytes (sanitize.isTerminalControl; \n is kept — man
+/// content is multi-line) are stripped as defense-in-depth against
+/// ANSI/OSC injection (NS-056 policy). Stripping does not consume the
+/// line-start state, so a stripped byte cannot mask a line-leading `.`.
 ///
 /// Uses span-based flushing: accumulates runs of clean characters and writes
 /// them in a single writeAll call, avoiding per-byte writeByte overhead.
@@ -24,6 +29,15 @@ pub fn writeRoffEscaped(w: anytype, s: []const u8) !void {
     var at_line_start = true;
     var start: usize = 0;
     for (s, 0..) |c, idx| {
+        if (sanitize.isTerminalControl(c)) {
+            // Strip: flush the clean span, skip the byte, and leave
+            // at_line_start untouched.
+            if (idx > start) {
+                try w.writeAll(s[start..idx]);
+            }
+            start = idx + 1;
+            continue;
+        }
         const needs_escape = switch (c) {
             '\\', '-' => true,
             '.' => at_line_start,
@@ -113,6 +127,22 @@ pub fn generateMan(cmd: *const Command, allocator: std.mem.Allocator) ![]const u
         try writeRoffEscaped(w, flag.name);
         try w.writeAll("\\fR\n");
         try writeRoffEscaped(w, flag.help);
+        if (flag.required) {
+            try w.writeAll(" (required)");
+        }
+        if (flag.default_str) |def| {
+            try w.writeAll(" (default: ");
+            try writeRoffEscaped(w, def);
+            try w.writeAll(")");
+        }
+        if (flag.env) |env_var| {
+            try w.writeAll(" (env: $");
+            try writeRoffEscaped(w, env_var);
+            try w.writeAll(")");
+        }
+        if (flag.is_deprecated) {
+            try w.writeAll(" (deprecated)");
+        }
         try w.writeAll("\n");
     }
 
@@ -299,6 +329,70 @@ test "help: generateMan with flags" {
     try std.testing.expect(mem.indexOf(u8, man, "\\fB\\-\\-output\\fR") != null);
     try std.testing.expect(mem.indexOf(u8, man, "\\fB\\-\\-verbose\\fR") != null);
     try std.testing.expect(mem.indexOf(u8, man, "Output file path") != null);
+}
+
+test "help: generateMan options show required/default/env/deprecated (iter-3 finding 13)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "My application",
+        .flags = &.{
+            FlagSpec{
+                .name = "config",
+                .help = "Config file",
+                .ftype = .path,
+                .required = true,
+                .default_str = "a\\b",
+                .env = "MYAPP_CONFIG",
+                .is_deprecated = true,
+            },
+            FlagSpec{
+                .name = "verbose",
+                .help = "Verbose output",
+                .ftype = .bool,
+            },
+        },
+    };
+
+    const man = try generateMan(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(man);
+
+    try std.testing.expect(mem.indexOf(u8, man, "(required)") != null);
+    // Backslash in the default must be roff-escaped (\ -> \\).
+    try std.testing.expect(mem.indexOf(u8, man, "(default: a\\\\b)") != null);
+    try std.testing.expect(mem.indexOf(u8, man, "(env: $MYAPP_CONFIG)") != null);
+    try std.testing.expect(mem.indexOf(u8, man, "(deprecated)") != null);
+
+    // The plain flag must not pick up any attribute markers.
+    const verbose_at = mem.indexOf(u8, man, "Verbose output").?;
+    const after_verbose = man[verbose_at..];
+    const line_end = mem.indexOfScalar(u8, after_verbose, '\n') orelse after_verbose.len;
+    try std.testing.expect(mem.indexOf(u8, after_verbose[0..line_end], "(") == null);
+}
+
+test "help: generateMan strips terminal control bytes (iter-3 finding 15)" {
+    const cmd = Command{
+        .name = "myapp",
+        .summary = "evil\x1b[31m summary\x07",
+        .long_help = "desc\x1b]0;owned\x07 text",
+    };
+
+    const man = try generateMan(&cmd, std.testing.allocator);
+    defer std.testing.allocator.free(man);
+
+    try std.testing.expect(mem.indexOfScalar(u8, man, 0x1b) == null);
+    try std.testing.expect(mem.indexOfScalar(u8, man, 0x07) == null);
+    try std.testing.expect(mem.indexOf(u8, man, "evil[31m summary") != null);
+}
+
+test "writeRoffEscaped strips ESC without consuming line-start state" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    // The stripped ESC must not mask the line-leading dot: the roff
+    // request guard has to fire on the `.` that follows it.
+    try writeRoffEscaped(w, "line1\n\x1b.system echo pwned");
+    try std.testing.expectEqualStrings("line1\n\\&.system echo pwned", buf.written());
 }
 
 test "help: generateMan with examples" {
