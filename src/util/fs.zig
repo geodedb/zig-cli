@@ -81,9 +81,13 @@ pub fn writeFileAtomic(path: []const u8, content: []const u8) FsError!void {
     var seed_bytes: [8]u8 = undefined;
     std.posix.getrandom(&seed_bytes) catch {
         // Fallback: use pointer address + path hash for uniqueness
+        // fips-exempt: non-security — temp-file name uniqueness only (getrandom
+        // fallback); no secret derived. Collision avoidance, not confidentiality.
         const seed_u64 = @as(u64, @intFromPtr(path.ptr)) ^ std.hash.Wyhash.hash(0, path);
         std.mem.writeInt(u64, &seed_bytes, seed_u64, .little);
     };
+    // fips-exempt: non-security — random temp-file suffix to avoid collisions;
+    // not a cryptographic secret.
     var prng = std.Random.DefaultPrng.init(std.mem.readInt(u64, &seed_bytes, .little));
     const temp_path = std.fmt.bufPrint(&tmp_buf, "{s}.{x:0>8}", .{ path, prng.random().int(u32) }) catch return FsError.PathTooLong;
 

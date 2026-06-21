@@ -287,8 +287,15 @@ fn passwordInternal(reader: *std.Io.Reader, allocator: std.mem.Allocator) Prompt
 /// Zeroing uses `std.crypto.secureZero` so the compiler cannot elide it.
 pub fn freeSecret(allocator: std.mem.Allocator, secret: []const u8) void {
     const mutable = @constCast(secret);
+    // fips-exempt: non-security — secret zeroization (memory hygiene to prevent
+    // residual secrets in freed memory); not a cryptographic algorithm.
     std.crypto.secureZero(u8, mutable);
     allocator.free(mutable);
+}
+
+test "fips-exempt annotation present on freeSecret secureZero site" {
+    const src = @embedFile("prompt.zig");
+    try std.testing.expect(std.mem.indexOf(u8, src, "fips-exempt: non-security — secret zeroization") != null);
 }
 
 /// Ask for yes/no confirmation
