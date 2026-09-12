@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-09-12
+
+### Changed
+
+- Converge thread_pool v0.2.7, fips v0.1.1, protobuf v0.1.5 (GAP-0838 diamond sync).
+
 ## [0.1.8] - 2026-06-12
 
 Audit hardening release: 11 iterations of `/security:appsec-review` +
