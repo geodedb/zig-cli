@@ -41,6 +41,7 @@ default:
       policy: pull-push
   tags:
     - company
+    - linux
 
 stages:
   - lint
