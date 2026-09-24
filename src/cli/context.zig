@@ -105,19 +105,25 @@ pub const FlagSpec = struct {
 
 /// Minimal stdout/stderr writer wrapper that supports print/writeAll with
 /// ephemeral buffering. Uses std.Io.Threaded.global_single_threaded.io().
+///
+/// Each call uses a *streaming* writer so output goes through the file
+/// descriptor's own offset. A positional writer would start every call at
+/// offset 0, so when stdout/stderr is redirected to a regular file each
+/// write would overwrite the previous one (SONNY-2608). Pipes and TTYs are
+/// unaffected either way.
 pub const StdioWriter = struct {
     file: std.Io.File,
 
     pub fn print(self: StdioWriter, comptime fmt: []const u8, args: anytype) !void {
         var wbuf: [4096]u8 = undefined;
-        var fw = self.file.writer(io_global(), &wbuf);
+        var fw = self.file.writerStreaming(io_global(), &wbuf);
         try fw.interface.print(fmt, args);
         try fw.interface.flush();
     }
 
     pub fn writeAll(self: StdioWriter, data: []const u8) !void {
         var wbuf: [4096]u8 = undefined;
-        var fw = self.file.writer(io_global(), &wbuf);
+        var fw = self.file.writerStreaming(io_global(), &wbuf);
         try fw.interface.writeAll(data);
         try fw.interface.flush();
     }
@@ -592,4 +598,27 @@ test "Context useColor returns false when plain is set" {
     defer ctx.deinit();
     ctx.plain = true;
     try std.testing.expect(!ctx.useColor());
+}
+
+test "StdioWriter appends successive writes to a regular file (SONNY-2608)" {
+    // Regression: each call built a fresh positional writer, so on a
+    // redirected regular file every write landed at offset 0 and
+    // overwrote the previous one (`{"a":1}\n` became `\n"a":1}`).
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    {
+        const file = try tmp.dir.createFile(io, "out.txt", .{});
+        defer file.close(io);
+        const w: StdioWriter = .{ .file = file };
+        try w.writeAll("{");
+        try w.print("\"a\":{d}", .{1});
+        try w.writeByte('}');
+        try w.writeAll("\n");
+    }
+
+    var buf: [64]u8 = undefined;
+    const got = try tmp.dir.readFile(io, "out.txt", &buf);
+    try std.testing.expectEqualStrings("{\"a\":1}\n", got);
 }

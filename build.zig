@@ -209,8 +209,33 @@ pub fn build(b: *std.Build) void {
     });
     const run_root_tests = b.addRunArtifact(root_tests);
 
+    // Stdio redirect regression (SONNY-2608): a helper child writes through
+    // Context.stdout/stderr while the test runs it with regular files as its
+    // stdio, then checks the exact bytes (pipes cannot reproduce the bug).
+    const stdio_child = b.addExecutable(.{
+        .name = "stdio-redirect-child",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/stdio_redirect_child.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "cli", .module = cli_mod }},
+        }),
+    });
+    const stdio_redirect_options = b.addOptions();
+    stdio_redirect_options.addOptionPath("child_path", stdio_child.getEmittedBin());
+    const stdio_redirect_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/stdio_redirect.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "stdio_redirect_options", .module = stdio_redirect_options.createModule() }},
+        }),
+    });
+    const run_stdio_redirect_tests = b.addRunArtifact(stdio_redirect_tests);
+
     // Test step: runs all unit tests
     const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_stdio_redirect_tests.step);
     test_step.dependOn(&run_sanitize_tests.step);
     test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_config_tests.step);
@@ -265,6 +290,7 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&util_tests.step);
     check_step.dependOn(&parallel_tests.step);
     check_step.dependOn(&root_tests.step);
+    check_step.dependOn(&stdio_redirect_tests.step);
 
     // ========================================================================
     // Benchmarks
