@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-09-24
+
+### Changed
+
+- Bump config pin to v0.1.14 (json v0.1.17) so cli -> config -> json converges with policy on a single json version (SONNY-2608 diamond fix).
+
+### Fixed
+
+- `Context.stdout`/`stderr` now append when redirected to a regular file; previously each write started at offset 0 and overwrote the previous one (SONNY-2608).
+
 ## [0.1.11] - 2026-09-12
 
 ### Changed
