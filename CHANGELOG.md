@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Bump config pin to v0.1.14 (json v0.1.17) so cli -> config -> json converges with policy on a single json version (SONNY-2608 diamond fix).
+- Bump config pin to v0.1.15 (json v0.1.17) so cli -> config -> json converges with policy on a single json version (SONNY-2608 diamond fix).
 
 ### Fixed
 
