@@ -20,7 +20,10 @@ include:
   - component: gitlab.com/devnw/ci-catalog/sbom-scan@v1.7.1
 
   # Release
-  - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.7.1
+  - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.54.6
+    inputs:
+      release_auth: job_token
+      tags: ["company", "linux"]
   - component: gitlab.com/devnw/ci-catalog/zig-version-tag-check@v1.27.0
 
 variables:
