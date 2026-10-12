@@ -104,6 +104,7 @@ pub fn build(b: *std.Build) void {
         });
     } else null;
     if (parallel_mod) |pm| {
+        pm.addImport("build_options", build_options_mod);
         if (tp_mod) |tm| pm.addImport("thread_pool", tm);
     }
 
@@ -189,6 +190,7 @@ pub fn build(b: *std.Build) void {
     if (tp_mod) |tm| {
         parallel_test_mod.addImport("thread_pool", tm);
     }
+    parallel_test_mod.addImport("build_options", build_options_mod);
     const parallel_tests = b.addTest(.{
         .root_module = parallel_test_mod,
     });

@@ -54,7 +54,7 @@
 
 const std = @import("std");
 
-const tp_enabled = true;
+const tp_enabled = @import("build_options").enable_tp;
 const tp = if (tp_enabled) @import("thread_pool") else struct {};
 
 /// Thread pool configuration.
@@ -376,7 +376,22 @@ test "parallel: forEach single item" {
 }
 
 test "parallel: is_enabled matches build option" {
-    try std.testing.expectEqual(tp_enabled, is_enabled);
+    try std.testing.expectEqual(@import("build_options").enable_tp, is_enabled);
+}
+
+test "parallel: disabled pool lifecycle retains sequential processing" {
+    if (tp_enabled) return;
+    initPool(.{ .worker_count = 2 });
+    defer deinitPool();
+    try std.testing.expect(!pool_started.load(.acquire));
+    const inputs = [_]u32{ 1, 2, 3, 4, 5 };
+    const outputs = try map(u32, u32, std.testing.allocator, &inputs, struct {
+        fn double(value: u32) u32 {
+            return value * 2;
+        }
+    }.double);
+    defer std.testing.allocator.free(outputs);
+    try std.testing.expectEqualSlices(u32, &.{ 2, 4, 6, 8, 10 }, outputs);
 }
 
 test "parallel: map allocates and computes" {
