@@ -33,12 +33,12 @@
     // internet connectivity.
     .dependencies = .{
         .config = .{
-            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=v0.1.16#58985ff6a4c7b36c1d24ef7a8e85067c602e9924",
-            .hash = "config-0.1.16-TiLummppDAAK7qgfKL4tbc1W4HN_yLMpZ9ovU4wVkkrW",
+            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=v0.1.17#8441abfe70cef4ef0fda49b9f731ee278ee69596",
+            .hash = "config-0.1.17-TiLummppDAB8PedftDTM9F19KLFlQdMUF9tnAqMHcYiq",
         },
         .thread_pool = .{
-            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git?ref=v0.2.7#54a2ddda1a356c32ba2e4df70691459570fb6339",
-            .hash = "thread_pool-0.2.7-11B1BvRneQBnMkDnRbKd76THvZn4ZhDhmlWQw-aziWQm",
+            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git?ref=v0.2.9#1d7275da020a43588c4f1885f7f725d5e8ce079e",
+            .hash = "thread_pool-0.2.9-11B1Bqf7eQDfHhrQAkHk0e2ABigRBFNkFEAmc8t9raZe",
         },
     },
     // Specifies the set of files and directories that are included in this package.
