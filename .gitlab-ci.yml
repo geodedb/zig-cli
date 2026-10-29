@@ -392,9 +392,10 @@ hook-env-regression:
   image: python:3.15-slim-bookworm
   tags: [company, linux, x86]
   before_script:
-    - apt-get update -qq && apt-get install -y --no-install-recommends git
+    - apt-get update -qq && apt-get install -y --no-install-recommends git python3-yaml
   script:
     - python3 scripts/test_hook_env.py
+    - /usr/bin/python3 scripts/test_pipeline_workflow.py
 
 test-source-package:
   stage: test
