@@ -1,0 +1,59 @@
+22:11:1:ZL201.type_pascalcase:type 'completion' should use PascalCase
+52:11:1:ZL203.const_snakecase:constant 'printHelp' should use snake_case (or PascalCase for types)
+53:11:1:ZL203.const_snakecase:constant 'printVersion' should use snake_case (or PascalCase for types)
+54:11:1:ZL203.const_snakecase:constant 'generateMan' should use snake_case (or PascalCase for types)
+55:11:1:ZL203.const_snakecase:constant 'generateMarkdown' should use snake_case (or PascalCase for types)
+61:101:2:ZL300.max_line_length:line exceeds 100 characters (105)
+18:1:1:ZL011.missing_doc_comment:public declaration 'command' is missing documentation
+19:1:1:ZL011.missing_doc_comment:public declaration 'parser' is missing documentation
+20:1:1:ZL011.missing_doc_comment:public declaration 'help' is missing documentation
+22:1:1:ZL011.missing_doc_comment:public declaration 'completion' is missing documentation
+23:5:1:ZL011.missing_doc_comment:public declaration 'bash' is missing documentation
+24:5:1:ZL011.missing_doc_comment:public declaration 'zsh' is missing documentation
+25:5:1:ZL011.missing_doc_comment:public declaration 'fish' is missing documentation
+26:5:1:ZL011.missing_doc_comment:public declaration 'powershell' is missing documentation
+30:1:1:ZL011.missing_doc_comment:public declaration 'Command' is missing documentation
+31:1:1:ZL011.missing_doc_comment:public declaration 'Context' is missing documentation
+32:1:1:ZL011.missing_doc_comment:public declaration 'FlagSpec' is missing documentation
+33:1:1:ZL011.missing_doc_comment:public declaration 'FlagType' is missing documentation
+34:1:1:ZL011.missing_doc_comment:public declaration 'FlagValue' is missing documentation
+35:1:1:ZL011.missing_doc_comment:public declaration 'SecretPolicy' is missing documentation
+36:1:1:ZL011.missing_doc_comment:public declaration 'HookFn' is missing documentation
+37:1:1:ZL011.missing_doc_comment:public declaration 'RunFn' is missing documentation
+38:1:1:ZL011.missing_doc_comment:public declaration 'global_flags' is missing documentation
+41:1:1:ZL011.missing_doc_comment:public declaration 'FlagGroup' is missing documentation
+42:1:1:ZL011.missing_doc_comment:public declaration 'FlagGroupType' is missing documentation
+43:1:1:ZL011.missing_doc_comment:public declaration 'ArgsValidator' is missing documentation
+44:1:1:ZL011.missing_doc_comment:public declaration 'ArgsValidationError' is missing documentation
+45:1:1:ZL011.missing_doc_comment:public declaration 'ArgsErrorDetails' is missing documentation
+47:1:1:ZL011.missing_doc_comment:public declaration 'Parser' is missing documentation
+48:1:1:ZL011.missing_doc_comment:public declaration 'ParseError' is missing documentation
+49:1:1:ZL011.missing_doc_comment:public declaration 'ParseResult' is missing documentation
+50:1:1:ZL011.missing_doc_comment:public declaration 'run' is missing documentation
+52:1:1:ZL011.missing_doc_comment:public declaration 'printHelp' is missing documentation
+53:1:1:ZL011.missing_doc_comment:public declaration 'printVersion' is missing documentation
+54:1:1:ZL011.missing_doc_comment:public declaration 'generateMan' is missing documentation
+55:1:1:ZL011.missing_doc_comment:public declaration 'generateMarkdown' is missing documentation
+18:29:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+19:28:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+20:26:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+23:30:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+24:29:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+25:30:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+26:36:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+76:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+78:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+79:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+80:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+81:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+82:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+83:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+84:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+86:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+87:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+88:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+89:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+90:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+92:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+94:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+96:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

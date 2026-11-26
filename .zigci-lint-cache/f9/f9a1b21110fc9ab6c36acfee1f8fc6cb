@@ -1,0 +1,65 @@
+81:11:1:ZL203.const_snakecase:constant 'generateCompletions' should use snake_case (or PascalCase for types)
+82:11:1:ZL203.const_snakecase:constant 'generateMan' should use snake_case (or PascalCase for types)
+96:11:1:ZL203.const_snakecase:constant 'suggestClosest' should use snake_case (or PascalCase for types)
+101:11:1:ZL203.const_snakecase:constant 'installSignalHandlers' should use snake_case (or PascalCase for types)
+102:11:1:ZL203.const_snakecase:constant 'wasInterrupted' should use snake_case (or PascalCase for types)
+103:11:1:ZL203.const_snakecase:constant 'shouldShutdown' should use snake_case (or PascalCase for types)
+104:11:1:ZL203.const_snakecase:constant 'onCleanup' should use snake_case (or PascalCase for types)
+109:11:1:ZL203.const_snakecase:constant 'promptInput' should use snake_case (or PascalCase for types)
+110:11:1:ZL203.const_snakecase:constant 'promptPassword' should use snake_case (or PascalCase for types)
+111:11:1:ZL203.const_snakecase:constant 'promptFreeSecret' should use snake_case (or PascalCase for types)
+112:11:1:ZL203.const_snakecase:constant 'promptConfirm' should use snake_case (or PascalCase for types)
+113:11:1:ZL203.const_snakecase:constant 'promptSelect' should use snake_case (or PascalCase for types)
+114:11:1:ZL203.const_snakecase:constant 'promptMultiSelect' should use snake_case (or PascalCase for types)
+139:9:1:ZL009.var_should_be_const:variable 'outputs' is never reassigned; consider using 'const'
+138:34:1:ZL010.magic_number:magic number 3; consider using a named constant
+138:37:1:ZL010.magic_number:magic number 4; consider using a named constant
+149:42:1:ZL010.magic_number:magic number 4; consider using a named constant
+150:42:1:ZL010.magic_number:magic number 6; consider using a named constant
+155:28:1:ZL010.magic_number:magic number 10; consider using a named constant
+155:32:1:ZL010.magic_number:magic number 20; consider using a named constant
+155:36:1:ZL010.magic_number:magic number 30; consider using a named constant
+155:40:1:ZL010.magic_number:magic number 40; consider using a named constant
+158:34:1:ZL010.magic_number:magic number 3; consider using a named constant
+163:42:1:ZL010.magic_number:magic number 30; consider using a named constant
+164:42:1:ZL010.magic_number:magic number 60; consider using a named constant
+165:42:1:ZL010.magic_number:magic number 90; consider using a named constant
+166:42:1:ZL010.magic_number:magic number 120; consider using a named constant
+58:1:1:ZL011.missing_doc_comment:public declaration 'cli' is missing documentation
+59:1:1:ZL011.missing_doc_comment:public declaration 'config' is missing documentation
+60:1:1:ZL011.missing_doc_comment:public declaration 'parallel' is missing documentation
+61:1:1:ZL011.missing_doc_comment:public declaration 'term' is missing documentation
+62:1:1:ZL011.missing_doc_comment:public declaration 'util' is missing documentation
+63:1:1:ZL011.missing_doc_comment:public declaration 'signal' is missing documentation
+64:1:1:ZL011.missing_doc_comment:public declaration 'prompt' is missing documentation
+74:1:1:ZL011.missing_doc_comment:public declaration 'Command' is missing documentation
+75:1:1:ZL011.missing_doc_comment:public declaration 'Context' is missing documentation
+76:1:1:ZL011.missing_doc_comment:public declaration 'FlagSpec' is missing documentation
+77:1:1:ZL011.missing_doc_comment:public declaration 'FlagType' is missing documentation
+78:1:1:ZL011.missing_doc_comment:public declaration 'SecretPolicy' is missing documentation
+79:1:1:ZL011.missing_doc_comment:public declaration 'ParseError' is missing documentation
+80:1:1:ZL011.missing_doc_comment:public declaration 'run' is missing documentation
+81:1:1:ZL011.missing_doc_comment:public declaration 'generateCompletions' is missing documentation
+82:1:1:ZL011.missing_doc_comment:public declaration 'generateMan' is missing documentation
+85:1:1:ZL011.missing_doc_comment:public declaration 'Loader' is missing documentation
+86:1:1:ZL011.missing_doc_comment:public declaration 'LoadOptions' is missing documentation
+87:1:1:ZL011.missing_doc_comment:public declaration 'Source' is missing documentation
+88:1:1:ZL011.missing_doc_comment:public declaration 'load' is missing documentation
+91:1:1:ZL011.missing_doc_comment:public declaration 'Color' is missing documentation
+92:1:1:ZL011.missing_doc_comment:public declaration 'Progress' is missing documentation
+93:1:1:ZL011.missing_doc_comment:public declaration 'ProgressBar' is missing documentation
+96:1:1:ZL011.missing_doc_comment:public declaration 'suggestClosest' is missing documentation
+97:1:1:ZL011.missing_doc_comment:public declaration 'ExitCode' is missing documentation
+100:1:1:ZL011.missing_doc_comment:public declaration 'Signal' is missing documentation
+101:1:1:ZL011.missing_doc_comment:public declaration 'installSignalHandlers' is missing documentation
+102:1:1:ZL011.missing_doc_comment:public declaration 'wasInterrupted' is missing documentation
+103:1:1:ZL011.missing_doc_comment:public declaration 'shouldShutdown' is missing documentation
+104:1:1:ZL011.missing_doc_comment:public declaration 'onCleanup' is missing documentation
+107:1:1:ZL011.missing_doc_comment:public declaration 'PromptError' is missing documentation
+108:1:1:ZL011.missing_doc_comment:public declaration 'InputConfig' is missing documentation
+109:1:1:ZL011.missing_doc_comment:public declaration 'promptInput' is missing documentation
+110:1:1:ZL011.missing_doc_comment:public declaration 'promptPassword' is missing documentation
+111:1:1:ZL011.missing_doc_comment:public declaration 'promptFreeSecret' is missing documentation
+112:1:1:ZL011.missing_doc_comment:public declaration 'promptConfirm' is missing documentation
+113:1:1:ZL011.missing_doc_comment:public declaration 'promptSelect' is missing documentation
+114:1:1:ZL011.missing_doc_comment:public declaration 'promptMultiSelect' is missing documentation

@@ -1,0 +1,2 @@
+21:13:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+22:13:1:ZL009.var_should_be_const:variable 'fba' is never reassigned; consider using 'const'

@@ -1,0 +1,12 @@
+99:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+132:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+141:101:2:ZL300.max_line_length:line exceeds 100 characters (111)
+60:70:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+117:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+149:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+150:9:1:ZL009.var_should_be_const:variable 'w' is never reassigned; consider using 'const'
+265:9:1:ZL009.var_should_be_const:variable 'parser' is never reassigned; consider using 'const'
+266:9:1:ZL009.var_should_be_const:variable 'result' is never reassigned; consider using 'const'
+100:41:1:ZL010.magic_number:magic number 10; consider using a named constant
+133:41:1:ZL010.magic_number:magic number 10; consider using a named constant
+19:24:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

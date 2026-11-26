@@ -1,0 +1,12 @@
+26:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+61:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+90:101:2:ZL300.max_line_length:line exceeds 100 characters (102)
+182:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+214:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+242:101:2:ZL300.max_line_length:line exceeds 100 characters (102)
+295:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+345:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+326:9:1:ZL009.var_should_be_const:variable 'p' is never reassigned; consider using 'const'
+370:9:1:ZL009.var_should_be_const:variable 'parser' is never reassigned; consider using 'const'
+371:9:1:ZL009.var_should_be_const:variable 'result' is never reassigned; consider using 'const'
+346:41:1:ZL010.magic_number:magic number 10; consider using a named constant

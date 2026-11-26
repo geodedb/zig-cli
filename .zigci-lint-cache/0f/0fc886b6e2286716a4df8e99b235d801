@@ -1,0 +1,40 @@
+23:11:1:ZL203.const_snakecase:constant 'getInfo' should use snake_case (or PascalCase for types)
+24:11:1:ZL203.const_snakecase:constant 'getTermSize' should use snake_case (or PascalCase for types)
+25:11:1:ZL203.const_snakecase:constant 'isStdoutTty' should use snake_case (or PascalCase for types)
+26:11:1:ZL203.const_snakecase:constant 'isStderrTty' should use snake_case (or PascalCase for types)
+27:11:1:ZL203.const_snakecase:constant 'isStdinTty' should use snake_case (or PascalCase for types)
+32:11:1:ZL203.const_snakecase:constant 'colorCode' should use snake_case (or PascalCase for types)
+33:11:1:ZL203.const_snakecase:constant 'stripAnsi' should use snake_case (or PascalCase for types)
+37:11:1:ZL203.const_snakecase:constant 'writeIfTty' should use snake_case (or PascalCase for types)
+14:1:1:ZL011.missing_doc_comment:public declaration 'tty' is missing documentation
+15:1:1:ZL011.missing_doc_comment:public declaration 'color' is missing documentation
+16:1:1:ZL011.missing_doc_comment:public declaration 'pager' is missing documentation
+17:1:1:ZL011.missing_doc_comment:public declaration 'progress' is missing documentation
+18:1:1:ZL011.missing_doc_comment:public declaration 'table' is missing documentation
+21:1:1:ZL011.missing_doc_comment:public declaration 'TermInfo' is missing documentation
+22:1:1:ZL011.missing_doc_comment:public declaration 'TermSize' is missing documentation
+23:1:1:ZL011.missing_doc_comment:public declaration 'getInfo' is missing documentation
+24:1:1:ZL011.missing_doc_comment:public declaration 'getTermSize' is missing documentation
+25:1:1:ZL011.missing_doc_comment:public declaration 'isStdoutTty' is missing documentation
+26:1:1:ZL011.missing_doc_comment:public declaration 'isStderrTty' is missing documentation
+27:1:1:ZL011.missing_doc_comment:public declaration 'isStdinTty' is missing documentation
+29:1:1:ZL011.missing_doc_comment:public declaration 'Color' is missing documentation
+30:1:1:ZL011.missing_doc_comment:public declaration 'Style' is missing documentation
+31:1:1:ZL011.missing_doc_comment:public declaration 'ColorContext' is missing documentation
+32:1:1:ZL011.missing_doc_comment:public declaration 'colorCode' is missing documentation
+33:1:1:ZL011.missing_doc_comment:public declaration 'stripAnsi' is missing documentation
+35:1:1:ZL011.missing_doc_comment:public declaration 'PagerConfig' is missing documentation
+36:1:1:ZL011.missing_doc_comment:public declaration 'PagerWriter' is missing documentation
+37:1:1:ZL011.missing_doc_comment:public declaration 'writeIfTty' is missing documentation
+39:1:1:ZL011.missing_doc_comment:public declaration 'Progress' is missing documentation
+40:1:1:ZL011.missing_doc_comment:public declaration 'ProgressBar' is missing documentation
+41:1:1:ZL011.missing_doc_comment:public declaration 'SpinnerStyle' is missing documentation
+43:1:1:ZL011.missing_doc_comment:public declaration 'Table' is missing documentation
+44:1:1:ZL011.missing_doc_comment:public declaration 'TableConfig' is missing documentation
+45:1:1:ZL011.missing_doc_comment:public declaration 'BorderStyle' is missing documentation
+46:1:1:ZL011.missing_doc_comment:public declaration 'Alignment' is missing documentation
+14:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+15:27:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+16:27:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+17:30:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+18:27:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

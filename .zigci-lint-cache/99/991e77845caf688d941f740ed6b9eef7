@@ -1,0 +1,4 @@
+69:48:2:ZL303.max_nesting:nesting depth exceeds 4 (7)
+63:21:1:ZL009.var_should_be_const:variable 'set_count' is never reassigned; consider using 'const'
+19:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+23:28:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

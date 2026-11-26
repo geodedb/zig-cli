@@ -1,0 +1,42 @@
+42:48:3:ZL003.no_empty_catch:empty catch block suppresses errors
+78:48:3:ZL003.no_empty_catch:empty catch block suppresses errors
+110:48:3:ZL003.no_empty_catch:empty catch block suppresses errors
+143:101:2:ZL300.max_line_length:line exceeds 100 characters (120)
+243:101:2:ZL300.max_line_length:line exceeds 100 characters (164)
+406:101:2:ZL300.max_line_length:line exceeds 100 characters (102)
+243:1:2:ZL301.max_function_lines:function exceeds 80 lines (167)
+266:68:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+144:9:1:ZL009.var_should_be_const:variable 'arena' is never reassigned; consider using 'const'
+148:9:1:ZL009.var_should_be_const:variable 'aw' is never reassigned; consider using 'const'
+198:9:1:ZL009.var_should_be_const:variable 'list' is never reassigned; consider using 'const'
+207:9:1:ZL009.var_should_be_const:variable 'env_var_buf' is never reassigned; consider using 'const'
+208:9:1:ZL009.var_should_be_const:variable 'env_var_len' is never reassigned; consider using 'const'
+245:9:1:ZL009.var_should_be_const:variable 'func_name_buf' is never reassigned; consider using 'const'
+317:21:1:ZL009.var_should_be_const:variable 'subpath_buf' is never reassigned; consider using 'const'
+400:17:1:ZL009.var_should_be_const:variable 'subpath_buf' is never reassigned; consider using 'const'
+148:69:1:ZL010.magic_number:magic number 4096; consider using a named constant
+11:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+175:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+181:22:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+189:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+191:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+223:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+231:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+235:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+237:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+239:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+269:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+285:24:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+305:24:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+333:24:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+361:32:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+362:32:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+370:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+374:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+377:24:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+383:24:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+392:17:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+476:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+621:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+664:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+126:30:1:ZL603.missing_defer_cleanup:resource '.alloc(' may not be properly cleaned up; consider using defer

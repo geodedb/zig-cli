@@ -1,0 +1,26 @@
+90:33:2:ZL001.no_undefined:use of 'undefined' may hide uninitialized memory bugs
+136:44:2:ZL001.no_undefined:use of 'undefined' may hide uninitialized memory bugs
+91:9:2:ZL101.banned_std_symbols:use of banned symbol 'std.posix.system'
+104:7:1:ZL201.type_pascalcase:type 'WIN_SMALL_RECT' should use PascalCase
+128:11:1:ZL201.type_pascalcase:type 'CONSOLE_SCREEN_BUFFER_INFO' should use PascalCase
+104:7:1:ZL203.const_snakecase:constant 'WIN_SMALL_RECT' should use snake_case (or PascalCase for types)
+128:11:1:ZL203.const_snakecase:constant 'CONSOLE_SCREEN_BUFFER_INFO' should use snake_case (or PascalCase for types)
+139:11:1:ZL203.const_snakecase:constant 'STD_OUTPUT_HANDLE' should use snake_case (or PascalCase for types)
+91:101:2:ZL300.max_line_length:line exceeds 100 characters (108)
+90:9:1:ZL009.var_should_be_const:variable 'ws' is never reassigned; consider using 'const'
+136:9:1:ZL009.var_should_be_const:variable 'csbi' is never reassigned; consider using 'const'
+45:22:1:ZL010.magic_number:magic number 80; consider using a named constant
+46:23:1:ZL010.magic_number:magic number 24; consider using a named constant
+112:21:2:ZL500.os_specific_code:Windows-specific code 'std.os.windows' may cause portability issues; consider adding OS detection guards
+114:21:2:ZL500.os_specific_code:Windows-specific code 'std.os.windows' may cause portability issues; consider adding OS detection guards
+117:17:2:ZL500.os_specific_code:Windows-specific code 'std.os.windows' may cause portability issues; consider adding OS detection guards
+118:21:2:ZL500.os_specific_code:Windows-specific code 'std.os.windows' may cause portability issues; consider adding OS detection guards
+111:9:2:ZL500.os_specific_code:Windows-specific code 'kernel32' may cause portability issues; consider adding OS detection guards
+116:9:2:ZL500.os_specific_code:Windows-specific code 'kernel32' may cause portability issues; consider adding OS detection guards
+112:36:2:ZL500.os_specific_code:Windows-specific code 'HANDLE' may cause portability issues; consider adding OS detection guards
+118:36:2:ZL500.os_specific_code:Windows-specific code 'HANDLE' may cause portability issues; consider adding OS detection guards
+139:22:2:ZL500.os_specific_code:Windows-specific code 'HANDLE' may cause portability issues; consider adding OS detection guards
+140:51:2:ZL500.os_specific_code:Windows-specific code 'HANDLE' may cause portability issues; consider adding OS detection guards
+142:42:2:ZL500.os_specific_code:Windows-specific code 'HANDLE' may cause portability issues; consider adding OS detection guards
+117:32:2:ZL500.os_specific_code:Windows-specific code 'DWORD' may cause portability issues; consider adding OS detection guards
+139:38:2:ZL500.os_specific_code:Windows-specific code 'DWORD' may cause portability issues; consider adding OS detection guards

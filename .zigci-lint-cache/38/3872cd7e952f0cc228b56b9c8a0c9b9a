@@ -1,0 +1,24 @@
+71:101:2:ZL300.max_line_length:line exceeds 100 characters (113)
+82:101:2:ZL300.max_line_length:line exceeds 100 characters (114)
+115:101:2:ZL300.max_line_length:line exceeds 100 characters (109)
+116:101:2:ZL300.max_line_length:line exceeds 100 characters (102)
+172:101:2:ZL300.max_line_length:line exceeds 100 characters (105)
+187:101:2:ZL300.max_line_length:line exceeds 100 characters (113)
+136:9:1:ZL009.var_should_be_const:variable 'results' is never reassigned; consider using 'const'
+183:9:1:ZL009.var_should_be_const:variable 'gpa' is never reassigned; consider using 'const'
+115:15:1:ZL010.magic_number:magic number 1_000_000_000; consider using a named constant
+116:15:1:ZL010.magic_number:magic number 1_000_000; consider using a named constant
+123:18:1:ZL010.magic_number:magic number 1_048_576; consider using a named constant
+188:39:1:ZL010.magic_number:magic number 80; consider using a named constant
+209:66:1:ZL010.magic_number:magic number 10; consider using a named constant
+209:71:1:ZL010.magic_number:magic number 3; consider using a named constant
+222:39:1:ZL010.magic_number:magic number 80; consider using a named constant
+15:1:1:ZL011.missing_doc_comment:public declaration 'ITERATIONS' is missing documentation
+16:1:1:ZL011.missing_doc_comment:public declaration 'WARMUP' is missing documentation
+23:5:1:ZL011.missing_doc_comment:public declaration 'start' is missing documentation
+27:5:1:ZL011.missing_doc_comment:public declaration 'read' is missing documentation
+54:5:1:ZL011.missing_doc_comment:public declaration 'allocator' is missing documentation
+99:5:1:ZL011.missing_doc_comment:public declaration 'reset' is missing documentation
+182:1:1:ZL011.missing_doc_comment:public declaration 'main' is missing documentation
+211:21:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+223:21:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

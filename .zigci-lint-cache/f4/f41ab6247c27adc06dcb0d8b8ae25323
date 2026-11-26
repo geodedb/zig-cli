@@ -1,0 +1,43 @@
+23:11:1:ZL203.const_snakecase:constant 'printError' should use snake_case (or PascalCase for types)
+24:11:1:ZL203.const_snakecase:constant 'printWarning' should use snake_case (or PascalCase for types)
+25:11:1:ZL203.const_snakecase:constant 'printErrorWithSuggestion' should use snake_case (or PascalCase for types)
+27:11:1:ZL203.const_snakecase:constant 'levenshteinDistance' should use snake_case (or PascalCase for types)
+28:11:1:ZL203.const_snakecase:constant 'suggestClosest' should use snake_case (or PascalCase for types)
+29:11:1:ZL203.const_snakecase:constant 'suggestAll' should use snake_case (or PascalCase for types)
+31:11:1:ZL203.const_snakecase:constant 'wordWrap' should use snake_case (or PascalCase for types)
+33:11:1:ZL203.const_snakecase:constant 'padRight' should use snake_case (or PascalCase for types)
+34:11:1:ZL203.const_snakecase:constant 'padLeft' should use snake_case (or PascalCase for types)
+39:11:1:ZL203.const_snakecase:constant 'isDirectory' should use snake_case (or PascalCase for types)
+40:11:1:ZL203.const_snakecase:constant 'isFile' should use snake_case (or PascalCase for types)
+41:11:1:ZL203.const_snakecase:constant 'readFile' should use snake_case (or PascalCase for types)
+42:11:1:ZL203.const_snakecase:constant 'ensureDir' should use snake_case (or PascalCase for types)
+43:11:1:ZL203.const_snakecase:constant 'redactPath' should use snake_case (or PascalCase for types)
+14:1:1:ZL011.missing_doc_comment:public declaration 'errors' is missing documentation
+15:1:1:ZL011.missing_doc_comment:public declaration 'suggest' is missing documentation
+16:1:1:ZL011.missing_doc_comment:public declaration 'text' is missing documentation
+17:1:1:ZL011.missing_doc_comment:public declaration 'fs' is missing documentation
+20:1:1:ZL011.missing_doc_comment:public declaration 'Severity' is missing documentation
+21:1:1:ZL011.missing_doc_comment:public declaration 'FormattedError' is missing documentation
+22:1:1:ZL011.missing_doc_comment:public declaration 'ExitCode' is missing documentation
+23:1:1:ZL011.missing_doc_comment:public declaration 'printError' is missing documentation
+24:1:1:ZL011.missing_doc_comment:public declaration 'printWarning' is missing documentation
+25:1:1:ZL011.missing_doc_comment:public declaration 'printErrorWithSuggestion' is missing documentation
+27:1:1:ZL011.missing_doc_comment:public declaration 'levenshteinDistance' is missing documentation
+28:1:1:ZL011.missing_doc_comment:public declaration 'suggestClosest' is missing documentation
+29:1:1:ZL011.missing_doc_comment:public declaration 'suggestAll' is missing documentation
+31:1:1:ZL011.missing_doc_comment:public declaration 'wordWrap' is missing documentation
+32:1:1:ZL011.missing_doc_comment:public declaration 'indent' is missing documentation
+33:1:1:ZL011.missing_doc_comment:public declaration 'padRight' is missing documentation
+34:1:1:ZL011.missing_doc_comment:public declaration 'padLeft' is missing documentation
+35:1:1:ZL011.missing_doc_comment:public declaration 'truncate' is missing documentation
+37:1:1:ZL011.missing_doc_comment:public declaration 'FsError' is missing documentation
+38:1:1:ZL011.missing_doc_comment:public declaration 'exists' is missing documentation
+39:1:1:ZL011.missing_doc_comment:public declaration 'isDirectory' is missing documentation
+40:1:1:ZL011.missing_doc_comment:public declaration 'isFile' is missing documentation
+41:1:1:ZL011.missing_doc_comment:public declaration 'readFile' is missing documentation
+42:1:1:ZL011.missing_doc_comment:public declaration 'ensureDir' is missing documentation
+43:1:1:ZL011.missing_doc_comment:public declaration 'redactPath' is missing documentation
+14:28:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+15:29:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+16:26:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+17:24:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

@@ -1,0 +1,18 @@
+15:7:1:ZL203.const_snakecase:constant 'generateWithActiveHelp' should use snake_case (or PascalCase for types)
+438:101:2:ZL300.max_line_length:line exceeds 100 characters (104)
+554:34:2:ZL303.max_nesting:nesting depth exceeds 4 (9)
+611:9:1:ZL009.var_should_be_const:variable 'lines' is never reassigned; consider using 'const'
+531:62:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+563:62:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+564:62:1:ZL010.magic_number:magic number 0x07; consider using a named constant
+566:62:1:ZL010.magic_number:magic number 0x7f; consider using a named constant
+17:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+359:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+366:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+381:39:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+463:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+486:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+514:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+543:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+552:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+595:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

@@ -1,0 +1,20 @@
+25:29:3:ZL003.no_empty_catch:empty catch block suppresses errors
+354:11:1:ZL201.type_pascalcase:type 'cb' should use PascalCase
+420:11:1:ZL201.type_pascalcase:type 'cb' should use PascalCase
+445:11:1:ZL201.type_pascalcase:type 'cb' should use PascalCase
+290:11:1:ZL203.const_snakecase:constant 'CTRL_C_EVENT' should use snake_case (or PascalCase for types)
+291:11:1:ZL203.const_snakecase:constant 'CTRL_BREAK_EVENT' should use snake_case (or PascalCase for types)
+292:11:1:ZL203.const_snakecase:constant 'CTRL_CLOSE_EVENT' should use snake_case (or PascalCase for types)
+79:5:1:ZL009.var_should_be_const:variable 'interrupted' is never reassigned; consider using 'const'
+80:5:1:ZL009.var_should_be_const:variable 'terminated' is never reassigned; consider using 'const'
+82:5:1:ZL009.var_should_be_const:variable 'signal_pending' is never reassigned; consider using 'const'
+84:5:1:ZL009.var_should_be_const:variable 'callback_count' is never reassigned; consider using 'const'
+85:5:1:ZL009.var_should_be_const:variable 'mutex' is never reassigned; consider using 'const'
+105:5:1:ZL009.var_should_be_const:variable 'win_handle_interrupt' is never reassigned; consider using 'const'
+106:5:1:ZL009.var_should_be_const:variable 'win_handle_terminate' is never reassigned; consider using 'const'
+258:33:2:ZL500.os_specific_code:Windows-specific code 'std.os.windows' may cause portability issues; consider adding OS detection guards
+258:73:2:ZL500.os_specific_code:Windows-specific code 'std.os.windows' may cause portability issues; consider adding OS detection guards
+259:10:2:ZL500.os_specific_code:Windows-specific code 'std.os.windows' may cause portability issues; consider adding OS detection guards
+260:21:2:ZL500.os_specific_code:Windows-specific code 'std.os.windows' may cause portability issues; consider adding OS detection guards
+257:9:2:ZL500.os_specific_code:Windows-specific code 'kernel32' may cause portability issues; consider adding OS detection guards
+258:48:2:ZL500.os_specific_code:Windows-specific code 'DWORD' may cause portability issues; consider adding OS detection guards

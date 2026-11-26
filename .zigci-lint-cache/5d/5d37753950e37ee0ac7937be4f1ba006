@@ -1,0 +1,39 @@
+55:11:1:ZL203.const_snakecase:constant 'getPaths' should use snake_case (or PascalCase for types)
+56:11:1:ZL203.const_snakecase:constant 'getConfigDir' should use snake_case (or PascalCase for types)
+57:11:1:ZL203.const_snakecase:constant 'getDataDir' should use snake_case (or PascalCase for types)
+58:11:1:ZL203.const_snakecase:constant 'getCacheDir' should use snake_case (or PascalCase for types)
+61:11:1:ZL203.const_snakecase:constant 'readFromFile' should use snake_case (or PascalCase for types)
+62:11:1:ZL203.const_snakecase:constant 'readFromStdin' should use snake_case (or PascalCase for types)
+70:11:1:ZL203.const_snakecase:constant 'parseContent' should use snake_case (or PascalCase for types)
+71:11:1:ZL203.const_snakecase:constant 'parseFile' should use snake_case (or PascalCase for types)
+32:1:1:ZL011.missing_doc_comment:public declaration 'yaml' is missing documentation
+33:1:1:ZL011.missing_doc_comment:public declaration 'toml' is missing documentation
+34:1:1:ZL011.missing_doc_comment:public declaration 'json' is missing documentation
+36:1:1:ZL011.missing_doc_comment:public declaration 'loader' is missing documentation
+37:1:1:ZL011.missing_doc_comment:public declaration 'provenance' is missing documentation
+38:1:1:ZL011.missing_doc_comment:public declaration 'xdg' is missing documentation
+39:1:1:ZL011.missing_doc_comment:public declaration 'dotenv' is missing documentation
+40:1:1:ZL011.missing_doc_comment:public declaration 'secret' is missing documentation
+41:1:1:ZL011.missing_doc_comment:public declaration 'validate' is missing documentation
+44:1:1:ZL011.missing_doc_comment:public declaration 'Loader' is missing documentation
+45:1:1:ZL011.missing_doc_comment:public declaration 'LoadError' is missing documentation
+46:1:1:ZL011.missing_doc_comment:public declaration 'LoadOptions' is missing documentation
+47:1:1:ZL011.missing_doc_comment:public declaration 'Format' is missing documentation
+48:1:1:ZL011.missing_doc_comment:public declaration 'load' is missing documentation
+50:1:1:ZL011.missing_doc_comment:public declaration 'Source' is missing documentation
+51:1:1:ZL011.missing_doc_comment:public declaration 'TrackedValue' is missing documentation
+52:1:1:ZL011.missing_doc_comment:public declaration 'ProvenanceTracker' is missing documentation
+54:1:1:ZL011.missing_doc_comment:public declaration 'XdgPaths' is missing documentation
+55:1:1:ZL011.missing_doc_comment:public declaration 'getPaths' is missing documentation
+56:1:1:ZL011.missing_doc_comment:public declaration 'getConfigDir' is missing documentation
+57:1:1:ZL011.missing_doc_comment:public declaration 'getDataDir' is missing documentation
+58:1:1:ZL011.missing_doc_comment:public declaration 'getCacheDir' is missing documentation
+60:1:1:ZL011.missing_doc_comment:public declaration 'SecretError' is missing documentation
+61:1:1:ZL011.missing_doc_comment:public declaration 'readFromFile' is missing documentation
+62:1:1:ZL011.missing_doc_comment:public declaration 'readFromStdin' is missing documentation
+64:1:1:ZL011.missing_doc_comment:public declaration 'ValidationError' is missing documentation
+67:1:1:ZL011.missing_doc_comment:public declaration 'Value' is missing documentation
+68:1:1:ZL011.missing_doc_comment:public declaration 'ValueType' is missing documentation
+69:1:1:ZL011.missing_doc_comment:public declaration 'MapEntry' is missing documentation
+70:1:1:ZL011.missing_doc_comment:public declaration 'parseContent' is missing documentation
+71:1:1:ZL011.missing_doc_comment:public declaration 'parseFile' is missing documentation

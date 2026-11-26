@@ -1,0 +1,50 @@
+28:33:3:ZL003.no_empty_catch:empty catch block suppresses errors
+29:26:3:ZL003.no_empty_catch:empty catch block suppresses errors
+78:48:3:ZL003.no_empty_catch:empty catch block suppresses errors
+95:48:3:ZL003.no_empty_catch:empty catch block suppresses errors
+105:27:3:ZL003.no_empty_catch:empty catch block suppresses errors
+115:23:3:ZL003.no_empty_catch:empty catch block suppresses errors
+123:47:3:ZL003.no_empty_catch:empty catch block suppresses errors
+132:53:3:ZL003.no_empty_catch:empty catch block suppresses errors
+135:69:3:ZL003.no_empty_catch:empty catch block suppresses errors
+137:52:3:ZL003.no_empty_catch:empty catch block suppresses errors
+159:58:3:ZL003.no_empty_catch:empty catch block suppresses errors
+220:27:3:ZL003.no_empty_catch:empty catch block suppresses errors
+232:27:3:ZL003.no_empty_catch:empty catch block suppresses errors
+242:27:3:ZL003.no_empty_catch:empty catch block suppresses errors
+243:36:3:ZL003.no_empty_catch:empty catch block suppresses errors
+286:58:3:ZL003.no_empty_catch:empty catch block suppresses errors
+26:9:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+33:9:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+86:13:1:ZL009.var_should_be_const:variable 'self' is never reassigned; consider using 'const'
+129:13:1:ZL009.var_should_be_const:variable 'mbuf' is never reassigned; consider using 'const'
+155:13:1:ZL009.var_should_be_const:variable 'mbuf' is never reassigned; consider using 'const'
+283:13:1:ZL009.var_should_be_const:variable 'mbuf' is never reassigned; consider using 'const'
+284:13:1:ZL009.var_should_be_const:variable 'mw' is never reassigned; consider using 'const'
+288:13:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+289:13:1:ZL009.var_should_be_const:variable 'fw' is never reassigned; consider using 'const'
+471:9:1:ZL009.var_should_be_const:variable 'progress' is never reassigned; consider using 'const'
+169:36:1:ZL010.magic_number:magic number 20; consider using a named constant
+169:40:1:ZL010.magic_number:magic number 50; consider using a named constant
+320:44:1:ZL010.magic_number:magic number 4; consider using a named constant
+329:44:1:ZL010.magic_number:magic number 4; consider using a named constant
+338:44:1:ZL010.magic_number:magic number 4; consider using a named constant
+347:44:1:ZL010.magic_number:magic number 4; consider using a named constant
+394:16:1:ZL010.magic_number:magic number 50; consider using a named constant
+395:44:1:ZL010.magic_number:magic number 50; consider using a named constant
+405:16:1:ZL010.magic_number:magic number 150; consider using a named constant
+429:42:1:ZL010.magic_number:magic number 25; consider using a named constant
+429:69:1:ZL010.magic_number:magic number 50; consider using a named constant
+430:42:1:ZL010.magic_number:magic number 50; consider using a named constant
+434:42:1:ZL010.magic_number:magic number 50; consider using a named constant
+436:73:1:ZL010.magic_number:magic number 102; consider using a named constant
+439:68:1:ZL010.magic_number:magic number 5; consider using a named constant
+440:71:1:ZL010.magic_number:magic number 5; consider using a named constant
+447:16:1:ZL010.magic_number:magic number 50; consider using a named constant
+477:66:1:ZL010.magic_number:magic number 10; consider using a named constant
+479:42:1:ZL010.magic_number:magic number 50; consider using a named constant
+479:67:1:ZL010.magic_number:magic number 200; consider using a named constant
+480:42:1:ZL010.magic_number:magic number 20; consider using a named constant
+480:67:1:ZL010.magic_number:magic number 40; consider using a named constant
+46:5:1:ZL011.missing_doc_comment:public declaration 'frames' is missing documentation
+123:21:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

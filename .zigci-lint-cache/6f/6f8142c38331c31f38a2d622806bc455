@@ -1,0 +1,17 @@
+29:53:3:ZL003.no_empty_catch:empty catch block suppresses errors
+16:11:1:ZL203.const_snakecase:constant 'writeControlFiltered' should use snake_case (or PascalCase for types)
+17:11:1:ZL203.const_snakecase:constant 'stripControlChars' should use snake_case (or PascalCase for types)
+18:11:1:ZL203.const_snakecase:constant 'utf8FloorIndex' should use snake_case (or PascalCase for types)
+40:41:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+67:9:1:ZL009.var_should_be_const:variable 'lines' is never reassigned; consider using 'const'
+152:9:1:ZL009.var_should_be_const:variable 'result' is never reassigned; consider using 'const'
+161:9:1:ZL009.var_should_be_const:variable 'words' is never reassigned; consider using 'const'
+132:20:1:ZL010.magic_number:magic number 3; consider using a named constant
+135:78:1:ZL010.magic_number:magic number 3; consider using a named constant
+199:44:1:ZL010.magic_number:magic number 10; consider using a named constant
+17:1:1:ZL011.missing_doc_comment:public declaration 'stripControlChars' is missing documentation
+18:1:1:ZL011.missing_doc_comment:public declaration 'utf8FloorIndex' is missing documentation
+219:29:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+222:40:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+143:31:1:ZL603.missing_defer_cleanup:resource '.alloc(' may not be properly cleaned up; consider using defer
+152:31:1:ZL603.missing_defer_cleanup:resource '.alloc(' may not be properly cleaned up; consider using defer

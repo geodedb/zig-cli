@@ -1,0 +1,42 @@
+21:7:1:ZL203.const_snakecase:constant 'collectUniqueGroups' should use snake_case (or PascalCase for types)
+49:101:2:ZL300.max_line_length:line exceeds 100 characters (135)
+114:101:2:ZL300.max_line_length:line exceeds 100 characters (112)
+169:101:2:ZL300.max_line_length:line exceeds 100 characters (109)
+198:101:2:ZL300.max_line_length:line exceeds 100 characters (111)
+236:101:2:ZL300.max_line_length:line exceeds 100 characters (130)
+262:101:2:ZL300.max_line_length:line exceeds 100 characters (115)
+300:101:2:ZL300.max_line_length:line exceeds 100 characters (111)
+574:101:2:ZL300.max_line_length:line exceeds 100 characters (105)
+601:101:2:ZL300.max_line_length:line exceeds 100 characters (106)
+262:1:2:ZL301.max_function_lines:function exceeds 80 lines (86)
+273:75:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+117:9:1:ZL009.var_should_be_const:variable 'groups' is never reassigned; consider using 'const'
+202:9:1:ZL009.var_should_be_const:variable 'env_count' is never reassigned; consider using 'const'
+367:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+415:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+439:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+466:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+497:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+543:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+575:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+617:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+648:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+683:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+710:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+567:58:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+568:58:1:ZL010.magic_number:magic number 0x07; consider using a named constant
+609:58:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+673:19:1:ZL010.magic_number:magic number 30; consider using a named constant
+693:26:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+706:58:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+49:1:1:ZL011.missing_doc_comment:public declaration 'renderTextSection' is missing documentation
+91:23:2:ZL500.os_specific_code:Windows-specific code ':\' may cause portability issues; consider adding OS detection guards
+105:27:2:ZL500.os_specific_code:Windows-specific code ':\' may cause portability issues; consider adding OS detection guards
+130:33:2:ZL500.os_specific_code:Windows-specific code ':\' may cause portability issues; consider adding OS detection guards
+133:31:2:ZL500.os_specific_code:Windows-specific code ':\' may cause portability issues; consider adding OS detection guards
+172:23:2:ZL500.os_specific_code:Windows-specific code ':\' may cause portability issues; consider adding OS detection guards
+213:23:2:ZL500.os_specific_code:Windows-specific code ':\' may cause portability issues; consider adding OS detection guards
+13:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+18:22:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+191:39:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+553:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

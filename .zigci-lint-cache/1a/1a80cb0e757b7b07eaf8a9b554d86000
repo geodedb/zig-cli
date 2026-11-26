@@ -1,0 +1,24 @@
+174:39:3:ZL003.no_empty_catch:empty catch block suppresses errors
+176:55:3:ZL003.no_empty_catch:empty catch block suppresses errors
+178:56:3:ZL003.no_empty_catch:empty catch block suppresses errors
+130:11:1:ZL200.fn_camelcase:function 'io_global' should use camelCase
+204:38:2:ZL303.max_nesting:nesting depth exceeds 4 (6)
+112:13:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+119:13:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+120:13:1:ZL009.var_should_be_const:variable 'fw' is never reassigned; consider using 'const'
+197:13:1:ZL009.var_should_be_const:variable 'iter' is never reassigned; consider using 'const'
+488:9:1:ZL009.var_should_be_const:variable 'arr' is never reassigned; consider using 'const'
+591:9:1:ZL009.var_should_be_const:variable 'ctx' is never reassigned; consider using 'const'
+178:53:1:ZL010.magic_number:magic number 4; consider using a named constant
+368:50:1:ZL010.magic_number:magic number 42; consider using a named constant
+457:49:1:ZL010.magic_number:magic number 8080; consider using a named constant
+458:43:1:ZL010.magic_number:magic number 8080; consider using a named constant
+480:52:1:ZL010.magic_number:magic number 42; consider using a named constant
+481:44:1:ZL010.magic_number:magic number 42; consider using a named constant
+496:44:1:ZL010.magic_number:magic number 3; consider using a named constant
+521:50:1:ZL010.magic_number:magic number 99; consider using a named constant
+525:58:1:ZL010.magic_number:magic number 99; consider using a named constant
+19:5:1:ZL011.missing_doc_comment:public declaration 'format' is missing documentation
+111:5:1:ZL011.missing_doc_comment:public declaration 'print' is missing documentation
+118:5:1:ZL011.missing_doc_comment:public declaration 'writeAll' is missing documentation
+125:5:1:ZL011.missing_doc_comment:public declaration 'writeByte' is missing documentation

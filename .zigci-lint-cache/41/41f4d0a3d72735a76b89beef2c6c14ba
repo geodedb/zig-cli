@@ -1,0 +1,78 @@
+231:44:2:ZL001.no_undefined:use of 'undefined' may hide uninitialized memory bugs
+96:27:3:ZL003.no_empty_catch:empty catch block suppresses errors
+113:27:3:ZL003.no_empty_catch:empty catch block suppresses errors
+138:42:3:ZL003.no_empty_catch:empty catch block suppresses errors
+169:81:3:ZL003.no_empty_catch:empty catch block suppresses errors
+170:32:3:ZL003.no_empty_catch:empty catch block suppresses errors
+178:108:3:ZL003.no_empty_catch:empty catch block suppresses errors
+179:28:3:ZL003.no_empty_catch:empty catch block suppresses errors
+186:86:3:ZL003.no_empty_catch:empty catch block suppresses errors
+187:32:3:ZL003.no_empty_catch:empty catch block suppresses errors
+242:43:3:ZL003.no_empty_catch:empty catch block suppresses errors
+243:34:3:ZL003.no_empty_catch:empty catch block suppresses errors
+261:70:3:ZL003.no_empty_catch:empty catch block suppresses errors
+262:39:3:ZL003.no_empty_catch:empty catch block suppresses errors
+263:30:3:ZL003.no_empty_catch:empty catch block suppresses errors
+318:42:3:ZL003.no_empty_catch:empty catch block suppresses errors
+366:57:3:ZL003.no_empty_catch:empty catch block suppresses errors
+367:24:3:ZL003.no_empty_catch:empty catch block suppresses errors
+56:11:1:ZL203.const_snakecase:constant 'multiSelect' should use snake_case (or PascalCase for types)
+118:101:2:ZL300.max_line_length:line exceeds 100 characters (109)
+140:101:2:ZL300.max_line_length:line exceeds 100 characters (103)
+144:101:2:ZL300.max_line_length:line exceeds 100 characters (161)
+178:101:2:ZL300.max_line_length:line exceeds 100 characters (116)
+298:101:2:ZL300.max_line_length:line exceeds 100 characters (113)
+324:101:2:ZL300.max_line_length:line exceeds 100 characters (121)
+361:101:2:ZL300.max_line_length:line exceeds 100 characters (102)
+411:101:2:ZL300.max_line_length:line exceeds 100 characters (111)
+423:101:2:ZL300.max_line_length:line exceeds 100 characters (113)
+438:101:2:ZL300.max_line_length:line exceeds 100 characters (107)
+487:101:2:ZL300.max_line_length:line exceeds 100 characters (112)
+530:101:2:ZL300.max_line_length:line exceeds 100 characters (133)
+169:77:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+136:9:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+214:9:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+215:9:1:ZL009.var_should_be_const:variable 'stdout_writer' is never reassigned; consider using 'const'
+222:9:1:ZL009.var_should_be_const:variable 'rbuf' is never reassigned; consider using 'const'
+223:9:1:ZL009.var_should_be_const:variable 'stdin_reader' is never reassigned; consider using 'const'
+231:13:1:ZL009.var_should_be_const:variable 'original_mode' is never reassigned; consider using 'const'
+252:13:1:ZL009.var_should_be_const:variable 'termios' is never reassigned; consider using 'const'
+313:9:1:ZL009.var_should_be_const:variable 'rbuf' is never reassigned; consider using 'const'
+314:9:1:ZL009.var_should_be_const:variable 'reader_state' is never reassigned; consider using 'const'
+316:9:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+317:9:1:ZL009.var_should_be_const:variable 'writer_state' is never reassigned; consider using 'const'
+335:13:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+358:13:1:ZL009.var_should_be_const:variable 'lower_buf' is never reassigned; consider using 'const'
+397:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+408:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+420:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+435:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+458:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+475:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+484:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+537:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+546:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+555:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+564:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+573:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+582:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+591:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+600:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+610:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+620:9:1:ZL009.var_should_be_const:variable 'reader' is never reassigned; consider using 'const'
+621:9:1:ZL009.var_should_be_const:variable 'writer_buf' is never reassigned; consider using 'const'
+622:9:1:ZL009.var_should_be_const:variable 'writer' is never reassigned; consider using 'const'
+438:80:1:ZL010.magic_number:magic number 3; consider using a named constant
+55:1:1:ZL011.missing_doc_comment:public declaration 'select' is missing documentation
+56:1:1:ZL011.missing_doc_comment:public declaration 'multiSelect' is missing documentation
+241:29:2:ZL500.os_specific_code:Windows-specific code 'kernel32' may cause portability issues; consider adding OS detection guards
+54:28:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+161:48:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+169:30:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+283:54:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+342:48:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+366:22:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+419:38:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+434:38:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+457:38:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+609:38:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

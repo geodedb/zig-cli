@@ -1,0 +1,27 @@
+47:56:2:ZL001.no_undefined:use of 'undefined' may hide uninitialized memory bugs
+232:39:2:ZL001.no_undefined:use of 'undefined' may hide uninitialized memory bugs
+239:43:2:ZL001.no_undefined:use of 'undefined' may hide uninitialized memory bugs
+245:38:2:ZL001.no_undefined:use of 'undefined' may hide uninitialized memory bugs
+70:5:2:ZL301.max_function_lines:function exceeds 80 lines (101)
+26:9:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+82:9:1:ZL009.var_should_be_const:variable 'line_count' is never reassigned; consider using 'const'
+109:9:1:ZL009.var_should_be_const:variable 'argv_buf' is never reassigned; consider using 'const'
+110:9:1:ZL009.var_should_be_const:variable 'argv_len' is never reassigned; consider using 'const'
+111:9:1:ZL009.var_should_be_const:variable 'iter' is never reassigned; consider using 'const'
+125:9:1:ZL009.var_should_be_const:variable 'sigpipe_guard' is never reassigned; consider using 'const'
+129:9:1:ZL009.var_should_be_const:variable 'child' is never reassigned; consider using 'const'
+142:13:1:ZL009.var_should_be_const:variable 'wbuf' is never reassigned; consider using 'const'
+143:13:1:ZL009.var_should_be_const:variable 'fw' is never reassigned; consider using 'const'
+232:9:1:ZL009.var_should_be_const:variable 'before' is never reassigned; consider using 'const'
+236:13:1:ZL009.var_should_be_const:variable 'guard' is never reassigned; consider using 'const'
+239:13:1:ZL009.var_should_be_const:variable 'during' is never reassigned; consider using 'const'
+245:9:1:ZL009.var_should_be_const:variable 'after' is never reassigned; consider using 'const'
+346:9:1:ZL009.var_should_be_const:variable 'pw' is never reassigned; consider using 'const'
+271:22:1:ZL010.magic_number:magic number 50; consider using a named constant
+277:42:1:ZL010.magic_number:magic number 50; consider using a named constant
+329:43:1:ZL010.magic_number:magic number 42; consider using a named constant
+180:5:1:ZL011.missing_doc_comment:public declaration 'init' is missing documentation
+188:5:1:ZL011.missing_doc_comment:public declaration 'deinit' is missing documentation
+192:5:1:ZL011.missing_doc_comment:public declaration 'writer' is missing documentation
+196:5:1:ZL011.missing_doc_comment:public declaration 'items' is missing documentation
+200:5:1:ZL011.missing_doc_comment:public declaration 'flush' is missing documentation

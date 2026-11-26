@@ -1,0 +1,53 @@
+484:11:1:ZL203.const_snakecase:constant 'MEDIUM_ITERATIONS' should use snake_case (or PascalCase for types)
+94:101:2:ZL300.max_line_length:line exceeds 100 characters (102)
+95:101:2:ZL300.max_line_length:line exceeds 100 characters (105)
+96:101:2:ZL300.max_line_length:line exceeds 100 characters (134)
+335:101:2:ZL300.max_line_length:line exceeds 100 characters (148)
+344:101:2:ZL300.max_line_length:line exceeds 100 characters (117)
+413:101:2:ZL300.max_line_length:line exceeds 100 characters (120)
+417:101:2:ZL300.max_line_length:line exceeds 100 characters (101)
+443:101:2:ZL300.max_line_length:line exceeds 100 characters (117)
+458:101:2:ZL300.max_line_length:line exceeds 100 characters (118)
+499:101:2:ZL300.max_line_length:line exceeds 100 characters (130)
+514:101:2:ZL300.max_line_length:line exceeds 100 characters (130)
+328:1:2:ZL301.max_function_lines:function exceeds 80 lines (155)
+96:105:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+414:21:2:ZL108.sensitive_data_exposure:potential hardcoded secret 'token'; use environment variables or secure storage
+58:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+59:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+122:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+123:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+176:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+177:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+217:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+218:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+258:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+259:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+299:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+300:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+507:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+508:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+513:13:1:ZL009.var_should_be_const:variable 'p' is never reassigned; consider using 'const'
+514:13:1:ZL009.var_should_be_const:variable 'result' is never reassigned; consider using 'const'
+540:9:1:ZL009.var_should_be_const:variable 'ctx' is never reassigned; consider using 'const'
+555:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+556:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+579:9:1:ZL009.var_should_be_const:variable 'arena' is never reassigned; consider using 'const'
+582:9:1:ZL009.var_should_be_const:variable 'counter' is never reassigned; consider using 'const'
+594:9:1:ZL009.var_should_be_const:variable 'total_allocs' is never reassigned; consider using 'const'
+595:9:1:ZL009.var_should_be_const:variable 'total_frees' is never reassigned; consider using 'const'
+630:9:1:ZL009.var_should_be_const:variable 'timer' is never reassigned; consider using 'const'
+625:51:1:ZL010.magic_number:magic number 3; consider using a named constant
+626:52:1:ZL010.magic_number:magic number 3; consider using a named constant
+627:51:1:ZL010.magic_number:magic number 3; consider using a named constant
+632:26:1:ZL010.magic_number:magic number 10; consider using a named constant
+633:51:1:ZL010.magic_number:magic number 3; consider using a named constant
+634:52:1:ZL010.magic_number:magic number 3; consider using a named constant
+635:51:1:ZL010.magic_number:magic number 3; consider using a named constant
+484:1:1:ZL011.missing_doc_comment:public declaration 'MEDIUM_ITERATIONS' is missing documentation
+111:61:2:ZL500.os_specific_code:Linux-specific code '/dev/' may cause portability issues; consider adding OS detection guards
+544:62:2:ZL500.os_specific_code:Linux-specific code '/dev/' may cause portability issues; consider adding OS detection guards
+111:60:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+544:61:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+111:41:1:ZL603.missing_defer_cleanup:resource '.openFile(' may not be properly cleaned up; consider using defer
+544:41:1:ZL603.missing_defer_cleanup:resource '.openFile(' may not be properly cleaned up; consider using defer

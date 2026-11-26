@@ -1,0 +1,66 @@
+77:53:2:ZL001.no_undefined:use of 'undefined' may hide uninitialized memory bugs
+89:7:1:ZL203.const_snakecase:constant 'MAX_WORKERS' should use snake_case (or PascalCase for types)
+153:7:1:ZL203.const_snakecase:constant 'MAX_CHUNKS' should use snake_case (or PascalCase for types)
+38:22:2:ZL204.no_dupe_import:duplicate import of 'parallel' (first at line 24)
+399:101:2:ZL300.max_line_length:line exceeds 100 characters (106)
+414:101:2:ZL300.max_line_length:line exceeds 100 characters (102)
+78:5:1:ZL009.var_should_be_const:variable 'pool_started' is never reassigned; consider using 'const'
+245:9:1:ZL009.var_should_be_const:variable 'ctxs' is never reassigned; consider using 'const'
+246:9:1:ZL009.var_should_be_const:variable 'tasks' is never reassigned; consider using 'const'
+247:9:1:ZL009.var_should_be_const:variable 'wg' is never reassigned; consider using 'const'
+249:9:1:ZL009.var_should_be_const:variable 'n_chunks' is never reassigned; consider using 'const'
+430:9:1:ZL009.var_should_be_const:variable 'results' is never reassigned; consider using 'const'
+451:9:1:ZL009.var_should_be_const:variable 'results' is never reassigned; consider using 'const'
+320:33:1:ZL010.magic_number:magic number 3; consider using a named constant
+330:42:1:ZL010.magic_number:magic number 4; consider using a named constant
+331:42:1:ZL010.magic_number:magic number 6; consider using a named constant
+335:27:1:ZL010.magic_number:magic number 10; consider using a named constant
+335:31:1:ZL010.magic_number:magic number 20; consider using a named constant
+335:35:1:ZL010.magic_number:magic number 30; consider using a named constant
+335:39:1:ZL010.magic_number:magic number 40; consider using a named constant
+335:43:1:ZL010.magic_number:magic number 50; consider using a named constant
+349:42:1:ZL010.magic_number:magic number 11; consider using a named constant
+350:42:1:ZL010.magic_number:magic number 21; consider using a named constant
+351:42:1:ZL010.magic_number:magic number 31; consider using a named constant
+352:42:1:ZL010.magic_number:magic number 41; consider using a named constant
+353:42:1:ZL010.magic_number:magic number 51; consider using a named constant
+366:26:1:ZL010.magic_number:magic number 42; consider using a named constant
+371:34:1:ZL010.magic_number:magic number 3; consider using a named constant
+375:42:1:ZL010.magic_number:magic number 126; consider using a named constant
+383:33:1:ZL010.magic_number:magic number 3; consider using a named constant
+386:34:1:ZL010.magic_number:magic number 10; consider using a named constant
+391:42:1:ZL010.magic_number:magic number 10; consider using a named constant
+392:42:1:ZL010.magic_number:magic number 20; consider using a named constant
+393:42:1:ZL010.magic_number:magic number 30; consider using a named constant
+398:69:1:ZL010.magic_number:magic number 4; consider using a named constant
+400:66:1:ZL010.magic_number:magic number 10_000; consider using a named constant
+410:44:1:ZL010.magic_number:magic number 4; consider using a named constant
+410:67:1:ZL010.magic_number:magic number 4; consider using a named constant
+413:71:1:ZL010.magic_number:magic number 10_000; consider using a named constant
+429:33:1:ZL010.magic_number:magic number 3; consider using a named constant
+429:36:1:ZL010.magic_number:magic number 4; consider using a named constant
+429:39:1:ZL010.magic_number:magic number 5; consider using a named constant
+429:42:1:ZL010.magic_number:magic number 6; consider using a named constant
+429:45:1:ZL010.magic_number:magic number 7; consider using a named constant
+450:27:1:ZL010.magic_number:magic number 10; consider using a named constant
+450:31:1:ZL010.magic_number:magic number 20; consider using a named constant
+450:35:1:ZL010.magic_number:magic number 30; consider using a named constant
+450:39:1:ZL010.magic_number:magic number 40; consider using a named constant
+450:43:1:ZL010.magic_number:magic number 50; consider using a named constant
+450:47:1:ZL010.magic_number:magic number 60; consider using a named constant
+471:29:1:ZL010.magic_number:magic number 4; consider using a named constant
+472:23:1:ZL010.magic_number:magic number 4; consider using a named constant
+477:23:1:ZL010.magic_number:magic number 4; consider using a named constant
+477:29:1:ZL010.magic_number:magic number 4; consider using a named constant
+482:23:1:ZL010.magic_number:magic number 4; consider using a named constant
+487:29:1:ZL010.magic_number:magic number 6; consider using a named constant
+487:39:1:ZL010.magic_number:magic number 7; consider using a named constant
+488:23:1:ZL010.magic_number:magic number 4; consider using a named constant
+488:29:1:ZL010.magic_number:magic number 3; consider using a named constant
+488:32:1:ZL010.magic_number:magic number 7; consider using a named constant
+493:29:1:ZL010.magic_number:magic number 7; consider using a named constant
+493:39:1:ZL010.magic_number:magic number 7; consider using a named constant
+494:23:1:ZL010.magic_number:magic number 4; consider using a named constant
+494:29:1:ZL010.magic_number:magic number 4; consider using a named constant
+494:32:1:ZL010.magic_number:magic number 7; consider using a named constant
+310:34:1:ZL603.missing_defer_cleanup:resource '.alloc(' may not be properly cleaned up; consider using defer

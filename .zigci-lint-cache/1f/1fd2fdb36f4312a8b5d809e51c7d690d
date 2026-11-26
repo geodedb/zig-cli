@@ -1,0 +1,6 @@
+20:9:1:ZL009.var_should_be_const:variable 'row' is never reassigned; consider using 'const'
+81:9:1:ZL009.var_should_be_const:variable 'matches' is never reassigned; consider using 'const'
+112:9:1:ZL009.var_should_be_const:variable 'matches' is never reassigned; consider using 'const'
+159:44:1:ZL010.magic_number:magic number 300; consider using a named constant
+163:44:1:ZL010.magic_number:magic number 300; consider using a named constant
+168:44:1:ZL010.magic_number:magic number 300; consider using a named constant

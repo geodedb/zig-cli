@@ -1,0 +1,15 @@
+431:101:2:ZL300.max_line_length:line exceeds 100 characters (104)
+36:70:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+72:32:2:ZL108.sensitive_data_exposure:potential hardcoded secret 'password'; use environment variables or secure storage
+93:32:2:ZL108.sensitive_data_exposure:potential hardcoded secret 'password'; use environment variables or secure storage
+111:32:2:ZL108.sensitive_data_exposure:potential hardcoded secret 'token'; use environment variables or secure storage
+131:32:2:ZL108.sensitive_data_exposure:potential hardcoded secret 'token'; use environment variables or secure storage
+326:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+327:9:1:ZL009.var_should_be_const:variable 'w' is never reassigned; consider using 'const'
+713:9:1:ZL009.var_should_be_const:variable 'parser' is never reassigned; consider using 'const'
+214:44:1:ZL010.magic_number:magic number 3; consider using a named constant
+261:49:1:ZL010.magic_number:magic number 3; consider using a named constant
+275:49:1:ZL010.magic_number:magic number 4; consider using a named constant
+331:59:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+396:44:1:ZL010.magic_number:magic number 3; consider using a named constant
+315:28:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

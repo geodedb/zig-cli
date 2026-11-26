@@ -1,0 +1,26 @@
+45:101:2:ZL300.max_line_length:line exceeds 100 characters (104)
+61:65:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+157:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+176:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+195:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+214:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+235:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+252:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+264:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+276:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+290:9:1:ZL009.var_should_be_const:variable 'buffer' is never reassigned; consider using 'const'
+291:9:1:ZL009.var_should_be_const:variable 'stream' is never reassigned; consider using 'const'
+333:9:1:ZL009.var_should_be_const:variable 'arena' is never reassigned; consider using 'const'
+131:25:1:ZL010.magic_number:magic number 77; consider using a named constant
+132:20:1:ZL010.magic_number:magic number 78; consider using a named constant
+133:16:1:ZL010.magic_number:magic number 74; consider using a named constant
+325:66:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+338:66:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+348:41:1:ZL010.magic_number:magic number 77; consider using a named constant
+349:41:1:ZL010.magic_number:magic number 78; consider using a named constant
+350:41:1:ZL010.magic_number:magic number 74; consider using a named constant
+17:5:1:ZL011.missing_doc_comment:public declaration 'symbol' is missing documentation
+25:5:1:ZL011.missing_doc_comment:public declaration 'colorCode' is missing documentation
+135:5:1:ZL011.missing_doc_comment:public declaration 'toInt' is missing documentation
+202:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+210:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path

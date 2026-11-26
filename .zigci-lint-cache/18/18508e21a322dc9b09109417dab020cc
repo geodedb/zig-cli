@@ -1,0 +1,48 @@
+748:11:1:ZL201.type_pascalcase:type 'runFn' should use PascalCase
+748:11:1:ZL203.const_snakecase:constant 'runFn' should use snake_case (or PascalCase for types)
+65:101:2:ZL300.max_line_length:line exceeds 100 characters (129)
+66:101:2:ZL300.max_line_length:line exceeds 100 characters (151)
+67:101:2:ZL300.max_line_length:line exceeds 100 characters (146)
+68:101:2:ZL300.max_line_length:line exceeds 100 characters (146)
+69:101:2:ZL300.max_line_length:line exceeds 100 characters (147)
+88:101:2:ZL300.max_line_length:line exceeds 100 characters (105)
+158:101:2:ZL300.max_line_length:line exceeds 100 characters (110)
+143:61:2:ZL303.max_nesting:nesting depth exceeds 4 (7)
+80:13:1:ZL009.var_should_be_const:variable 'clean' is never reassigned; consider using 'const'
+81:13:1:ZL009.var_should_be_const:variable 'n' is never reassigned; consider using 'const'
+269:13:1:ZL009.var_should_be_const:variable 'count' is never reassigned; consider using 'const'
+667:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+674:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+681:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+688:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+695:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+702:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+713:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+723:9:1:ZL009.var_should_be_const:variable 'buf' is never reassigned; consider using 'const'
+414:39:1:ZL010.magic_number:magic number 3; consider using a named constant
+419:39:1:ZL010.magic_number:magic number 3; consider using a named constant
+454:41:1:ZL010.magic_number:magic number 3; consider using a named constant
+460:41:1:ZL010.magic_number:magic number 5; consider using a named constant
+465:52:1:ZL010.magic_number:magic number 5; consider using a named constant
+473:41:1:ZL010.magic_number:magic number 3; consider using a named constant
+495:52:1:ZL010.magic_number:magic number 3; consider using a named constant
+502:59:1:ZL010.magic_number:magic number 4; consider using a named constant
+507:59:1:ZL010.magic_number:magic number 3; consider using a named constant
+512:59:1:ZL010.magic_number:magic number 5; consider using a named constant
+517:59:1:ZL010.magic_number:magic number 4; consider using a named constant
+529:59:1:ZL010.magic_number:magic number 4; consider using a named constant
+535:52:1:ZL010.magic_number:magic number 4; consider using a named constant
+666:59:1:ZL010.magic_number:magic number 3; consider using a named constant
+673:78:1:ZL010.magic_number:magic number 5; consider using a named constant
+680:65:1:ZL010.magic_number:magic number 3; consider using a named constant
+687:75:1:ZL010.magic_number:magic number 5; consider using a named constant
+694:73:1:ZL010.magic_number:magic number 3; consider using a named constant
+694:83:1:ZL010.magic_number:magic number 5; consider using a named constant
+715:59:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+13:1:1:ZL011.missing_doc_comment:public declaration 'Context' is missing documentation
+14:1:1:ZL011.missing_doc_comment:public declaration 'FlagValue' is missing documentation
+15:1:1:ZL011.missing_doc_comment:public declaration 'StdioWriter' is missing documentation
+16:1:1:ZL011.missing_doc_comment:public declaration 'FlagType' is missing documentation
+17:1:1:ZL011.missing_doc_comment:public declaration 'SecretPolicy' is missing documentation
+18:1:1:ZL011.missing_doc_comment:public declaration 'FlagSpec' is missing documentation
+63:5:1:ZL011.missing_doc_comment:public declaration 'format' is missing documentation

@@ -1,0 +1,22 @@
+329:82:2:ZL002.no_unreachable:use of 'unreachable' may hide bugs
+329:76:2:ZL004.no_catch_unreachable:catch unreachable suppresses error handling
+356:101:2:ZL300.max_line_length:line exceeds 100 characters (102)
+362:101:2:ZL300.max_line_length:line exceeds 100 characters (108)
+363:101:2:ZL300.max_line_length:line exceeds 100 characters (108)
+482:101:2:ZL300.max_line_length:line exceeds 100 characters (104)
+262:34:2:ZL303.max_nesting:nesting depth exceeds 4 (5)
+296:9:1:ZL009.var_should_be_const:variable 'cmds' is never reassigned; consider using 'const'
+297:9:1:ZL009.var_should_be_const:variable 'ptrs' is never reassigned; consider using 'const'
+298:9:1:ZL009.var_should_be_const:variable 'i' is never reassigned; consider using 'const'
+325:9:1:ZL009.var_should_be_const:variable 'names' is never reassigned; consider using 'const'
+326:9:1:ZL009.var_should_be_const:variable 'leaves' is never reassigned; consider using 'const'
+327:9:1:ZL009.var_should_be_const:variable 'ptrs' is never reassigned; consider using 'const'
+478:9:1:ZL009.var_should_be_const:variable 'lines' is never reassigned; consider using 'const'
+328:13:1:ZL010.magic_number:magic number 40; consider using a named constant
+533:62:1:ZL010.magic_number:magic number 0x1b; consider using a named constant
+534:62:1:ZL010.magic_number:magic number 0x07; consider using a named constant
+536:62:1:ZL010.magic_number:magic number 0x7f; consider using a named constant
+19:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+462:56:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+513:20:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
+522:25:1:ZL501.hardcoded_path_separator:hardcoded path may not work across operating systems; consider using std.fs.path
